@@ -35,12 +35,29 @@ pub struct Thresholds {
     pub split_ms: i64,
 }
 
+/// Why a Δt is not trustworthy, if it isn't.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeQuality {
+    /// Both frames carry a real EXIF capture time.
+    Exif,
+    /// At least one side fell back to the filesystem mtime. Coarse or shared mtimes (exFAT's 2 s
+    /// granularity, a plain `cp`, a folder of files that never had EXIF) make the resulting Δt
+    /// meaningless, so it must never produce a hard decision.
+    Fallback,
+    /// The later frame's effective time is *before* the earlier one. Only reachable through an
+    /// mtime fallback or corrupt data, but a wrong merge is the failure this project exists to
+    /// prevent, so it splits rather than clamping to zero (REV-63).
+    Backwards,
+    /// At least one frame has no usable time at all.
+    Missing,
+}
+
 /// Every signal task.md §5.2 lists, for one consecutive pair.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PairSignals {
+    /// Signed. Negative means the effective times run backwards; see [`TimeQuality::Backwards`].
     pub dt_ms: i64,
-    /// False when either frame has no usable timestamp, so Δt carries no information.
-    pub has_time: bool,
+    pub time_quality: TimeQuality,
     pub serial_changed: bool,
     pub orientation_changed: bool,
     /// `cur.shutter_count - prev.shutter_count`, when both bodies reported one.
@@ -58,9 +75,24 @@ impl PairSignals {
             crate::batch::view::effective_time_ms(prev),
             crate::batch::view::effective_time_ms(cur),
         );
+        // Kept signed: clamping a backwards gap to zero turned it into a hard join, which is the
+        // one outcome visual signatures can never revisit (REV-63).
         let dt_ms = match (ta, tb) {
-            (Some(a), Some(b)) => (b - a).max(0),
+            (Some(a), Some(b)) => b - a,
             _ => 0,
+        };
+        let time_quality = match (ta, tb) {
+            (Some(a), Some(b)) if b < a => TimeQuality::Backwards,
+            (Some(_), Some(_)) => {
+                if crate::batch::view::time_is_fallback(prev)
+                    || crate::batch::view::time_is_fallback(cur)
+                {
+                    TimeQuality::Fallback
+                } else {
+                    TimeQuality::Exif
+                }
+            }
+            _ => TimeQuality::Missing,
         };
         let shutter_count_gap = match (prev.shutter_count(), cur.shutter_count()) {
             (Some(a), Some(b)) => Some(b as i64 - a as i64),
@@ -68,7 +100,7 @@ impl PairSignals {
         };
         Self {
             dt_ms,
-            has_time: ta.is_some() && tb.is_some(),
+            time_quality,
             serial_changed: prev.camera_serial() != cur.camera_serial(),
             orientation_changed: prev.orientation() != cur.orientation(),
             shutter_count_gap,
@@ -77,10 +109,21 @@ impl PairSignals {
         }
     }
 
+    /// True when Δt comes from real EXIF on both sides, so it can be trusted for a hard decision.
+    #[must_use]
+    pub fn has_exif_time(&self) -> bool {
+        self.time_quality == TimeQuality::Exif
+    }
+
     /// Hard joins and hard splits, in task.md §5.3 order. `Ambiguous` means timing can't decide.
     ///
-    /// Without a timestamp on either frame there is no hard join to fall back on, so the pair goes
-    /// straight to the score rather than being silently welded together.
+    /// Two rules here are deliberately conservative, because both would otherwise produce a hard
+    /// decision that visual signatures can never revisit:
+    ///
+    /// - a **backwards** Δt splits (REV-63): the ordering said these frames are one way round and
+    ///   the timestamps say the other, which is a data problem, not a burst;
+    /// - a **fallback** or **missing** Δt goes to `Ambiguous` rather than falling back on the hard
+    ///   join, so the other signals decide and the batch stays `provisional`.
     #[must_use]
     pub fn decide(&self, t: Thresholds) -> Decision {
         if self.serial_changed {
@@ -89,7 +132,10 @@ impl PairSignals {
         if self.orientation_changed {
             return Decision::Split;
         }
-        if !self.has_time {
+        if self.time_quality == TimeQuality::Backwards {
+            return Decision::Split;
+        }
+        if !self.has_exif_time() {
             return Decision::Ambiguous;
         }
         if self.dt_ms > t.split_ms {

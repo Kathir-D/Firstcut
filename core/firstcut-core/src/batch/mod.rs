@@ -10,6 +10,7 @@
 //! unordered input is the `sigs` map, which is never iterated — only looked up.
 
 pub mod eval;
+pub mod fixture;
 pub mod signals;
 pub mod view;
 pub mod visual;
@@ -22,6 +23,7 @@ use crate::batch::signals::{Decision, FrameIntervals, PairSignals, Thresholds};
 use crate::batch::view::{Photo, effective_time_ms};
 use crate::order;
 pub use eval::{BoundaryMetrics, GroundTruth, evaluate_boundaries, evaluate_names};
+pub use fixture::{FileKind, PhotoMeta, RawFormat, TimeSource};
 pub use visual::{VisualSig, distance, visual_sig};
 
 /// Stable across runs: hash of the photo's path relative to the session folder

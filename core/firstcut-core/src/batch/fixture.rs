@@ -17,8 +17,6 @@ use serde::{Deserialize, Serialize};
 use crate::batch::view::Photo;
 use crate::batch::{PhotoId, photo_id};
 
-use serde::{Deserialize, Serialize};
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureTime {

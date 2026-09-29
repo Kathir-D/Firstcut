@@ -13,8 +13,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use firstcut_core::batch::{BatchParams, GroundTruth, batch_with, evaluate_names};
+use firstcut_core::batch::fixture::PhotoMeta;
 use firstcut_core::batch::view::Photo;
+use firstcut_core::batch::{BatchParams, GroundTruth, batch_with, evaluate_names};
 use serde_json::Value;
 
 const GAMES: [&str; 4] = ["Game1JENKS", "Gane2NC", "Game3KC", "Game4VRE"];
@@ -34,12 +35,11 @@ fn truth_path(game: &str) -> PathBuf {
     repo_path(&format!("tests/fixtures/ground-truth/{game}.json"))
 }
 
-fn load_photos(game: &str) -> Vec<cli_fixture::PhotoMeta> {
+fn load_photos(game: &str) -> Vec<PhotoMeta> {
     let path = meta_path(game);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-    serde_json::from_str(&text)
-        .unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()))
+    serde_json::from_str(&text).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()))
 }
 
 fn batch_names(game: &str) -> Vec<Vec<String>> {
@@ -63,18 +63,16 @@ fn batch_names(game: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-// The fixture types live in the CLI crate; see core/firstcut-cli/src/fixtures.rs. Duplicated here as
-// a path so a unit test in the library can read the committed dumps.
-#[path = "../../firstcut-cli/src/fixtures.rs"]
-mod cli_fixture;
-
 /// Every invariant task.md §5 states, checked against every game. These hold for any thresholds.
 #[test]
 fn the_invariants_hold_for_every_game() {
     for game in GAMES {
         let photos = load_photos(game);
         let total = photos.len();
-        assert!(total > 500, "{game}: fixture looks truncated ({total} photos)");
+        assert!(
+            total > 500,
+            "{game}: fixture looks truncated ({total} photos)"
+        );
 
         let out = batch_with(&photos, &HashMap::new(), &[], BatchParams::default());
         let batches = &out.batches;
@@ -86,14 +84,24 @@ fn the_invariants_hold_for_every_game() {
         );
 
         // Every photo is in exactly one batch.
-        let mut all: Vec<u64> = batches.iter().flat_map(|b| b.photo_ids.iter().map(|i| i.0)).collect();
+        let mut all: Vec<u64> = batches
+            .iter()
+            .flat_map(|b| b.photo_ids.iter().map(|i| i.0))
+            .collect();
         all.sort_unstable();
         all.dedup();
-        assert_eq!(all.len(), total, "{game}: a photo is in two batches or none");
+        assert_eq!(
+            all.len(),
+            total,
+            "{game}: a photo is in two batches or none"
+        );
 
         // Determinism: task.md §5.3 step 6.
         let again = batch_with(&photos, &HashMap::new(), &[], BatchParams::default());
-        assert_eq!(batches, &again.batches, "{game}: batching is not deterministic");
+        assert_eq!(
+            batches, &again.batches,
+            "{game}: batching is not deterministic"
+        );
 
         // Batches are capture-ordered and disjoint.
         let order = &out.order;
@@ -103,7 +111,12 @@ fn the_invariants_hold_for_every_game() {
             let positions: Vec<usize> = b
                 .photo_ids
                 .iter()
-                .map(|id| order.iter().position(|o| o == id).expect("batch photo is in the order"))
+                .map(|id| {
+                    order
+                        .iter()
+                        .position(|o| o == id)
+                        .expect("batch photo is in the order")
+                })
                 .collect();
             assert!(
                 positions.windows(2).all(|w| w[0] < w[1]),
@@ -148,10 +161,17 @@ fn ordering_is_capture_time_on_every_game() {
         let times: Vec<Option<i64>> = out
             .order
             .iter()
-            .map(|id| photos.iter().find(|p| p.id == *id).and_then(|p| p.capture_unix_ms()))
+            .map(|id| {
+                photos
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .and_then(|p| p.capture_unix_ms())
+            })
             .collect();
         assert!(
-            times.windows(2).all(|w| w[0].is_none_or(|a| w[1].is_none_or(|b| a <= b))),
+            times
+                .windows(2)
+                .all(|w| w[0].is_none_or(|a| w[1].is_none_or(|b| a <= b))),
             "{game}: order is not sorted by capture time"
         );
         assert!(
@@ -173,13 +193,23 @@ fn file_name_rollover_does_not_affect_order() {
     let names: Vec<&str> = out
         .order
         .iter()
-        .map(|id| photos.iter().find(|p| p.id == *id).unwrap().rel_path.as_str())
+        .map(|id| {
+            photos
+                .iter()
+                .find(|p| p.id == *id)
+                .unwrap()
+                .rel_path
+                .as_str()
+        })
         .collect();
     let inverted = names
         .windows(2)
         .filter(|w| w[1].parse_num() < w[0].parse_num())
         .count();
-    assert!(inverted > 0, "the fixture must contain at least one name inversion");
+    assert!(
+        inverted > 0,
+        "the fixture must contain at least one name inversion"
+    );
 }
 
 /// Pull the number out of `IMG_0451.CR3` without pulling in a regex crate.
@@ -189,14 +219,13 @@ trait ParseNum {
 
 impl ParseNum for &str {
     fn parse_num(self) -> u32 {
-        self.rsplit_once('.')
-            .map_or(0, |(stem, _)| {
-                stem.chars()
-                    .skip_while(|c| !c.is_ascii_digit())
-                    .collect::<String>()
-                    .parse()
-                    .unwrap_or(0)
-            })
+        self.rsplit_once('.').map_or(0, |(stem, _)| {
+            stem.chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0)
+        })
     }
 }
 
@@ -206,49 +235,64 @@ fn a_synthetic_rollover_shoot_orders_by_time() {
     use firstcut_core::batch::PhotoId;
     use firstcut_core::order;
 
-    let mut photos: Vec<cli_fixture::PhotoMeta> = ["IMG_9998.CR3", "IMG_9999.CR3", "IMG_0001.CR3", "IMG_0002.CR3"]
-        .iter()
-        .enumerate()
-        .map(|(i, name)| cli_fixture::PhotoMeta {
-            id: PhotoId(firstcut_core::batch::fnv1a64(name.as_bytes())),
-            rel_path: (*name).to_string(),
-            companions: vec![],
-            kind: cli_fixture::FileKind::Raw(cli_fixture::RawFormat::Cr3),
-            file_size: 1,
-            capture_time: Some(cli_fixture::CaptureTime {
-                unix_ms: 1_000 + i as i64 * 90,
-                subsec_resolution_ms: 10,
-                offset_minutes: None,
-                source: cli_fixture::TimeSource::Exif,
-            }),
-            shutter_count: Some(100 + i as u64),
-            file_number: None,
-            camera_make: Some("Canon".into()),
-            camera_model: Some("EOS R8".into()),
-            camera_serial: Some("1".into()),
-            lens_model: None,
-            focal_length_mm: Some(200.0),
-            exposure_time_s: Some(0.0005),
-            f_number: Some(2.8),
-            iso: Some(800),
-            exposure_comp_ev: Some(0.0),
-            metering_mode: None,
-            drive_mode: None,
-            shutter_mode: None,
-            orientation: 1,
-            width: 6000,
-            height: 4000,
-            af: None,
-            warnings: vec![],
-        })
-        .collect();
+    let mut photos: Vec<firstcut_core::batch::fixture::PhotoMeta> = [
+        "IMG_9998.CR3",
+        "IMG_9999.CR3",
+        "IMG_0001.CR3",
+        "IMG_0002.CR3",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, name)| firstcut_core::batch::fixture::PhotoMeta {
+        id: PhotoId(firstcut_core::batch::fnv1a64(name.as_bytes())),
+        rel_path: (*name).to_string(),
+        companions: vec![],
+        kind: firstcut_core::batch::fixture::FileKind::Raw(
+            firstcut_core::batch::fixture::RawFormat::Cr3,
+        ),
+        file_size: 1,
+        capture_time: Some(firstcut_core::batch::fixture::CaptureTime {
+            unix_ms: 1_000 + i as i64 * 90,
+            subsec_resolution_ms: 10,
+            offset_minutes: None,
+            source: firstcut_core::batch::fixture::TimeSource::Exif,
+        }),
+        shutter_count: Some(100 + i as u64),
+        file_number: None,
+        camera_make: Some("Canon".into()),
+        camera_model: Some("EOS R8".into()),
+        camera_serial: Some("1".into()),
+        lens_model: None,
+        focal_length_mm: Some(200.0),
+        exposure_time_s: Some(0.0005),
+        f_number: Some(2.8),
+        iso: Some(800),
+        exposure_comp_ev: Some(0.0),
+        metering_mode: None,
+        drive_mode: None,
+        shutter_mode: None,
+        orientation: 1,
+        width: 6000,
+        height: 4000,
+        af: None,
+        warnings: vec![],
+    })
+    .collect();
     photos[0].file_number = Some(9998);
 
     let ids = order::order(&photos);
-    let names: Vec<&str> = ids.iter().map(|id| photos[id.0 as usize].rel_path.as_str()).collect();
+    let names: Vec<&str> = ids
+        .iter()
+        .map(|id| photos[id.0 as usize].rel_path.as_str())
+        .collect();
     assert_eq!(
         names,
-        ["IMG_9998.CR3", "IMG_9999.CR3", "IMG_0001.CR3", "IMG_0002.CR3"],
+        [
+            "IMG_9998.CR3",
+            "IMG_9999.CR3",
+            "IMG_0001.CR3",
+            "IMG_0002.CR3"
+        ],
         "capture time wins over the name across the rollover"
     );
 }
@@ -342,11 +386,13 @@ fn golden_batches_match_the_committed_dumps() {
             mismatches.push(format!("{game}: no golden file at {}", path.display()));
             continue;
         };
-        let expected: Value =
-            serde_json::from_str(&expected).expect("parsing the golden file");
+        let expected: Value = serde_json::from_str(&expected).expect("parsing the golden file");
         let actual: Value = serde_json::from_str(&current).expect("parsing the prediction");
         if expected != actual {
-            let (e, a) = (expected.as_array().map(Vec::len).unwrap_or(0), actual.as_array().map(Vec::len).unwrap_or(0));
+            let (e, a) = (
+                expected.as_array().map(Vec::len).unwrap_or(0),
+                actual.as_array().map(Vec::len).unwrap_or(0),
+            );
             mismatches.push(format!(
                 "{game}: batches changed ({e} golden vs {a} now). \
                  Re-run with FIRSTCUT_UPDATE_GOLDEN=1 and check the diff."
@@ -382,7 +428,9 @@ fn the_high_speed_tail_of_game1jenks_is_not_one_giant_batch() {
     let containing: Vec<u32> = out
         .batches
         .iter()
-        .filter(|b| b.photo_ids.iter().any(|id| *id == start) || b.photo_ids.iter().any(|id| *id == end))
+        .filter(|b| {
+            b.photo_ids.iter().any(|id| *id == start) || b.photo_ids.iter().any(|id| *id == end)
+        })
         .map(|b| b.index)
         .collect();
     assert!(

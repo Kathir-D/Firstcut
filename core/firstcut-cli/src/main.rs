@@ -12,18 +12,14 @@
 //! Wave 2 adds `contact-sheet` (visual review of every boundary) and `eval` (boundary F1 against
 //! `tests/fixtures/ground-truth/<game>.json`).
 
-mod fixtures;
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use firstcut_core::batch::BatchParams;
+use firstcut_core::batch::fixture::Folder;
 use firstcut_core::batch::signals::Decision;
-use firstcut_core::batch::{PhotoId, batch_with};
+use firstcut_core::batch::{BatchParams, PhotoId, batch_with};
 use firstcut_core::order;
-
-use fixtures::Folder;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -120,7 +116,7 @@ fn cmd_dump_meta(args: &[String]) -> Result<(), String> {
         }
     };
 
-    let photos = fixtures::load_exiftool(&input)?;
+    let photos = firstcut_core::batch::fixture::load_exiftool(&input)?;
     let out = out.or(default_out).ok_or("dump-meta: pass --out <file>")?;
 
     if let Some(parent) = out.parent() {
