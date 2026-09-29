@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use crate::fileops::FinishOptions;
 use crate::meta::{AfInfo, CaptureTime, FileKind, PhotoMeta, RawFormat, TimeSource};
 use crate::session::Session;
 use crate::store::rating::{Rating, RatingMode, Tier};
@@ -530,3 +531,167 @@ const _: fn() = || {
     let _: Option<AfInfo> = None;
     let _: Option<crate::meta::PhotoFingerprint> = None;
 };
+
+// ─────────────────────────────────────────────────────────── finish cull (task.md §9.7)
+
+/// What to do with the photos that were not kept, and the ones that were.
+///
+/// Strings rather than nested enums, because this crosses into Swift and the Swift side already
+/// models both as `String`-backed enums (`FinishSettings`, `RatingMode`). The mapping is by exact
+/// name, and an unrecognised name is refused rather than defaulted: silently doing nothing to
+/// somebody's files because of a typo is the one failure this whole module exists to prevent.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FinishSettingsDto {
+    /// `nothing` · `mark_rejected` · `move_to_subfolder` · `trash` · `delete`
+    pub unkept: String,
+    /// The subfolder name, for `move_to_subfolder`.
+    pub unkept_subfolder: String,
+    /// `none` · `copy_to` · `move_to` · `split_by_tier` · `split_by_stars` · `write_list`
+    pub kept: String,
+    pub kept_destination: String,
+    /// `stars` or `keep`, and it must be the session's own mode: Finish keeps what the rings and
+    /// the stars mean *now*, not what a stored plan thought they meant (REV-78).
+    pub rating_mode: String,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FinishPlanDto {
+    /// One line per operation, exactly what the dry-run sheet lists (task.md §9.7).
+    pub preview_lines: Vec<String>,
+    pub op_count: u32,
+    pub bytes_to_copy: u64,
+    /// Things to read before agreeing: an unvisited batch, no free space, a permanent delete.
+    pub warnings: Vec<String>,
+    /// False as soon as the plan contains a permanent delete, which is the one thing Undo Finish
+    /// cannot bring back.
+    pub undoable: bool,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FinishReportDto {
+    pub done: u32,
+    /// `(path, reason)` for every file that could not be done. Never dropped: the report shows them
+    /// all, because a silent partial Finish is indistinguishable from a complete one.
+    pub failed: Vec<FileOpFailureDto>,
+    pub undoable: bool,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FileOpFailureDto {
+    pub path: String,
+    pub reason: String,
+}
+
+/// The dry run. Changes nothing on disk -- that is the property the whole sheet depends on.
+#[uniffi::export]
+pub fn plan_finish(
+    session: &SessionHandle,
+    settings: FinishSettingsDto,
+) -> Result<FinishPlanDto, FirstcutError> {
+    let options = finish_options(&settings)?;
+    session.with(|s| {
+        let plan = s.plan_finish(&options)?;
+        Ok(FinishPlanDto {
+            preview_lines: plan.preview_lines(),
+            op_count: plan.ops.len() as u32,
+            bytes_to_copy: plan.bytes_to_copy,
+            warnings: plan.warnings.clone(),
+            undoable: plan.is_undoable(),
+        })
+    })
+}
+
+/// Does the plan. Every operation is logged in the session database, so Undo Finish works after a
+/// relaunch too.
+#[uniffi::export]
+pub fn execute_finish(
+    session: &SessionHandle,
+    settings: FinishSettingsDto,
+) -> Result<FinishReportDto, FirstcutError> {
+    let options = finish_options(&settings)?;
+    session.with_mut(|s| {
+        // The plan is taken and run as one call, so what is executed is exactly what the settings
+        // asked for. The app shows the dry run first and then asks; if it planned and executed in
+        // two calls, a rating change between them could make the run differ from the preview.
+        let plan = s.plan_finish(&options)?;
+        let run = s.execute_finish(&plan)?;
+        Ok(FinishReportDto {
+            done: run.summary.done,
+            failed: run
+                .summary
+                .failed
+                .iter()
+                .map(|(path, reason)| FileOpFailureDto {
+                    path: path.clone(),
+                    reason: reason.clone(),
+                })
+                .collect(),
+            undoable: run.summary.undoable,
+        })
+    })
+}
+
+#[uniffi::export]
+pub fn undo_finish(session: &SessionHandle) -> Result<FinishReportDto, FirstcutError> {
+    session.with_mut(|s| {
+        let undo = s.undo_finish()?;
+        Ok(FinishReportDto {
+            done: undo.summary.done,
+            failed: undo
+                .summary
+                .failed
+                .iter()
+                .map(|(path, reason)| FileOpFailureDto {
+                    path: path.clone(),
+                    reason: reason.clone(),
+                })
+                .collect(),
+            undoable: true,
+        })
+    })
+}
+
+/// Turns the app's settings into the planner's options, refusing anything it does not recognise.
+fn finish_options(settings: &FinishSettingsDto) -> Result<FinishOptions, FirstcutError> {
+    use crate::fileops::{KeptAction, UnkeptAction};
+
+    let unkept = match settings.unkept.as_str() {
+        "nothing" => UnkeptAction::Nothing,
+        "mark_rejected" => UnkeptAction::MarkRejectedInXmp,
+        "move_to_subfolder" => UnkeptAction::MoveToSubfolder(settings.unkept_subfolder.clone()),
+        "trash" => UnkeptAction::MoveToTrash,
+        "delete" => UnkeptAction::DeletePermanently,
+        other => {
+            return Err(FirstcutError::Store {
+                message: format!("unknown unkept action \"{other}\""),
+            });
+        }
+    };
+    let kept = match settings.kept.as_str() {
+        "none" => KeptAction::None,
+        "copy_to" => KeptAction::CopyTo(settings.kept_destination.clone()),
+        "move_to" => KeptAction::MoveTo(settings.kept_destination.clone()),
+        "split_by_tier" => KeptAction::SplitByTier(settings.kept_destination.clone()),
+        "split_by_stars" => KeptAction::SplitByStars(settings.kept_destination.clone()),
+        "write_list" => KeptAction::WriteList(settings.kept_destination.clone()),
+        other => {
+            return Err(FirstcutError::Store {
+                message: format!("unknown kept action \"{other}\""),
+            });
+        }
+    };
+    let rating_mode = match settings.rating_mode.as_str() {
+        "stars" => RatingMode::Stars,
+        "keep" => RatingMode::KeepNotKeep,
+        other => {
+            return Err(FirstcutError::Store {
+                message: format!("unknown rating mode \"{other}\""),
+            });
+        }
+    };
+    Ok(FinishOptions {
+        unkept,
+        kept,
+        rating_mode,
+    })
+}

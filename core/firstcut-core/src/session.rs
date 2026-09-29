@@ -28,6 +28,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::batch::{BatchParams, PhotoId, batch_with};
+use crate::fileops::FinishOptions;
 use crate::meta::{PhotoFingerprint, PhotoMeta, ScanResult, TimeSource};
 use crate::order;
 use crate::scan::scan_folder;
@@ -44,6 +45,27 @@ pub struct SessionBatch {
     pub visited: bool,
     /// True until visual signatures have settled this batch's boundaries.
     pub provisional: bool,
+}
+
+/// What one Finish run did, and the log it left behind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinishRun {
+    /// Groups every operation of this run in the `file_ops` table.
+    pub finish_id: i64,
+    pub summary: crate::fileops::ExecutionSummary,
+    /// One entry per planned operation, in order, including the ones that failed.
+    pub executed: Vec<crate::fileops::ExecutedOp>,
+}
+
+/// What undoing a Finish run did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinishUndo {
+    /// The run that was reversed, or `None` if there was nothing to reverse.
+    pub finish_id: Option<i64>,
+    pub summary: crate::fileops::ExecutionSummary,
+    /// True when there is no Finish run to undo, which is a different message from "the undo
+    /// failed": one is a button that does nothing, the other is an error.
+    pub nothing_to_undo: bool,
 }
 
 /// A rating change, with both sides, so the app can put one back.
@@ -112,6 +134,9 @@ pub struct Session {
     warnings: Vec<String>,
     /// Whether this session was created rather than resumed, recorded at open.
     created: bool,
+    /// Where the database lives. Remembered so reopening this same session -- after Finish moved
+    /// files, for instance -- goes back to the same place instead of to the default directory.
+    sessions_dir: PathBuf,
 }
 
 impl std::fmt::Debug for Session {
@@ -128,8 +153,26 @@ impl std::fmt::Debug for Session {
 }
 
 impl Session {
-    /// Opens a folder, creating or resuming its session database.
+    /// Opens a folder, creating or resuming its session database, in the user's real sessions
+    /// directory.
     pub fn open(folder: &Path) -> Result<(Self, SessionMatch, ScanResult), SessionError> {
+        let sessions_dir =
+            crate::store::db::sessions_dir().map_err(|e| SessionError::Store(e.to_string()))?;
+        Self::open_in(&sessions_dir, folder)
+    }
+
+    /// Opens a folder with the session database kept somewhere else.
+    ///
+    /// This exists for tests, and it is not a convenience: sessions are matched by the *content* of
+    /// a folder (see `store::identity`), so a test that opens a copy of a shoot it has opened
+    /// before -- at any path, on any run -- gets that earlier session back, by design. Sharing the
+    /// user's real sessions directory made the suite depend on what it had done in previous runs
+    /// and left databases in `~/Library/Application Support` that no test owned. Pointed at a temp
+    /// directory, each test gets a session that belongs to it and only to it.
+    pub fn open_in(
+        sessions_dir: &Path,
+        folder: &Path,
+    ) -> Result<(Self, SessionMatch, ScanResult), SessionError> {
         if !folder.is_dir() {
             return Err(SessionError::Scan(format!(
                 "{} is not a folder",
@@ -144,7 +187,8 @@ impl Session {
             )));
         }
 
-        let db = Db::open(folder).map_err(|e| SessionError::Store(e.to_string()))?;
+        let db =
+            Db::open_in(sessions_dir, folder).map_err(|e| SessionError::Store(e.to_string()))?;
         let matched = db.matched().clone();
 
         let mut photos = scan.photos.clone();
@@ -176,6 +220,7 @@ impl Session {
             rating_mode: RatingMode::Stars,
             warnings: Vec::new(),
             created: false,
+            sessions_dir: sessions_dir.to_path_buf(),
         };
         session.load_state()?;
         session.rebatch();
@@ -382,6 +427,166 @@ impl Session {
     /// Forces the pending XMP writes out. Called on batch change and on quit (task.md §6.3).
     pub fn flush(&mut self) {
         self.flush_xmp();
+    }
+
+    // ─────────────────────────────────────────────────────────── finish cull (task.md §9.7)
+
+    /// The dry run: what Finish *would* do, without touching anything.
+    ///
+    /// Every "kept" decision goes through [`Rating::is_kept`], the same function the UI rings and
+    /// the tier counts use, so the preview cannot promise something the run will not do (REV-78).
+    pub fn plan_finish(
+        &self,
+        options: &FinishOptions,
+    ) -> Result<crate::fileops::FinishPlan, SessionError> {
+        let rows = self.photo_rows()?;
+        let unvisited = self.batches.iter().filter(|b| !b.visited).count();
+        // `self.ratings` is keyed by PhotoId; the planner is keyed by the store's u64. The store
+        // masked ids on the way in, so the conversion is exact in both directions -- and doing it
+        // here, rather than in the planner, keeps the planner free of any idea that two id types
+        // exist.
+        let by_id: HashMap<u64, Rating> = self
+            .ratings
+            .iter()
+            .map(|(id, rating)| (id.0, *rating))
+            .collect();
+        Ok(crate::fileops::plan_finish(
+            &self.folder,
+            &rows,
+            &by_id,
+            options,
+            unvisited,
+        ))
+    }
+
+    /// Does what the plan says, and logs every operation so it can be undone -- including after a
+    /// relaunch, because the log is in the session database rather than in memory.
+    ///
+    /// The plan is not re-decided here. It is walked operation by operation, and the only
+    /// judgement made is the safety one: a destination that has become occupied fails that
+    /// operation instead of overwriting the file that is there.
+    pub fn execute_finish(
+        &mut self,
+        plan: &crate::fileops::FinishPlan,
+    ) -> Result<FinishRun, SessionError> {
+        let finish_id = match records::last_finish_id(&self.db)? {
+            Some(last) => last + 1,
+            None => 1,
+        };
+        let executed = crate::fileops::execute_ops(&plan.ops);
+
+        let now = crate::store::now_ms();
+        for (seq, op) in executed.iter().enumerate() {
+            records::log_file_op(
+                &self.db,
+                &records::FileOpRow {
+                    id: 0,
+                    finish_id,
+                    seq: seq as i64,
+                    kind: op.kind.as_str().to_string(),
+                    src: op.src.clone(),
+                    dst: op.dst.clone(),
+                    size_bytes: op.size_bytes,
+                    status: op.status.to_string(),
+                    error: op.error.clone(),
+                    at_ms: now,
+                },
+            )?;
+        }
+
+        // A file that moved is no longer where the session thinks it is. The photos are re-read so
+        // the next plan is built from the truth, not from a path that no longer exists.
+        self.flush_xmp();
+        self.reload_after_finish()?;
+
+        Ok(FinishRun {
+            finish_id,
+            summary: crate::fileops::summarize(&executed),
+            executed,
+        })
+    }
+
+    /// Walks the last Finish run backwards.
+    ///
+    /// Reads the log from the database rather than from anything held in memory, so "Undo Finish"
+    /// still works after the app has been quit and reopened -- which is the case where a user is
+    /// most likely to reach for it.
+    pub fn undo_finish(&mut self) -> Result<FinishUndo, SessionError> {
+        let Some(finish_id) = records::last_finish_id(&self.db)? else {
+            return Ok(FinishUndo {
+                finish_id: None,
+                summary: crate::fileops::ExecutionSummary::default(),
+                nothing_to_undo: true,
+            });
+        };
+        let rows = records::file_ops(&self.db, finish_id)?;
+
+        // Rebuild what happened from the log. Only done operations are reversible, and the log's
+        // `dst` is the file's current location, which is exactly what has to be put back.
+        let executed: Vec<crate::fileops::ExecutedOp> = rows
+            .iter()
+            .filter_map(|row| {
+                let kind = crate::fileops::FileOpKind::parse(&row.kind)?;
+                Some(crate::fileops::ExecutedOp {
+                    kind,
+                    src: row.src.clone(),
+                    dst: row.dst.clone(),
+                    size_bytes: row.size_bytes,
+                    status: if row.status == "done" {
+                        "done"
+                    } else {
+                        "failed"
+                    },
+                    error: row.error.clone(),
+                })
+            })
+            .collect();
+
+        if !executed.iter().all(|op| op.kind.is_undoable()) {
+            return Err(SessionError::Store(
+                "The last Finish run included a permanent delete, which cannot be undone.".into(),
+            ));
+        }
+
+        let undone = crate::fileops::undo_ops(&executed);
+        self.flush_xmp();
+        self.reload_after_finish()?;
+
+        Ok(FinishUndo {
+            finish_id: Some(finish_id),
+            summary: crate::fileops::summarize(&undone),
+            nothing_to_undo: false,
+        })
+    }
+
+    /// Re-reads the folder after files have moved. The session's idea of where things are is now
+    /// wrong, and a second Finish run built on it would plan moves of files that are not there.
+    fn reload_after_finish(&mut self) -> Result<(), SessionError> {
+        let dir = self.sessions_dir.clone();
+        match Session::open_in(&dir, &self.folder) {
+            Ok((restored, _, _)) => {
+                *self = restored;
+                Ok(())
+            }
+            Err(SessionError::Scan(message)) if message.starts_with("no photographs") => {
+                // Every photo was moved out by the Finish run itself. That is the run succeeding,
+                // not the folder breaking, so it is not reported as a failure -- there is simply
+                // nothing left to scan. The session keeps the state it had, which is what the
+                // summary screen shows.
+                Ok(())
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// The rows the planner needs, in capture order.
+    ///
+    /// Read from the database rather than rebuilt from the in-memory photos, because the planner
+    /// works on `PhotoRow`s and re-deriving them here would be a second definition of what a photo
+    /// row is. `photos_in_order` is the same order the batches were built from, so the dry run
+    /// orders operations the way the user saw them.
+    fn photo_rows(&self) -> Result<Vec<crate::store::records::PhotoRow>, SessionError> {
+        Ok(records::photos_in_order(&self.db)?)
     }
 
     // ───────────────────────────────────────────────────────────────────────── internals

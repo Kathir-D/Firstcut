@@ -186,3 +186,131 @@ final class CoreSessionBackendRealFolderTests: XCTestCase {
         }
     }
 }
+
+/// Finish Cull through the real core, on a real folder.
+///
+/// This is the other half of "the product works". The session test can open a folder and keep a
+/// rating; it cannot show that Finish moves the files a user was told it would move, which is the
+/// one action in this app that touches their photographs. So it is done through
+/// `CoreSessionBackend` -- the same object the Finish sheet talks to -- on a copy of a real game.
+@MainActor
+final class CoreFinishRealFolderTests: XCTestCase {
+    private var staging: URL!
+
+    override func setUpWithError() throws {
+        staging = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("firstcut-finish-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        if let staging { try? FileManager.default.removeItem(at: staging) }
+    }
+
+    /// Copies a handful of real CR3s into a scratch folder, so Finish can move files about without
+    /// touching a shoot. Returns nil, loudly, when there are no real photos to copy.
+    private func stageRealPhotos(count: Int) throws -> Bool {
+        guard let root = TestEnvironment.testPhotos else {
+            throw XCTSkip("Real photos are not available (see scripts/test-with-photos.sh).")
+        }
+        let fm = FileManager.default
+        let games = ((try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [])
+            .map { $0 as URL }
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+        for game in games.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let cr3s = ((try? fm.contentsOfDirectory(at: game, includingPropertiesForKeys: nil)) ?? [])
+                .map { $0 as URL }
+                .filter { $0.pathExtension.lowercased() == "cr3" }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            if cr3s.count >= count {
+                for cr3 in cr3s.prefix(count) {
+                    try fm.copyItem(at: cr3, to: staging.appendingPathComponent(cr3.lastPathComponent))
+                }
+                return true
+            }
+        }
+        throw XCTSkip("No game folder with \(count)+ CR3 files under \(root.path).")
+    }
+
+    func testFinishMovesTheUnkeptAndUndoBringsThemBack() throws {
+        try stageRealPhotos(count: 6)
+
+        let settings = FinishSettings(
+            unkept: .moveToSubfolder("_Not kept"), kept: .none, ratingMode: .stars)
+
+        let keptID: PhotoID
+        let rejectedID: PhotoID
+        // The file names come from the photos themselves, not from guessing: capture order and file
+        // name order are independent in this project, and a test that assumed otherwise would
+        // assert about a different photo than the one it rated.
+        let keptName: String
+        let rejectedName: String
+        do {
+            let backend = try CoreSessionBackend(folder: staging)
+            let photos = backend.data.photos
+            XCTAssertGreaterThanOrEqual(photos.count, 2)
+            // Five stars stays put; everything else is not kept and moves. An unrated photo is not
+            // one the user said to keep, which is the rule the whole plan rests on.
+            backend.setRating(photo: photos[0].id, Rating(stars: 5))
+            backend.setRating(photo: photos[1].id, Rating(flag: .reject))
+            keptID = photos[0].id
+            rejectedID = photos[1].id
+            keptName = photos[0].relPath
+            rejectedName = photos[1].relPath
+            backend.flush()
+        }
+
+        // A dry run must change nothing. Checked first, because everything after it trusts that.
+        let beforeRun = try stagedNames()
+        let planner = try CoreSessionBackend(folder: staging)
+        let plan = planner.planFinish(settings)
+        XCTAssertGreaterThan(plan.opCount, 0, "there is work to do")
+        XCTAssertTrue(plan.undoable, "nothing here is a permanent delete")
+        XCTAssertEqual(try stagedNames(), beforeRun, "planning a Finish moves no files")
+
+        let runner = try CoreSessionBackend(folder: staging)
+        let report = runner.executeFinish(plan)
+        XCTAssertTrue(report.failed.isEmpty, "no file failed: \(report.failed)")
+        XCTAssertTrue(report.undoable)
+        XCTAssertGreaterThan(report.done, 0)
+
+        let notKept = staging.appendingPathComponent("_Not kept")
+        XCTAssertTrue(
+            fmExists(notKept), "the unkept photos are in their own folder")
+        XCTAssertFalse(
+            fmExists(staging.appendingPathComponent(rejectedName)), "and no longer in the shoot")
+        XCTAssertTrue(
+            fmExists(staging.appendingPathComponent(keptName)), "the 5-star photo stayed put")
+        XCTAssertFalse(
+            fmExists(staging.appendingPathComponent("_Not kept").appendingPathComponent(keptName)),
+            "and did not go to the not-kept folder")
+
+        let undone = runner.undoFinish()
+        XCTAssertTrue(undone.failed.isEmpty, "undo reported: \(undone.failed)")
+        XCTAssertTrue(
+            fmExists(staging.appendingPathComponent(rejectedName)),
+            "Undo Finish put the photo back where it was")
+
+        // And the session still knows about both photos afterwards.
+        let after = try CoreSessionBackend(folder: staging)
+        XCTAssertEqual(after.rating(for: keptID).stars, 5)
+        XCTAssertEqual(after.rating(for: rejectedID).flag, .reject)
+    }
+
+    private var fm: FileManager { .default }
+
+    private func fmExists(_ url: URL) -> Bool {
+        fm.fileExists(atPath: url.path)
+    }
+
+    private func rejectedName() -> String {
+        ((try? fm.contentsOfDirectory(at: staging, includingPropertiesForKeys: nil)) ?? [])
+            .map { ($0 as URL).lastPathComponent }
+            .sorted()
+            .first ?? ""
+    }
+
+    private func stagedNames() throws -> [String] {
+        try fm.contentsOfDirectory(atPath: staging.path).sorted()
+    }
+}

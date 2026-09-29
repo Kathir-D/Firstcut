@@ -312,13 +312,31 @@ public struct FinishPlanData: Hashable, Sendable {
     public var bytesToCopy: UInt64
     public var warnings: [String]
 
-    public init(ops: [FileOp] = [], bytesToCopy: UInt64 = 0, warnings: [String] = []) {
+    /// One line per operation, exactly as the core words it. The dry-run sheet lists these
+    /// (task.md §9.7), so a plan that carried only a count would ask the user to agree to something
+    /// they cannot read.
+    public var previewLines: [String]
+    /// False as soon as the plan contains a permanent delete, which Undo Finish cannot reverse. The
+    /// sheet has to say so *before* anything happens.
+    public var undoable: Bool
+
+    public init(
+        ops: [FileOp] = [],
+        bytesToCopy: UInt64 = 0,
+        warnings: [String] = [],
+        previewLines: [String] = [],
+        undoable: Bool = true
+    ) {
         self.ops = ops
         self.bytesToCopy = bytesToCopy
         self.warnings = warnings
+        self.previewLines = previewLines
+        self.undoable = undoable
     }
 
-    public var opCount: Int { ops.count }
+    /// The core plans operations as text rather than as a list of paths, so `previewLines` is
+    /// normally the whole plan; `ops` is what `MockSession` fills in.
+    public var opCount: Int { ops.isEmpty ? previewLines.count : ops.count }
 
     public var bytesToCopyDescription: String {
         bytesToCopy == 0 ? "—" : ByteCountFormatter.string(fromByteCount: Int64(bytesToCopy), countStyle: .file)

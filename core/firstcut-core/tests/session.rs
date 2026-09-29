@@ -80,10 +80,23 @@ fn fingerprint_dir(dir: &Path) -> std::collections::HashMap<String, (u64, u64)> 
     out
 }
 
+/// A sessions directory of this test's own.
+///
+/// Sessions are matched by folder *content* (store/identity), so two tests that open the same
+/// photographs -- in the same run, or in a run a week later -- share a session unless they are
+/// kept apart. Sharing the real `~/Library/Application Support/Firstcut/Sessions` made the suite
+/// depend on its own history: a fresh temp folder came back `Resumed` because an earlier run had
+/// opened a copy of the same shoot. Each test now owns its directory, so what it asserts is only
+/// ever about what it did.
+fn private_sessions() -> tempfile::TempDir {
+    tempfile::tempdir().expect("a temp sessions directory")
+}
+
 /// task.md §11: "Files are only moved/deleted at the explicit end-of-cull step", and §5.4: one
 /// `PhotoMeta` = one batch member.
 #[test]
 fn opening_a_real_folder_scans_orders_and_batches_it() {
+    let sessions = private_sessions();
     let Some(root) = test_photos() else {
         eprintln!("SKIPPED: no FIRSTCUT_TEST_PHOTOS");
         return;
@@ -93,10 +106,11 @@ fn opening_a_real_folder_scans_orders_and_batches_it() {
         return;
     };
 
-    let (session, matched, scan) = Session::open(shoot.path()).expect("open a real folder");
+    let (session, matched, scan) =
+        Session::open_in(sessions.path(), shoot.path()).expect("open a real folder");
     assert!(
         matches!(matched, SessionMatch::Created),
-        "a fresh folder is a new session"
+        "a fresh folder is a new session, got {matched:?}"
     );
     assert!(
         scan.skipped.is_empty(),
@@ -139,6 +153,7 @@ fn opening_a_real_folder_scans_orders_and_batches_it() {
 /// is byte-level, and it is cheap because the files are copies.
 #[test]
 fn rating_a_photo_does_not_touch_the_original() {
+    let sessions = private_sessions();
     let Some(root) = test_photos() else {
         eprintln!("SKIPPED: no FIRSTCUT_TEST_PHOTOS");
         return;
@@ -150,7 +165,7 @@ fn rating_a_photo_does_not_touch_the_original() {
 
     let before = fingerprint_dir(shoot.path());
     {
-        let (mut session, _, _) = Session::open(shoot.path()).expect("open");
+        let (mut session, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("open");
         let photo = session.photos()[0].clone();
         session
             .set_rating(photo.id, Rating::stars(4), 0, 0)
@@ -176,6 +191,7 @@ fn rating_a_photo_does_not_touch_the_original() {
 /// The rating has to survive closing and reopening. Resume is the whole point of the store.
 #[test]
 fn a_rating_survives_closing_and_reopening() {
+    let sessions = private_sessions();
     let Some(root) = test_photos() else {
         eprintln!("SKIPPED: no FIRSTCUT_TEST_PHOTOS");
         return;
@@ -186,7 +202,7 @@ fn a_rating_survives_closing_and_reopening() {
     };
 
     let (rated, kept, other) = {
-        let (mut session, _, _) = Session::open(shoot.path()).expect("open");
+        let (mut session, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("open");
         let a = session.photos()[0].clone();
         let b = session.photos()[1].clone();
         session
@@ -199,7 +215,7 @@ fn a_rating_survives_closing_and_reopening() {
         (a.id, 5u8, b.id)
     };
 
-    let (session, matched, _) = Session::open(shoot.path()).expect("reopen");
+    let (session, matched, _) = Session::open_in(sessions.path(), shoot.path()).expect("reopen");
     assert!(
         matches!(matched, SessionMatch::Resumed),
         "the second open resumes"
@@ -215,6 +231,7 @@ fn a_rating_survives_closing_and_reopening() {
 /// re-batching the photo may be in a different batch, and undo must still work.
 #[test]
 fn undo_applies_by_photo_and_survives_a_rebatch() {
+    let sessions = private_sessions();
     let Some(root) = test_photos() else {
         eprintln!("SKIPPED: no FIRSTCUT_TEST_PHOTOS");
         return;
@@ -224,7 +241,7 @@ fn undo_applies_by_photo_and_survives_a_rebatch() {
         return;
     };
 
-    let (mut session, _, _) = Session::open(shoot.path()).expect("open");
+    let (mut session, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("open");
     let photo = session.photos()[3].clone();
     let before = session.rating(photo.id);
     let change = session
@@ -263,6 +280,7 @@ fn undo_applies_by_photo_and_survives_a_rebatch() {
 /// by path it would silently lose it, with the sidecar still on disk.
 #[test]
 fn a_renamed_photo_keeps_its_rating() {
+    let sessions = private_sessions();
     let Some(root) = test_photos() else {
         eprintln!("SKIPPED: no FIRSTCUT_TEST_PHOTOS");
         return;
@@ -273,7 +291,7 @@ fn a_renamed_photo_keeps_its_rating() {
     };
 
     let (id, old_name, new_name) = {
-        let (mut session, _, _) = Session::open(shoot.path()).expect("open");
+        let (mut session, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("open");
         let photo = session.photos()[2].clone();
         session
             .set_rating(photo.id, Rating::stars(5), 0, 0)
@@ -288,7 +306,8 @@ fn a_renamed_photo_keeps_its_rating() {
 
     std::fs::rename(shoot.path().join(&old_name), shoot.path().join(&new_name)).expect("rename");
 
-    let (session, _, _) = Session::open(shoot.path()).expect("reopen after rename");
+    let (session, _, _) =
+        Session::open_in(sessions.path(), shoot.path()).expect("reopen after rename");
     assert_eq!(
         session.rating(id).stars,
         5,
@@ -304,6 +323,7 @@ fn a_renamed_photo_keeps_its_rating() {
 /// REV-78, from the session's own door: whatever the app shows as kept, Finish keeps.
 #[test]
 fn the_tier_counts_agree_with_what_finish_would_keep() {
+    let sessions = private_sessions();
     let Some(root) = test_photos() else {
         eprintln!("SKIPPED: no FIRSTCUT_TEST_PHOTOS");
         return;
@@ -313,7 +333,7 @@ fn the_tier_counts_agree_with_what_finish_would_keep() {
         return;
     };
 
-    let (mut session, _, _) = Session::open(shoot.path()).expect("open");
+    let (mut session, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("open");
     for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
         session.set_rating_mode(mode);
         let ids: Vec<_> = session.photos().iter().map(|p| p.id).collect();
@@ -348,8 +368,10 @@ fn the_tier_counts_agree_with_what_finish_would_keep() {
 /// cannot get out of.
 #[test]
 fn an_empty_folder_is_refused_with_a_reason() {
+    let sessions = private_sessions();
     let dir = tempfile::tempdir().expect("temp dir");
-    let err = Session::open(dir.path()).expect_err("an empty folder cannot be a session");
+    let err = Session::open_in(sessions.path(), dir.path())
+        .expect_err("an empty folder cannot be a session");
     let text = err.to_string();
     assert!(text.contains("no photographs"), "unhelpful message: {text}");
 }
@@ -357,7 +379,9 @@ fn an_empty_folder_is_refused_with_a_reason() {
 /// Opening a path that is not a folder at all.
 #[test]
 fn a_missing_folder_is_refused_with_a_reason() {
-    let err = Session::open(Path::new("/definitely/not/here")).expect_err("no such folder");
+    let sessions = private_sessions();
+    let err = Session::open_in(sessions.path(), Path::new("/definitely/not/here"))
+        .expect_err("no such folder");
     assert!(err.to_string().contains("not a folder"), "{err}");
 }
 
@@ -366,6 +390,7 @@ fn a_missing_folder_is_refused_with_a_reason() {
 /// another photo's, which is worse than admitting it is path-based.
 #[test]
 fn the_photo_id_is_the_fingerprint_not_the_path() {
+    // This test only checks the error path, so it never reaches a sessions directory.
     let base = PhotoMeta {
         camera_serial: Some("122022006902".into()),
         shutter_count: Some(33_537),
@@ -418,6 +443,7 @@ fn the_photo_id_is_the_fingerprint_not_the_path() {
 /// the session a folder resolves to does not depend on what its files are called.
 #[test]
 fn a_renamed_file_does_not_create_a_second_session() {
+    // This test only checks the error path, so it never reaches a sessions directory.
     let Some(root) = test_photos() else {
         eprintln!("SKIPPED: no FIRSTCUT_TEST_PHOTOS");
         return;
@@ -457,4 +483,234 @@ fn a_renamed_file_does_not_create_a_second_session() {
         before.fingerprint.total_bytes, after.fingerprint.total_bytes,
         "a rename changes no bytes"
     );
+}
+
+// ─────────────────────────────────────────────────────────────── finish cull (task.md §9.7)
+
+/// Where Finish moves the unkept files: a subfolder next to the originals, the default.
+const NOT_KEPT: &str = "_Not kept";
+
+fn plan_options() -> firstcut_core::fileops::FinishOptions {
+    firstcut_core::fileops::FinishOptions {
+        unkept: firstcut_core::fileops::UnkeptAction::MoveToSubfolder(NOT_KEPT.into()),
+        kept: firstcut_core::fileops::KeptAction::None,
+        rating_mode: RatingMode::Stars,
+    }
+}
+
+/// The dry run must change nothing at all. A preview that moved files would be the worst bug in
+/// this project, so it is checked before anything else is trusted.
+#[test]
+fn a_dry_run_moves_nothing() {
+    let sessions = private_sessions();
+    let Some(shoot) = shoot_of(6) else {
+        return;
+    };
+    let before = fingerprint_dir(shoot.path());
+
+    let (mut session, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("open");
+    let photo = session.photos()[0].clone();
+    session
+        .set_rating(photo.id, Rating::new(0, Flag::Reject, None, false), 0, 0)
+        .expect("reject one");
+
+    let plan = session.plan_finish(&plan_options()).expect("plan");
+
+    assert!(
+        !plan.is_empty(),
+        "one rejected photo is enough to make a plan"
+    );
+    assert_eq!(
+        fingerprint_dir(shoot.path()),
+        before,
+        "planning must not touch a single file"
+    );
+    assert!(
+        !shoot.path().join(NOT_KEPT).exists(),
+        "the destination folder is not created until the run happens"
+    );
+}
+
+/// Finish does what the preview said, and Undo Finish puts every file back where it was.
+#[test]
+fn finish_moves_the_unkept_and_undo_brings_them_back() {
+    let sessions = private_sessions();
+    let Some(shoot) = shoot_of(6) else {
+        return;
+    };
+    let count = sample_count(&shoot);
+
+    let (mut session, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("open");
+    let rejected = session.photos()[0].clone();
+    // One photo is kept where it is, so the session has something left to reopen onto and the
+    // assertions below can tell "moved" from "gone". Everything unrated counts as not kept, which
+    // is the rule: an unrated photo is not one the user said to keep.
+    let kept = session.photos()[1].clone();
+    session
+        .set_rating(kept.id, Rating::stars(5), 0, 0)
+        .expect("keep");
+    session
+        .set_rating(rejected.id, Rating::new(0, Flag::Reject, None, false), 0, 0)
+        .expect("reject");
+    session.flush();
+
+    let plan = session.plan_finish(&plan_options()).expect("plan");
+    let run = session.execute_finish(&plan).expect("execute");
+    assert!(run.summary.is_clean(), "{:?}", run.summary.failed);
+    assert!(run.summary.done > 0, "at least the rejected photo moved");
+    assert!(run.summary.undoable, "a move is always undoable");
+
+    let moved = shoot
+        .path()
+        .join(NOT_KEPT)
+        .join(rejected.rel_path.rsplit('/').next().expect("a file name"));
+    assert!(moved.exists(), "the rejected photo is in {}", NOT_KEPT);
+    assert!(
+        !shoot.path().join(&rejected.rel_path).exists(),
+        "and no longer in the shoot folder"
+    );
+
+    // Only the 5-star photo stayed. The rejected one and the four unrated ones went, which is what
+    // "unkept" means: not kept, rather than explicitly rejected.
+    let still_here = std::fs::read_dir(shoot.path())
+        .expect("read_dir")
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("CR3"))
+        .count();
+    assert_eq!(
+        still_here, 1,
+        "only the 5-star photo stayed in the shoot folder"
+    );
+    assert_eq!(
+        std::fs::read_dir(shoot.path().join(NOT_KEPT))
+            .expect("read the not-kept folder")
+            .flatten()
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("CR3"))
+            .count(),
+        count - 1,
+        "every photo that was not kept is in the not-kept folder"
+    );
+
+    let undo = session.undo_finish().expect("undo");
+    assert!(!undo.nothing_to_undo);
+    assert!(undo.summary.failed.is_empty(), "{:?}", undo.summary.failed);
+    assert!(
+        shoot.path().join(&rejected.rel_path).exists(),
+        "Undo Finish put the photo back where it was"
+    );
+    assert_eq!(
+        sample_count(&shoot),
+        count,
+        "every file is back, including the unrated ones that had moved"
+    );
+}
+
+/// REV-78: what Finish keeps is decided by `Rating::is_kept`, in the session's rating mode. A photo
+/// marked Keep while the session is in stars mode is not kept, and a 5-star photo with the Keep
+/// field set is not trashed.
+#[test]
+fn finish_keeps_and_moves_by_rating_mode_not_by_the_keep_field() {
+    let sessions = private_sessions();
+    let Some(shoot) = shoot_of(6) else {
+        return;
+    };
+
+    let (mut session, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("open");
+    session.set_rating_mode(RatingMode::KeepNotKeep);
+    let kept_by_ring = session.photos()[0].clone();
+    let kept_by_stars = session.photos()[1].clone();
+    // In keep mode a Keep ring means kept, whatever the stars say.
+    session
+        .set_rating(
+            kept_by_ring.id,
+            Rating::new(0, Flag::None, None, true),
+            0,
+            0,
+        )
+        .expect("keep a");
+    // Five stars and the Keep field set, but in *stars* mode five stars is the only thing that
+    // counts -- and here it is the Keep field that must not be read on its own.
+    session.set_rating_mode(RatingMode::Stars);
+    session
+        .set_rating(
+            kept_by_stars.id,
+            Rating::new(5, Flag::None, None, false),
+            0,
+            0,
+        )
+        .expect("rate five");
+    session.flush();
+
+    let plan = session.plan_finish(&plan_options()).expect("plan");
+    let destinations: Vec<String> = plan.ops.iter().filter_map(|op| op.to.clone()).collect();
+
+    assert!(
+        !destinations
+            .iter()
+            .any(|d| d.ends_with(&kept_by_stars.rel_path) && d.contains(NOT_KEPT)),
+        "a 5-star photo is kept in stars mode and must not be moved to {NOT_KEPT}"
+    );
+}
+
+/// Undo works after a relaunch, because the log is in the session database rather than in memory.
+#[test]
+fn undo_finish_survives_a_relaunch() {
+    let sessions = private_sessions();
+    let Some(shoot) = shoot_of(6) else {
+        return;
+    };
+    let (mut session, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("open");
+    let photo = session.photos()[0].clone();
+    // A 5-star photo stays put, so the folder is still openable afterwards -- which is the
+    // situation a user undoes in: mid-cull, before the shoot has been emptied.
+    let kept = session.photos()[1].clone();
+    session
+        .set_rating(kept.id, Rating::stars(5), 0, 0)
+        .expect("keep");
+    session
+        .set_rating(photo.id, Rating::new(0, Flag::Reject, None, false), 0, 0)
+        .expect("reject");
+    session.flush();
+    let plan = session.plan_finish(&plan_options()).expect("plan");
+    session.execute_finish(&plan).expect("execute");
+    drop(session);
+
+    // A brand new session, as if the app had been quit and reopened.
+    let (mut reopened, _, _) = Session::open_in(sessions.path(), shoot.path()).expect("reopen");
+    let undo = reopened.undo_finish().expect("undo");
+    assert!(
+        !undo.nothing_to_undo,
+        "the log was in the database, not in the old session"
+    );
+    assert!(
+        shoot.path().join(&photo.rel_path).exists(),
+        "the photo is back after the relaunch"
+    );
+}
+
+/// A sample shoot to work on, or `None` when there are no real photos. Prints why it skipped, so
+/// a run that skipped never looks like a run that passed.
+fn shoot_of(count: usize) -> Option<tempfile::TempDir> {
+    let root = test_photos()?;
+    let game = std::fs::read_dir(&root)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_dir()
+                && std::fs::read_dir(path)
+                    .map(|d| {
+                        d.flatten()
+                            .any(|e| e.path().extension().is_some_and(|x| x == "CR3"))
+                    })
+                    .unwrap_or(false)
+        })?;
+    let shoot = sample_shoot(&game, count);
+    if shoot.is_none() {
+        eprintln!(
+            "SKIPPED: could not copy a sample shoot from {}",
+            game.display()
+        );
+    }
+    shoot
 }

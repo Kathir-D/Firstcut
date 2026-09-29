@@ -32,6 +32,9 @@ public final class CoreSessionBackend: SessionBackend {
     private let session: FirstcutCore.SessionHandle
     private let folder: URL
     private var cache: SessionData
+    /// The settings the last dry run was built from. Execution has to use the same ones, or the
+    /// run would not be the run that was previewed.
+    private var lastFinishSettings = FinishSettings()
 
     /// Opens a real folder. Throws a sentence the user can act on, because a bare Rust error
     /// surfaced by `AppModel.open` is not something anyone can do anything about.
@@ -163,18 +166,64 @@ public final class CoreSessionBackend: SessionBackend {
         _ = sigs
     }
 
+    /// The dry run. Changes nothing on disk -- the sheet the user agrees to is the truth, and that
+    /// is only true because the planner is pure.
     public func planFinish(_ settings: FinishSettings) -> FinishPlanData {
-        // The planner lives in Rust (`fileops::plan_finish`) and is not yet exported. Until it is,
-        // the plan is empty, so Finish does nothing rather than doing the wrong thing.
-        FinishPlanData(ops: [], bytesToCopy: 0, warnings: ["Finish is not available in this build."])
+        lastFinishSettings = settings
+        do {
+            let plan = try FirstcutCore.planFinish(
+                session: session, settings: settings.coreValue)
+            return FinishPlanData(
+                bytesToCopy: plan.bytesToCopy,
+                // The plan's own words first, then whether it can be taken back. A permanent delete
+                // has to be said out loud *before* anything happens, not discovered afterwards
+                // that Undo Finish was never going to exist.
+                warnings: plan.warnings + (plan.undoable ? [] : ["This cannot be undone."]),
+                previewLines: plan.previewLines,
+                undoable: plan.undoable)
+        } catch {
+            listener?.sessionDidFailWritingXMP(
+                photo: 0, message: "Couldn't work out what to do: \(error.localizedDescription)")
+            return FinishPlanData(ops: [], bytesToCopy: 0, warnings: ["Finish is unavailable."])
+        }
     }
 
+    /// Does it. The plan is taken and run inside the core as one call, so what happens is exactly
+    /// what these settings asked for -- and the photo list is re-read afterwards, because files
+    /// that moved are not where the session last saw them.
     public func executeFinish(_ plan: FinishPlanData) -> FinishReportData {
-        FinishReportData(done: 0, failed: [], undoable: true)
+        do {
+            let report = try FirstcutCore.executeFinish(
+                session: session, settings: lastFinishSettings.coreValue)
+            refresh()
+            return FinishReportData(
+                done: Int(report.done),
+                failed: report.failed.map { FileOpFailure(path: $0.path, reason: $0.reason) },
+                undoable: report.undoable)
+        } catch {
+            return FinishReportData(
+                done: 0,
+                failed: [FileOpFailure(path: folder.path, reason: error.localizedDescription)],
+                undoable: true)
+        }
     }
 
+    /// Undo Finish. Reads the log from the session database, so it still works after a relaunch --
+    /// which is when somebody who has just moved a shoot is most likely to want it.
     public func undoFinish() -> FinishReportData {
-        FinishReportData(done: 0, failed: [], undoable: true)
+        do {
+            let report = try FirstcutCore.undoFinish(session: session)
+            refresh()
+            return FinishReportData(
+                done: Int(report.done),
+                failed: report.failed.map { FileOpFailure(path: $0.path, reason: $0.reason) },
+                undoable: true)
+        } catch {
+            return FinishReportData(
+                done: 0,
+                failed: [FileOpFailure(path: folder.path, reason: error.localizedDescription)],
+                undoable: true)
+        }
     }
 
     public func flush() {
@@ -320,5 +369,43 @@ extension Flag {
         case .pick: 1
         case .reject: 2
         }
+    }
+}
+
+// MARK: - Finish settings
+
+extension FinishSettings {
+    /// The names the Rust side matches on, exactly. Nothing is defaulted: an action the core does
+    /// not know is refused there, because guessing at somebody's files is not a recoverable mistake.
+    var coreValue: FirstcutCore.FinishSettingsDto {
+        // The wire names are spelled out rather than derived from the Swift case names, because
+        // renaming a Swift case must not silently change what the core is asked to do.
+        let unkeptAction: String
+        let unkeptSubfolder: String
+        switch unkept {
+        case .nothing: unkeptAction = "nothing"; unkeptSubfolder = ""
+        case .markRejectedInXmp: unkeptAction = "mark_rejected"; unkeptSubfolder = ""
+        case .moveToSubfolder(let name): unkeptAction = "move_to_subfolder"; unkeptSubfolder = name
+        case .moveToTrash: unkeptAction = "trash"; unkeptSubfolder = ""
+        case .deletePermanently: unkeptAction = "delete"; unkeptSubfolder = ""
+        }
+
+        let keptAction: String
+        let keptDestination: String
+        switch kept {
+        case .none: keptAction = "none"; keptDestination = ""
+        case .copyTo(let path): keptAction = "copy_to"; keptDestination = path
+        case .moveTo(let path): keptAction = "move_to"; keptDestination = path
+        case .splitByTier(let path): keptAction = "split_by_tier"; keptDestination = path
+        case .splitByStars(let path): keptAction = "split_by_stars"; keptDestination = path
+        case .writeList(let path): keptAction = "write_list"; keptDestination = path
+        }
+
+        return FirstcutCore.FinishSettingsDto(
+            unkept: unkeptAction,
+            unkeptSubfolder: unkeptSubfolder,
+            kept: keptAction,
+            keptDestination: keptDestination,
+            ratingMode: ratingMode == .keep ? "keep" : "stars")
     }
 }
