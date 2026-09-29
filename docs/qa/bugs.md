@@ -1,15 +1,13 @@
 # Bug list
 
-- **Owner:** qa. qa files bugs in other agents' code; **the owner fixes them**, qa closes them.
-- Senior-dev's `docs/review.md` findings (`REV-n`) are a separate, pre-merge channel. A `REV` that
-  turns into shipped broken behaviour becomes a `BUG` here; a `BUG` found before merge should
-  become a `REV`.
+- File bugs here as `BUG-n`. Fix them, then close them with the commit that fixes them.
+- Old review-board findings (`REV-n`) are in git only: `git show 4d4e43d:docs/review.md`.
 
 **Severity:** **P0** data loss, a crash on real photos, or a broken build · **P1** a documented
 feature does not work, a §7.3 target is missed, or work is silently lost · **P2** wrong or missing
 behaviour with a workaround · **P3** cosmetic.
 
-**No open P0/P1 at the v0.1.0 sign-off** (docs/agents/qa.md, end goal).
+**No open P0/P1 at the v0.1.0 sign-off** (end goal).
 
 ## Open
 

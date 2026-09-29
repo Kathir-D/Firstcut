@@ -23,7 +23,7 @@ Firstcut/
 │   ├── Resources/            # ui: Assets; app-logic: DefaultKeymap.json; infra: Info.plist
 │   ├── Generated/            # infra: UniFFI Swift bindings (git-ignored, built)
 │   └── Tests/
-│       ├── Unit/<Area>/      # each agent owns the tests for its own area
+│       ├── Unit/<Area>/      # tests grouped by area
 │       ├── Integration/      # qa
 │       └── Performance/      # qa
 ├── core/
@@ -138,28 +138,16 @@ cached. The release workflow (`.github/workflows/release.yml`) runs on `v*` tags
 Before CI existed, the rule was to run the same checks locally before merging; that is no longer
 required, but it is still the fastest way to catch a break.
 
-## Git workflow for parallel agents
+## Git workflow
 
-- **One worktree and one branch per agent, already created.** Work only in yours:
-  `~/Documents/projects/Firstcut-wt/<agent>` on branch `agent/<agent>` (upstream set). Don't create
-  worktrees. The main checkout (`~/Documents/projects/Firstcut`) stays on `main` and isn't used for work.
-- **Reading other agents' files**: always read the live copy from the owner's worktree,
-  `~/Documents/projects/Firstcut-wt/<owner>/<path>`, e.g. `.../Firstcut-wt/senior-dev/docs/review.md`
-  or `.../Firstcut-wt/core-store/docs/contracts/session-api.md`. Your own checkout only has what's been
-  merged to `main`. Committed state is also available via `git show agent/<owner>:<path>`.
-- **Commit often, push right after every commit** (`git push -u origin agent/<agent>` the first time).
-- **Stay current**: `git merge origin/main` into your branch. Don't rebase shared branches.
-  **Never force-push.**
-- **Landing work**: open a PR from `agent/<agent>` to `main` (`gh pr create`) and merge it once CI is
-  green and senior-dev hasn't requested changes (a P0 finding in your area blocks merging). Ownership is disjoint, so conflicts should be rare. If you hit one in a file you don't own,
-  stop and file a request rather than resolving it yourself.
-- **Until infra's CI workflow exists**, "CI green" means you ran the checks locally in your worktree
-  before merging: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` (in `core/`), then
-  `xcodegen` and the Swift test command above. Say so in the PR description.
-- **Keep `main` green**: after merging, pull `main` and re-run the checks. If `main` is broken and your
-  merge caused it, fix it or revert your merge (`git revert`, never a force-push) right away, and note
-  it in your status file. If it isn't yours, tell the owner through a request and tell senior-dev.
-- Commit messages: `<agent>: <what>` (for example `core-batch: adaptive frame interval`).
+- **One agent, work on `main`.** `git pull` before starting, commit small, **push right after every
+  commit**. Short branches are fine; merge them straight into `main` (`gh pr create` + merge, or a local
+  merge). **Never force-push, never rebase `main`.**
+- **Checks before pushing** (CI runs the same): `cargo fmt --check`, `cargo clippy --all-targets -- -D
+  warnings`, `cargo test` (in `core/`), then `scripts/generate-project.sh` and the Swift test command above.
+- **Keep `main` green**: if a push breaks it, fix it or `git revert` right away (never a force-push).
+- Commit messages: say what changed and why, in plain prose (for example `Batching: never join a pair
+  whose time runs backwards`).
 
 ## Changelog
 
@@ -169,5 +157,4 @@ required, but it is still the fastest way to catch a break.
   `scripts/build-core.sh` output paths, and `CoreBridge.swift` as the single import site for
   `FirstcutCore`. `CoreTypes.swift` is unchanged. No breaking changes: Swift sources are still
   picked up by folder, and `App/Generated/` is optional in `project.yml` so a clean clone can run
-  `xcodegen` before the first core build. **Proposed freeze at v1.0** — pending senior-dev's
-  approval (see `docs/agents/infra.md`, REQ-infra-3).
+  `xcodegen` before the first core build. **Proposed freeze at v1.0** — pending sign-off (see the old infra charter, `git show 4d4e43d:docs/agents/archive/infra.md`).

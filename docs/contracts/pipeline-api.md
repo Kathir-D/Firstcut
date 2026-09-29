@@ -48,7 +48,7 @@ shows a `DisplayImage`, handles pinch and click-to-100% gestures, and draws the 
 overlays. **ui** embeds it and styles the space around it; **app-logic** tells it the zoom state through
 `ViewerState` (defined in [app-model.md](app-model.md)).
 
-## Outputs to other agents
+## Outputs to other areas
 
 - **VisualSig** for every photo, computed from the thumbnail with the algorithm in
   [batching.md](batching.md), delivered through `Session.submit_visual_sigs` in chunks as thumbnails finish.

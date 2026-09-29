@@ -4,196 +4,150 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
-**Status (2026-09-29): ready for all agents to start at once.** The plan is agreed and the bootstrap
-is done: a compiling Rust workspace and Xcode project skeleton (empty modules, no features), shared Swift
-stand-in types, exiftool fixtures for all four test games, and one git worktree per agent. See §0.7.
-
-**Work is split across 9 parallel agents.** How they're organized, the rules they follow, and the
-schedule are in [§0](#0-team-protocol--schedule) below. Their charters, live status, contracts, and the
-senior dev's review board live in [`docs/`](docs/).
+**Status (2026-09-29): everything is on `main`, and parts of it are broken.** Nine parallel agents
+wrote the first version, then their work was consolidated onto one tree and merged. One agent (you)
+now continues from here. Read [§0](#0-where-we-left-off) first: it says what works, what does not, and
+what to do next.
 
 ---
 
-## 0. Team, protocol & schedule
+## 0. Where we left off
 
-> Every session starts by reading this section.
+> Every session starts by reading this section, then `AGENTS.md`.
 
-### 0.1 Roster
+### 0.1 How the project is run now
 
-Two agents. One writes, one reviews and merges. This replaced a nine-agent parallel arrangement on
-2026-09-29; the reason and the consequences are in [§0.10](#010-why-two-agents).
+**One agent, one branch, no reviewer.** Work on `main` directly or on short branches merged straight
+into it. Commit and push after every meaningful change (the owner's global rule). Never force-push.
+The nine-agent arrangement (roster, worktrees, review board, per-agent charters) is gone; its history
+is in git only:
 
-| Agent | Mission | End goal (done when…) | Owns | Charter + status |
-| --- | --- | --- | --- | --- |
-| **senior-dev** | Technical lead. Reviews every change, owns the contracts' consistency, runs the gates, merges to `main` | No open P0/P1 at any wave gate; v0.1.0 signed off; the tag is pushed | `docs/review.md`, `docs/agents/senior-dev.md`, `task.md` §0, merges to `main` | [docs/agents/senior-dev.md](docs/agents/senior-dev.md) |
-| **worker** | Writes everything else, in the order of the critical path | Every deliverable in §0.5 is ticked and signed off; `scripts/build-app.sh` produces a working signed app; a `v*` tag ships it | Everything except `docs/review.md` and `docs/agents/senior-dev.md` | [docs/agents/worker.md](docs/agents/worker.md) |
-
-There is no second opinion on the code any more, so the review has to be the compensation: deep,
-measured, and adversarial. senior-dev does not write feature code, except in an emergency where a
-P0 must be fixed and the worker is mid-flight — in which case the fix is committed separately with a
-`senior-dev:` prefix and explained in `review.md`.
-
-### 0.2 How the two fit together
-
-```
-                    ┌──────────── worker ────────────┐
-  task.md §0.5  →   │ core-meta → core-batch →        │  →  one branch
-  critical path     │ core-store → pipeline →          │     one PR
-                    │ app-logic → ui → qa              │     never merged
-                    └──────────────┬───────────────────┘     by the worker
-                                   │  push
-                    ┌──────────────▼───────────────────┐
-                    │ senior-dev: review, gate, merge  │  →  main
-                    └──────────────────────────────────┘
+```sh
+git show 4d4e43d:docs/review.md            # the senior-dev review board, 74+ findings (REV-n)
+git show 4d4e43d:docs/agents/worker.md     # the last worker charter and status
+git show 4d4e43d:docs/agents/archive/      # the original eight area charters
 ```
 
-Everything in one agent's head at once is the point: there is no handoff, so no duplicated type, no
-interface invented twice, and no waiting. The cost is that one context carries the whole project, so
-`docs/review.md` and this section are the shared memory — if the worker loses the thread, they are
-rebuilt from these two files, not from a summary.
+Because there is no reviewer any more, the discipline is: **a task is not done until something
+asserts it, and a performance number is not done until it is measured.** For anything visual, build,
+launch, `screencapture`, *look at the image*, compare with Finder, fix, repeat (see §0.5).
 
-### 0.3 Contracts
+### 0.2 State of the tree (measured 2026-09-29, at the merge to `main`)
 
-| Contract | Owner | Approver |
-| --- | --- | --- |
-| [build.md](docs/contracts/build.md): repo layout, names, build/test commands, git workflow | worker | senior-dev |
-| [photo-meta.md](docs/contracts/photo-meta.md): `PhotoMeta`, `scan_folder()` | worker | senior-dev |
-| [batching.md](docs/contracts/batching.md): `order()`, `batch()`, `Batch`, `VisualSig` | worker | senior-dev |
-| [session-api.md](docs/contracts/session-api.md): the Swift-visible `Session` | worker | senior-dev |
-| [pipeline-api.md](docs/contracts/pipeline-api.md): `ImageProvider`, viewer layer, stats | worker | senior-dev |
-| [app-model.md](docs/contracts/app-model.md): `AppModel`, `Command`, keymap | worker | senior-dev |
-
-One owner for all six, so a breaking change is a conversation rather than a negotiation. senior-dev
-still approves every contract before its v1.0 freeze and reviews every breaking change.
-
-### 0.4 Protocol
-
-**Reading other people's files is no longer a hazard** — there is only one worker, so there is one
-worktree that matters: `~/Documents/projects/Firstcut-wt/worker` on `agent/worker`. senior-dev reads
-from it and never writes to it.
-
-**Start of every work session**
-1. Read this §0, then `docs/agents/worker.md` (or your own charter), then [build.md](docs/contracts/build.md).
-2. Read **[`docs/review.md`](docs/review.md)** — the live copy is
-   `~/Documents/projects/Firstcut-wt/senior-dev/docs/review.md`. The copy in your own checkout is
-   from `main` and is stale. Fix every open finding addressed to you or to "All agents" before
-   starting new work, highest severity first.
-3. Check the changelog of each contract you touch.
-
-**What the worker may edit**
-- ✅ Every code path, every contract, its own `docs/agents/worker.md` Live status.
-- ✅ `task.md`: ticks boxes for its own deliverables and adds measurements to §3.
-- ❌ `docs/review.md` and `docs/agents/senior-dev.md` (senior-dev only). Requests, not edits.
-
-**Responding to a finding.** Add a row to **Incoming requests** in your own status file:
-`REV-n` · `fixed in <sha>` or `disputed: <reason>`. senior-dev verifies against the diff and closes
-it in `review.md`. If you disagree, say why — an unresolved dispute goes to the owner, who decides.
-Never skip a finding silently.
-
-**Contract changes.** Additive: edit, add a changelog line, ship. Breaking: propose it under
-**Proposed changes** in the contract, and do not merge until senior-dev has acknowledged it in
-`review.md`. Versions are `vMAJOR.MINOR`.
-
-**End of every work session**
-- Update your Live status (focus, done log with commit hashes, blockers, requests, finding
-  responses) **in the same commit as the work it describes**.
-- Tick your boxes in `task.md`; commit and push.
-
-**Definition of done for any task**
-- Code + tests, CI green, measurements recorded where asked, status updated, contract updated if its
-  surface changed, and **reviewed by senior-dev with no open P0/P1 on it**.
-
-### 0.5 Schedule
-
-The waves are a priority order, not a calendar. Work the critical path in §0.9 top to bottom; the
-wave a task belongs to only says what to do when two things are both ready.
-
-| Wave | Goal | What "done" means | Gate |
-| --- | --- | --- | --- |
-| **1. Foundations** | Everything compiles, every contract frozen at v1.0 | `cargo test` and `xcodebuild test` green on the merged tree; the six contracts approved; CI enforcing fmt, clippy, warnings-as-errors, swift-format | senior-dev signs off in `review.md` |
-| **2. Real data** | It runs on the test games | CR3 parser matches exiftool on all 2,880 files; `order()`+`batch()` measured ≥ 98% boundary F1 against visually checked ground truth; the app opens a real folder through the real `Session` | ground truth spot-checked by senior-dev, not self-certified |
-| **3. Features** | Feature complete | Finish Cull end to end with undo, both rating modes, Settings, keymap editor, every §9 screen | senior-dev checks each screen against task.md §9 and the Finder reference |
-| **4. Polish & ship** | v0.1.0 | Liquid Glass pass, macOS 15 fallback, accessibility, README screenshots, `v*` tag published, cask live | senior-dev signs off; the release exists |
-
-### 0.6 Which agent ticks what in task.md
-
-| Section | Who |
+| Check | Result |
 | --- | --- |
-| §0 Team, protocol & schedule | senior-dev (owner-approved) |
-| §3 Measured facts | worker adds measurements, senior-dev verifies them |
-| §5 Batching · §6 Rating modes · §7 Pipeline & performance · §7.4 Scan · §8 Formats | worker |
-| §9 UI/UX · §10 Shortcuts · §9.7 Finish flow | worker |
-| §11 Session & persistence | worker |
-| §12 Testing | worker (own code), senior-dev (verifies coverage) |
-| §13 Build, CI & distribution | worker |
-| §14 Milestones | worker ticks items, senior-dev signs each milestone off |
+| `cargo test --manifest-path core/Cargo.toml` | **green** — 274 lib tests + integration tests |
+| `xcodebuild -project Firstcut.xcodeproj -scheme Firstcut -destination 'platform=macOS,arch=arm64' test` | **does not compile** — `App/Tests/Integration/RealRawDecodeTests.swift:54,74`: missing argument `orientation` in a call. It is the test that goes with the in-progress `App/Sources/Pipeline/ImageProvider.swift` (memory budget, `focusMisses` counter), which was mid-edit when work stopped |
+| Boundary F1 (batching) | **UNMEASURED** — no verified ground truth exists yet (§5.4). The suite prints a loud SKIPPED instead of passing |
+| `swift-format`, warnings-as-errors in CI | not enforced yet |
 
-### 0.7 Git workflow
+Fix the Swift test compile error first; it is the only thing between here and a green tree.
 
-- **One branch, one PR, never merged by the author.** The worker works on `agent/worker` and keeps one
-  PR open to `main` for the life of the project. senior-dev merges.
-- **Never force-push, never rebase `main`.** `git merge origin/main` into the branch to stay current.
-- **Integration.** To keep `main` releasable rather than stale for weeks, senior-dev periodically
-  merges the branch:
+### 0.3 What was merged, and the parked code
 
-  ```sh
-  git switch -c integrate/checkpoint main
-  git merge --no-ff agent/worker
-  cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-  scripts/build-core.sh && xcodegen && xcodebuild … test
-  git merge --no-ff integrate/checkpoint main
-  ```
+The merge brought together two lines of work that had each implemented the same things separately:
+the **consolidated tree** (`integrate/consolidate`: Rust `meta/cr3.rs` CR3 reader, `scan/mod.rs`,
+`session.rs`, `ffi.rs`, `Pipeline/ImageProvider.swift`, `CGImageViewerHost.swift`, real
+`AppEnvironment` wiring) and the **worker branch** (`agent/worker`: its own CR3 parser in
+`scan/cr3.rs`, a real-folder `Session`, `LiveCullViewState`, `PreviewPipeline`, contact-sheet tools).
+On every conflict the consolidated tree won. The worker's parallel versions of the same features were
+**parked, not deleted**, in case they are better in places:
 
-  Conflicts are expected in exactly six files — `core/Cargo.lock`, `core/*/Cargo.toml`,
-  `App/Sources/Shared/CoreTypes.swift`, `project.yml`, `docs/contracts/build.md`, `task.md` — and
-  senior-dev resolves them. A checkpoint merge is a full-suite run on the merged tree, which is the
-  only thing that proves the tree works as a whole.
-- **CI.** Infra's `ci.yml` lives on `main` now, so every push runs fmt/clippy/test and the Swift
-  build. If the Swift job reports "pending" for a long time it is macOS runner queueing, not failure.
+| Parked at | What it is | To use it |
+| --- | --- | --- |
+| `parked/worker-scan-cr3.rs` | Worker's CR3 parser (813 lines) | Compare with `core/firstcut-core/src/meta/cr3.rs`; both claim exiftool parity on 2,880 files |
+| `parked/worker-swift/App/…` | `LiveCullViewState`, `PreviewPipeline`, `PreviewImageSource`, `PreviewViewerView`, `CoreErrorInfo`, `CoreSessionBackendRealFolderTests` | Move back under `App/`, reconcile with `AppEnvironment`, regenerate the project |
+| `core/firstcut-core/tests/parked/worker_{cr3,session}.rs` | Worker's integration tests against its own API | Cargo does not build `tests/parked/`; port them to the consolidated API |
+| `tools/contact-sheet/`, `scripts/build-contact-sheet.sh`, `scripts/test-with-photos.sh` | Contact-sheet renderer (Core Text) and the opt-in real-photo test runner | Live, working from the worker branch; the batch/`eval` CLI hooks they pair with were overwritten by the consolidated `firstcut-cli` |
 
-### 0.8 Testing
+Also taken from the consolidated side over the worker's: the batching files (`batch/*`, REV-63 was
+fixed differently on each side), `store/*`, `xmp/*` and `fileops/*`. Worker-only fixes to
+`fileops` (a 700-line expansion, REV-78 "one function answers is-this-kept") were dropped with it;
+re-check that the Finish step decides keep-versus-trash from the *mapped tier*, never the raw `keep`
+field, and that unkeeping clears the 5 stars it invented.
 
-Not a separate agent any more, so it is a discipline rather than a role: **a task is not done until
-something asserts it.** Each area carries its own unit tests; integration, performance and stress
-suites are written at the end of wave 2 when there is a real session and a real pipeline to drive.
-Ground truth for batching is checked by senior-dev against the photographs, because the person who
-produces a metric should not be the only person who validates it.
+### 0.4 Known open issues (from the old review board)
 
-### 0.9 The critical path
+Not exhaustive; the full text is in the review board (`git show 4d4e43d:docs/review.md`). Verify each
+against the code before trusting it — several were fixed on one side of the merge only.
+
+- **Ground truth (blocker for M1).** `tests/fixtures/ground-truth/<game>.json` for all four games,
+  built by *looking at the photographs*, especially `Game1JENKS IMG_6117–6164`. Do not synthesise it.
+- REV-64 `visual_sig` must call the Rust reference, never a Swift reimplementation; it skipped the
+  256 px stage in the contract.
+- REV-65 ordering key: §5.1 says camera serial first, §2 says time + subsec + shutter count. Decide.
+- REV-68 per-photo rename reconciliation (a rename changes `PhotoId` and orphans its rating).
+- REV-12 / REV-59 CI: `SWIFT_TREAT_WARNINGS_AS_ERRORS` and a `swift-format` step are missing; CI uses
+  Xcode 16.2 while local builds use Xcode 27 (REV-58).
+- REV-72 / REV-73 leftover mirrored types (`PipelineMirror`, renamed `SessionTypes`) — one definition
+  of each type is the rule; delete stand-ins.
+- REV-38 the pipeline contract said `CALayer.contents = IOSurfaceRef`, which cannot work; the real host
+  (`CGImageViewerHost`) uses a `CGImage`. Update `docs/contracts/pipeline-api.md` to match.
+- Homebrew tap (`Kathir-D/homebrew-tap`) needs `Casks/firstcut.rb` pushed and a tap secret for the
+  release workflow; then the `v0.1.0` tag.
+- Open PRs #2 (ui), #3 (qa), #4 (core-store), #5 (consolidation) on GitHub are superseded by this merge.
+
+### 0.5 Working practices
+
+- **Read first:** this section, `AGENTS.md`, [build.md](docs/contracts/build.md), then the contract for
+  whatever you touch. Contracts: [build](docs/contracts/build.md),
+  [photo-meta](docs/contracts/photo-meta.md), [batching](docs/contracts/batching.md),
+  [session-api](docs/contracts/session-api.md), [pipeline-api](docs/contracts/pipeline-api.md),
+  [app-model](docs/contracts/app-model.md). Add a changelog line when a surface changes.
+- **Local checks before every push** (until CI is strict): `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test` (all from `core/`),
+  then `scripts/generate-project.sh` and the `xcodebuild … test` command above.
+- **Seeing the app:** `scripts/build-app.sh --open`, then
+  `osascript -e 'tell application "System Events" to tell process "Firstcut" to get {position, size} of window 1'`,
+  `screencapture -x -o -R<x>,<y>,<w>,<h> docs/ui/shot-<what>.png`, and read the PNG back. Compare with the
+  Finder reference in `docs/ui/` and §9. Close the app when done; a running copy gets killed by rebuilds
+  and macOS reports "Firstcut quit unexpectedly" (`defaults write com.kathird.firstcut
+  NSQuitAlwaysKeepsWindows -bool false` stops the reopen).
+- **The app must only get folder access through `NSOpenPanel`.** A hosted test app reading `~/Documents`
+  raises a TCC prompt that blocks forever; real-photo tests are opt-in behind
+  `FIRSTCUT_ALLOW_PHOTO_TESTS=1` (`scripts/test-with-photos.sh`).
+- **Test photos** are in `~/Documents/testing` (Canon R8 C-RAW, 4 games); never copy them into the repo.
+- **Git:** work on `main`, `git pull` before you start, commit small, push right after committing.
+
+### 0.6 Schedule
+
+A priority order, not a calendar. Work the critical path (§0.7) top to bottom.
+
+| Wave | Goal | What "done" means |
+| --- | --- | --- |
+| **1. Foundations** | Everything compiles and is tested | `cargo test` and `xcodebuild test` green on `main`; CI enforcing fmt, clippy, warnings-as-errors, swift-format |
+| **2. Real data** | It runs on the test games | CR3 parser matches exiftool on all 2,880 files; `order()`+`batch()` measured ≥ 98% boundary F1 against visually checked ground truth; the app opens a real folder through the real `Session` |
+| **3. Features** | Feature complete | Finish Cull end to end with undo, both rating modes, Settings, keymap editor, every §9 screen |
+| **4. Polish & ship** | v0.1.0 | Liquid Glass pass, macOS 15 fallback, accessibility, README screenshots, `v*` tag published, cask live |
+
+Waves 1–2 are partly done: the CR3 reader and a real-folder session exist and the Rust suite is green;
+the Swift suite, ground truth and measurements are what remain.
+
+### 0.7 The critical path
 
 Ordered by what blocks what. Start at the top every session; do not skip ahead.
 
-| # | Step | Blocked until it is done |
-| --- | --- | --- |
-| 1 | Fix the live P0/P1 findings in `review.md` | everything |
-| 2 | One `PhotoMeta`/`Batch`/`Session` type each — delete the stand-ins in `CoreTypes.swift` and `PipelineMirror.swift`, and the renamed `SessionTypes` (REV-56, REV-72, REV-73) | any Swift work compiling against another area |
-| 3 | A CR3 parser that matches exiftool on all 2,880 files | every real measurement |
-| 4 | `order()` + `batch()` with the negative-Δt fix (REV-63), then ground truth and F1 | the filmstrip meaning anything |
-| 5 | `Session`, XMP, undo, resume — and the rename reconciliation (REV-68) | ratings surviving a real session |
-| 6 | Thumbnails, `visual_sig` from the Rust reference, T2 decode, the priority scheduler | the zero-wait promise |
-| 7 | `AppModel` wired to the real `Session` and the real pipeline; the viewer layer replacing the placeholder | a usable app on real photos |
-| 8 | Every §7.3 target measured and written down | any performance claim |
-| 9 | Finish Cull, Settings, keymap editor, every screen | feature complete |
-| 10 | Liquid Glass, macOS 15, accessibility, then the release | v0.1.0 |
+| # | Step | Status | Blocks |
+| --- | --- | --- | --- |
+| 1 | Make `xcodebuild test` compile and pass again (`RealRawDecodeTests.swift`, the `ImageProvider` WIP) | **next** | everything Swift |
+| 2 | One `PhotoMeta`/`Batch`/`Session` type each; delete stand-ins (`CoreTypes.swift`, `PipelineMirror.swift`, renamed `SessionTypes`) and settle the parked duplicates (§0.3) | open | Swift work compiling against another area |
+| 3 | CR3 parser verified against exiftool on all 2,880 files | done in `meta/cr3.rs` (re-run with `FIRSTCUT_CR3_FULL=1`) | every real measurement |
+| 4 | Ground truth and F1 for `order()` + `batch()` | **open — needs a human looking at photos** | the filmstrip meaning anything |
+| 5 | `Session`, XMP, undo, resume, rename reconciliation (REV-68) | partly done | ratings surviving a real session |
+| 6 | Thumbnails, `visual_sig` from the Rust reference, T2 decode, priority scheduler | partly done (`ImageProvider`) | the zero-wait promise |
+| 7 | `AppModel` on the real `Session` and real pipeline; viewer layer | wired in `AppEnvironment`; unverified | a usable app on real photos |
+| 8 | Every §7.3 target measured and written down | open | any performance claim |
+| 9 | Finish Cull, Settings, keymap editor, every screen | partly done | feature complete |
+| 10 | Liquid Glass, macOS 15, accessibility, then the release | open | v0.1.0 |
 
-### 0.10 Why two agents
+### 0.8 Git and CI
 
-Nine parallel agents were the right call for a cold start and the wrong call for finishing. What
-actually went wrong, measured rather than guessed:
+- Everything lives on `main`. CI (`.github/workflows/ci.yml`) runs fmt/clippy/test and the Swift build on
+  every push; if the Swift job reports "pending" for a long time it is macOS runner queueing.
+- Release: pushing a `v*` tag runs the release workflow (zip + SHA-256 + cask bump). Rehearsed on a test
+  tag; the real `v0.1.0` waits on the tap secret and README screenshots.
 
-- **Interface invention.** Four agents independently declared their own version of the same types in
-  the same hour, under different names (REV-56). With one agent that is impossible.
-- **Merge latency, not coding speed, was the bottleneck.** Seven branches open, zero merged, all
-  diverging in six shared files, for the entire first hour.
-- **The review board could not keep up.** 74 findings in two hours, most of them the same class of
-  problem wearing different hats. One worker with one reviewer gets a real review instead of a triage
-  queue.
-- **Nobody could see the whole thing.** No single agent held both "the app asks for Documents folder
-  access and something relaunches it" and "ad-hoc signatures invalidate TCC grants on every rebuild".
-
-What is lost: parallelism, and independent judgement on the code. Both are recoverable. What is not
-recoverable is another week of drift.
-
+---
 
 ## 1. What Firstcut is
 
@@ -740,7 +694,7 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
       `xmp:Label`; preserve any existing unknown XMP content (merge, don't clobber). JPEG/HEIF-only
       photos: sidecar as well (don't rewrite originals) — configurable. _(sidecar naming, merging
       and atomic writes done and tested; the "configurable" switch is Settings plumbing, wave 2:
-      `docs/agents/core-store.md`)_
+      the old core-store charter (`git show 4d4e43d:docs/agents/archive/core-store.md`))_
 - [x] Atomic writes (temp file + rename) for XMP and DB checkpoints.
 - [x] Never modify original image files.
 
@@ -788,7 +742,7 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 - [x] On tag `v*`: `scripts/build-app.sh` builds Release, stamps `VERSION` + an increasing build number,
       **ad-hoc signs** (`codesign --force --sign - --timestamp=none`), zips `Firstcut-<version>.zip`
       (`ditto -c -k --keepParent`, so the executable bit and the bundle signature survive), attaches it
-      to a GitHub Release with its SHA-256. Rehearsed on a test tag; see `docs/agents/infra.md`.
+      to a GitHub Release with its SHA-256. Rehearsed on a test tag; see the old infra charter (`git show 4d4e43d:docs/agents/archive/infra.md`).
 
 ### Distribution
 
@@ -853,7 +807,6 @@ Each milestone ends with something runnable and measured.
 - [x] Install `xcodegen` and `swift-format` (Homebrew).
 - [x] Rust workspace skeleton (`core/`: `firstcut-core`, `firstcut-cli`, every module declared).
 - [x] exiftool fixtures for all four games (`tests/fixtures/exiftool/`).
-- [x] One worktree + branch per agent.
 - [x] Shared Swift stand-in types (`App/Sources/Shared/CoreTypes.swift`).
 - [x] UniFFI set up.
 - [x] `project.yml` + placeholder app and three test targets (builds, tests pass).

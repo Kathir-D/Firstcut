@@ -1,7 +1,10 @@
 # Firstcut: agent notes
 
-- Work is split across 9 parallel agents, all started at once, each in its own worktree at `~/Documents/projects/Firstcut-wt/<agent>`. Start with `task.md` §0 (roster, protocol, schedule), then your own `docs/agents/<agent>.md`, then `docs/review.md` (senior-dev's required changes).
-- `task.md` is the source of truth for scope, decisions, and progress. Read it before starting work, and update it (check off tasks, adjust decisions) in the same change.
-- Test photos live in `~/Documents/testing` (Canon R8 C-RAW, 4 games, 42 GB). Never copy them into the repo; reference them via `FIRSTCUT_TEST_PHOTOS`.
-- Batching changes must be checked against the ground truth in `tests/fixtures/ground-truth/`.
+- **One agent works on this repo.** There are no parallel agents, worktrees, or review board any more (they were retired at the 2026-09-29 merge to `main`). Work on `main` (or a short branch merged straight into it); commit small and push right after every commit. Never force-push.
+- Start with `task.md` §0 ("Where we left off"): what works, what is broken, the parked code, and the critical path. Then `docs/contracts/build.md` for commands and layout. `task.md` is the source of truth for scope, decisions, and progress; update it (check off tasks, adjust decisions) in the same change as the work.
+- Next step as of the last session: `xcodebuild test` does not compile (`App/Tests/Integration/RealRawDecodeTests.swift` vs the in-progress `Pipeline/ImageProvider.swift`). Fix that first. Rust (`cargo test` in `core/`) is green.
+- Test photos live in `~/Documents/testing` (Canon R8 C-RAW, 4 games, 42 GB). Never copy them into the repo; reference them via `FIRSTCUT_TEST_PHOTOS`. Real-photo tests are opt-in (`FIRSTCUT_ALLOW_PHOTO_TESTS=1`, `scripts/test-with-photos.sh`).
+- Batching changes must be checked against the ground truth in `tests/fixtures/ground-truth/` (it does not exist yet; building it by looking at the photographs is an open task).
 - Performance claims need a measurement (see task.md §7.3), not an estimate.
+- Duplicate implementations from the merge are in `parked/` and `core/firstcut-core/tests/parked/`; see task.md §0.3 before deleting or reviving them.
+- Old per-agent charters and the review board are in git history only: `git show 4d4e43d:docs/review.md`, `git show 4d4e43d:docs/agents/`.

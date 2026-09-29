@@ -1,8 +1,7 @@
 # Manual QA checklist
 
-- **Owner:** qa
 - **Scope:** task.md §9 (every screen), §12 (full cull, finish step), plus the safety rules of §9.7.
-- **Sign-off:** required for v0.1.0 on **macOS 26 and macOS 15** (docs/agents/qa.md, wave 4).
+- **Sign-off:** required for v0.1.0 on **macOS 26 and macOS 15**.
 
 This is the human pass. The automated suites (`App/Tests/Integration/`, `App/Tests/Performance/`)
 prove behaviour; this proves the app *feels* like a first-party Apple app, which no assertion can.
@@ -186,5 +185,4 @@ Full numbers and the regression rule: [`perf-baselines.md`](perf-baselines.md).
 - [ ] `docs/qa/perf-baselines.md`: baselines recorded on both OS versions, no metric over budget.
 - [ ] Originals in `~/Documents/testing`: checksums unchanged (re-verified).
 - [ ] Checklist above: every row `[x]`, `[-]`, or `[!]` with a closed bug.
-- [ ] Wave-4 sign-off written in [`docs/agents/qa.md`](../agents/qa.md) and countersigned by
-      senior-dev in `docs/review.md`.
+- [ ] Wave-4 sign-off recorded in `task.md` §14 (M7/M8).
