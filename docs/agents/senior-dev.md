@@ -125,21 +125,133 @@ Commit and push review.md after every review pass; others read it live from your
 
 ## Live status
 
-_Last updated: — (not started)_
+_Last updated: 2026-09-29, pass 3 (PR review + visual review)_
 
 ### Current focus
 
-Not started. Ready to start (bootstrap done, see task.md §0.7).
+Pass 2: reviewed the **uncommitted** work in all 8 worktrees rather than waiting for commits —
+nobody is blocked and nobody is waiting on me, which is exactly when a second pair of eyes pays.
+19 new findings (REV-56 … REV-74) and 13 existing ones marked `addressed in WIP` from reading the
+code. 74 findings filed in total: 62 open, 8 addressed in WIP, 4 narrowed.
+
+Verified rather than assumed this pass: infra's whole UniFFI → xcframework → static-framework →
+`CoreBridge` chain **builds and tests clean** (I ran it), app-logic's Caps Lock handling is
+**correct** including the regression test that stops Caps Lock contaminating other chords (I was
+about to file a false positive there), and 128 orientation changes across 2,880 files confirm
+core-batch's hard-split rule never fires inside a burst.
+
+**Pass 3 changed how I review.** I reviewed infra's PR, then launched the app and looked at it, and
+found a defect in the main window (the welcome view composited over the filmstrip) that is invisible
+in the source, the diff and the status files. Computer use works on this machine — I verified
+`screencapture` + `System Events` + reading the PNG back — and the recipe is in `review.md` for ui
+and for anyone reviewing UI. Looking at the artifact beats reading about it.
+
+Still no P0, and that is not leniency: a P0 means data loss, a crash or a broken build, and in
+pass 1 nothing was built yet. Pass 2 found one wrong-merge bug (REV-63) that is *close* to P0 in
+kind — a hard join is not revisable — but it needs a specific file layout to trigger, so P1 with a
+test is the honest call. If you think I have missed a real P0, tell me and I will re-grade it.
+
+Next: keep polling the worktrees, verify each `fixed in <commit>` against the diff, re-approve each
+contract for the v1.0 freeze once its P1s close, and hold the wave-1 gate until they do.
 
 ### Review passes
 
 | Date | Scope reviewed | Findings filed | Commit |
 | --- | --- | --- | --- |
+| 2026-09-29 | Pre-flight: all 6 contract drafts, `task.md` §0.2–§0.8 + §3, the bootstrap skeleton (`core/` workspace, `project.yml`, `CoreTypes.swift`, exiftool fixtures), and a measured check of §3 against the fixtures | REV-1 … REV-55 | pass 1 |
+| 2026-09-29 | Pass 2, in flight: uncommitted work in all 8 worktrees — infra (UniFFI/build/CI, **build verified by running it**), core-batch (`order`/signals/scorer/`visual_sig`), core-store (DB/identity/rating), app-logic (`AppModel`/keymap/router), ui (window/toolbar/filmstrip), pipeline (decode spike) | REV-56 … REV-74, plus 13 marked addressed in WIP | pass 2 |
+
+Verified myself, not taken on trust: `cargo test` + `cargo fmt --check` + `cargo clippy` clean;
+`xcodegen` → `xcodebuild test` → TEST SUCCEEDED; §3 recomputed from all 2,880 exiftool records
+(results are in `docs/review.md`, "Measured facts I verified myself").
+
+### Done log
+
+| Date | What | Commit |
+| --- | --- | --- |
+| 2026-09-29 | Contract pre-flight review, 55 findings, no contract approved for freeze | `d36818a` |
+| 2026-09-29 | Board cross-reference fixes | `5401d4c` |
+| 2026-09-29 | Pass 2 in-flight review: 19 new findings, 13 addressed in WIP, infra's build verified end to end | `265b9e9` |
+| 2026-09-29 | Pass 3: standing instructions (one PR/branch, stack merge order, never stop, computer use), infra PR #1 review posted, and a **visual** review of the running app that found a real layout defect | see branch tip |
 
 ### Blockers
 
-None.
+- Waiting on the owner for the task.md §0.4 wording change in REV-1 (I can propose, not apply).
+  Mitigated by the banner at the top of `review.md` and by asking each agent to put the live path
+  in their own Notes.
+- Nothing else. No contract freeze can happen until the P1s land; that is the plan, not a blocker.
+
+### Requests to others
+
+| ID | To | Need | Why | Status |
+| --- | --- | --- | --- | --- |
+| REQ-senior-dev-1 | infra | `.swift-format` config + a reformat of the 4 bootstrap files, before anyone else formats anything (REV-5) | 4 Swift agents, one repo, no config: everyone picks a different style and CI fails on all of them | open |
+| REQ-senior-dev-2 | pipeline, app-logic | the wave-1 shared-type declarations (`ImageProvider` + supporting types; `AppModel`, `Command`, `Phase`, `ViewerState`, `CullProgress`) landed in your own folders in wave 1, and a line in Notes when they exist (REV-40, REV-45) | the other three Swift agents are currently unable to compile against types that do not exist | open |
+| REQ-senior-dev-3 | core-batch | the CLI subcommand convention (`src/cmd/<name>.rs` + one registration line per request) published in your Notes this week (REV-8) | core-meta's `firstcut verify` is a wave-2 end-goal and is currently blocked on your crate | open |
+
+### Incoming requests
+
+Requests from other agents (`REQ-…`) and senior-dev findings from `docs/review.md` (`REV-…`).
+
+| ID | From | Response | Status |
+| --- | --- | --- | --- |
+| — | — | I file findings, I don't receive them. If an agent sends me a `REQ-senior-dev-n`, it goes in the table above. | — |
 
 ### Notes for other agents
 
-(Recurring patterns you're seeing, conventions you want everyone to follow.)
+**Read the review board here, not from your own checkout:**
+`~/Documents/projects/Firstcut-wt/senior-dev/docs/review.md` — your worktree's copy is from `main`
+and has none of the 55 findings in it. (REV-1.)
+
+Conventions I will hold everyone to from here on:
+
+- **Never write logic against the stand-in types in `CoreTypes.swift`.** They are scaffolding that
+  infra deletes when UniFFI lands. Treat them as the *shape* of the contract, not as a library:
+  no extensions, no added conformances, no reliance on the memberwise `Rating(stars: 0, …)` init.
+  (REV-6, REV-7.)
+- **Declare your shared Swift types in your own folder, in wave 1, and announce them in Notes.**
+  `ImageProvider` and friends are pipeline's; `AppModel`/`Command`/`ViewerState` are app-logic's.
+  Nobody hand-rolls a copy. This is the single biggest day-one unblocker. (REV-40, REV-45.)
+- **A claim without a measurement is not a done.** I will run the check myself if it matters
+  (`cargo test`, `firstcut eval`, the perf table in `docs/qa/perf-baselines.md`, a real
+  `xcodebuild test`). `session-api.md`'s "set_rating < 1 ms" is currently an estimate in a
+  contract; core-store, either measure it or change it. (REV-33.)
+- **Determinism is a feature, not an aspiration.** No `HashMap` iteration in any algorithm whose
+  output is persisted or compared. (REV-24.)
+- **Identity must survive a rename.** `PhotoId` as a path hash loses ratings when a file is
+  renamed; §11 requires graceful rename handling. Fix the contract, not the symptom. (REV-15.)
+- **I am not the owner of anything you are.** If I disagree with a finding, dispute it in your
+  status file with the reason and we go to the owner together. Do not quietly skip a finding, and
+  do not treat "senior-dev said so" as a substitute for understanding the change.
+- **Mock the protocol, never copy the struct.** Four agents are now writing their own version of
+  the same types in the same hour, under different names. ui's `CullViewState` and app-logic's
+  `ImageProviding` are protocols and are the right shape; app-logic's `PipelineMirror` structs and
+  the `SessionTypes` renames are not. Every copy is an adapter in week 3. (REV-56, REV-72, REV-73.)
+- **Integration model:** your branch stays yours. I merge all eight onto `integrate/v0.1.0` in a
+  fixed order, run the full suite once on the merged tree, and land it on `main` with a single
+  merge commit. Keep your branch mergeable and your commits individually buildable, and that merge
+  is boring. Never work on another agent's branch, never stack mid-flight.
+- **Look at the thing, don't just read about it.** I now review UI by screenshotting the running app
+  and comparing it to the Finder reference. If you touch anything visual, do the same: build, launch,
+  `screencapture`, look, fix, repeat. Save the before/after in `docs/ui/`. (REV-75.)
+- **I check before I file, and I file what I checked.** Pass 2: I was ready to report that Caps Lock
+  broke every digit shortcut, read the test, found `Keymap.normalized` already strips it, and did
+  not file it. The review board is only worth reading if every line survived that.
+- **Measured facts beat remembered facts.** task.md §3 had two wrong numbers (drive mode, the
+  "13 gaps"); I recomputed all of it from the fixtures and the corrected table is at the top of
+  `review.md`. When you record a measurement, record how you measured it, so the next agent can
+  re-derive it instead of trusting it.
+
+**Proposed text for task.md §0.4 (owner approval needed, REV-1).** Replace the review-board step
+with:
+
+> 2. Read **[`docs/review.md`](docs/review.md)** — the live copy is
+>    `~/Documents/projects/Firstcut-wt/senior-dev/docs/review.md`. The copy in your own checkout is
+>    from `main` and is stale. Fix every open item addressed to you or to "All agents" before
+>    starting new work, highest severity first.
+
+and add to the end of §0.4:
+
+> **Notification.** senior-dev learns about work by polling `git log --all` and the worktrees, not
+> by being told. Push at least once per work session, even if the work is incomplete — a pushed
+> branch is the signal that a review pass is wanted.
