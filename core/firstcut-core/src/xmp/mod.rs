@@ -242,11 +242,12 @@ mod tests {
         for stars in 0..=5 {
             write_sidecar(&sidecar, &XmpValues::rating(stars)).unwrap();
         }
-        let names: Vec<String> = fs::read_dir(dir.path())
+        let mut names: Vec<String> = fs::read_dir(dir.path())
             .unwrap()
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
+        names.sort(); // read_dir order is unspecified
         assert_eq!(names, vec!["IMG_0001.CR3", "IMG_0001.CR3.xmp"]);
     }
 

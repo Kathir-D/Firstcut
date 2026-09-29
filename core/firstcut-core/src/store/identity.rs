@@ -100,19 +100,7 @@ fn probe_volume(path: &Path) -> VolumeIdentity {
         return VolumeIdentity::default();
     }
 
-    let mount_point = {
-        // `f_mntonname` is a fixed-size C buffer, not a pointer, in `libc`.
-        let name: Vec<u8> = stats
-            .f_mntonname
-            .iter()
-            .take_while(|byte| **byte != 0)
-            .map(|byte| *byte as u8)
-            .collect();
-        match String::from_utf8(name) {
-            Ok(name) if !name.is_empty() => Some(PathBuf::from(name)),
-            _ => None,
-        }
-    };
+    let mount_point = mount_point_of(&stats);
 
     let fsid = Some(format!(
         "{:08x}{:08x}",
@@ -125,6 +113,28 @@ fn probe_volume(path: &Path) -> VolumeIdentity {
         fsid,
         mount_point,
     }
+}
+
+/// The mount point, from `statfs`. Only macOS's `statfs` carries `f_mntonname`; elsewhere (the
+/// Linux containers this is developed in) there is no mount point and the fsid fallback is used.
+#[cfg(target_os = "macos")]
+fn mount_point_of(stats: &libc::statfs) -> Option<PathBuf> {
+    // `f_mntonname` is a fixed-size C buffer, not a pointer, in `libc`.
+    let name: Vec<u8> = stats
+        .f_mntonname
+        .iter()
+        .take_while(|byte| **byte != 0)
+        .map(|byte| *byte as u8)
+        .collect();
+    match String::from_utf8(name) {
+        Ok(name) if !name.is_empty() => Some(PathBuf::from(name)),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mount_point_of(_stats: &libc::statfs) -> Option<PathBuf> {
+    None
 }
 
 /// `libc` keeps `fsid_t`'s field private, but it is a plain `[i32; 2]`, so the eight bytes are read

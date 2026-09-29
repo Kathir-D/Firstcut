@@ -503,6 +503,8 @@ pub fn free_space(path: &Path) -> Option<u64> {
     if unsafe { libc::statvfs(c_path.as_ptr(), &mut stats) } != 0 {
         return None;
     }
+    // The statvfs fields are u32 on macOS and u64 on Linux, so the widening is needed on one.
+    #[allow(clippy::useless_conversion, clippy::unnecessary_cast)]
     Some(u64::from(stats.f_bavail).saturating_mul(stats.f_frsize as u64))
 }
 
