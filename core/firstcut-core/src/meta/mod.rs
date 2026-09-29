@@ -10,6 +10,7 @@
 //!   same ids in the same sequence and a session database written from one scan matches the next.
 
 pub mod cr3;
+mod exif;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -435,14 +436,6 @@ pub fn scan_folder(folder: &Path) -> Result<ScanResult, ScanError> {
                         candidates[primary].rel_path
                     ),
                 });
-            } else if !kind_supports_metadata(candidates[member].kind) {
-                skipped.push(Skipped {
-                    rel_path: candidates[member].rel_path.clone(),
-                    reason: format!(
-                        "no metadata reader for {} in this build",
-                        candidates[member].kind.name()
-                    ),
-                });
             }
         }
     }
@@ -450,44 +443,6 @@ pub fn scan_folder(folder: &Path) -> Result<ScanResult, ScanError> {
     photos.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     skipped.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     Ok(ScanResult { photos, skipped })
-}
-
-impl FileKind {
-    fn name(&self) -> &'static str {
-        match self {
-            FileKind::Raw(format) => match format {
-                RawFormat::Cr3 => "CR3",
-                RawFormat::Cr2 => "CR2",
-                RawFormat::Crw => "CRW",
-                RawFormat::Arw => "ARW",
-                RawFormat::Sr2 => "SR2",
-                RawFormat::Srf => "SRF",
-                RawFormat::Nef => "NEF",
-                RawFormat::Nrw => "NRW",
-                RawFormat::Raf => "RAF",
-                RawFormat::Rw2 => "RW2",
-                RawFormat::Orf => "ORF",
-                RawFormat::Pef => "PEF",
-                RawFormat::Dng => "DNG",
-                RawFormat::Rwl => "RWL",
-                RawFormat::ThreeFr => "3FR",
-                RawFormat::Fff => "FFF",
-                RawFormat::Iiq => "IIQ",
-                RawFormat::Srw => "SRW",
-                RawFormat::Dcr => "DCR",
-                RawFormat::Kdc => "KDC",
-                RawFormat::Erf => "ERF",
-                RawFormat::Mef => "MEF",
-                RawFormat::Mos => "MOS",
-                RawFormat::Gpr => "GPR",
-                RawFormat::X3f => "X3F",
-            },
-            FileKind::Jpeg => "JPEG",
-            FileKind::Heif => "HEIF",
-            FileKind::Tiff => "TIFF",
-            FileKind::Png => "PNG",
-        }
-    }
 }
 
 /// Walks `dir` collecting image files, sorted so the scan is reproducible (REV-17).
@@ -557,15 +512,6 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<Candidate>) -> Result<(), Scan
     Ok(())
 }
 
-/// Whether this build has a metadata reader for the format at all.
-///
-/// CR3 is the one that is implemented. Every other format is a real photo the user can open, so it
-/// is reported as "no reader" rather than being dropped — which is what lets the app tell the user
-/// it needs a build with more formats instead of quietly losing their shoot.
-fn kind_supports_metadata(kind: FileKind) -> bool {
-    matches!(kind, FileKind::Raw(RawFormat::Cr3))
-}
-
 /// Builds the `PhotoMeta` for one file.
 #[allow(clippy::too_many_arguments)]
 fn meta_for(
@@ -582,12 +528,9 @@ fn meta_for(
 
     let parsed = match kind {
         FileKind::Raw(RawFormat::Cr3) => Cr3::parse(path).map_err(|err| err.to_string())?,
-        other => {
-            return Err(format!(
-                "no metadata reader for {} in this build",
-                other.name()
-            ));
-        }
+        // Every other format goes through the generic reader, which never fails on a file it does
+        // not understand: the photo appears, ordered by file time, with a warning (task.md §8).
+        other => exif::read(path, other, size)?,
     };
 
     let mut warnings = parsed.warnings.clone();
@@ -985,19 +928,80 @@ mod tests {
     }
 
     #[test]
-    fn a_format_with_no_reader_is_reported_rather_than_dropped() {
-        // A Sony ARW is a real photo. Losing it silently would be exactly the failure task.md §8
-        // is about, so it is reported as "this build has no reader" and the shoot is not silent.
+    fn a_jpeg_only_folder_scans_like_a_raw_folder() {
+        // task.md §8: "Folders of only JPEG/HEIF must cull exactly like RAW folders."
+        use exif::fixtures::{heic, jpeg, png, tiff};
+        let dir = tempfile::tempdir().unwrap();
+        let at = |sec: u32| format!("2026:08:27 10:00:{sec:02}");
+        for (name, bytes) in [
+            (
+                "IMG_0001.JPG",
+                jpeg(&tiff(&at(1), "10", 100, "FUJIFILM", None), 6000, 4000),
+            ),
+            (
+                "IMG_0002.jpeg",
+                jpeg(&tiff(&at(1), "20", 100, "FUJIFILM", None), 6000, 4000),
+            ),
+            (
+                "IMG_0003.HEIC",
+                heic(&tiff(&at(9), "", 100, "Apple", None), 4032, 3024),
+            ),
+            (
+                "IMG_0004.png",
+                png(&tiff(&at(12), "", 100, "Apple", None), 800, 600),
+            ),
+        ] {
+            std::fs::write(dir.path().join(name), bytes).unwrap();
+        }
+        let result = scan_folder(dir.path()).expect("a scan");
+        assert!(result.skipped.is_empty(), "{:?}", result.skipped);
+        assert_eq!(result.photos.len(), 4);
+        for photo in &result.photos {
+            let time = photo.capture_time.as_ref().expect("a capture time");
+            assert_eq!(time.source, TimeSource::Exif, "{}", photo.rel_path);
+            assert!(photo.width > 0 && photo.height > 0, "{}", photo.rel_path);
+        }
+        // Two frames 100 ms apart, resolved from the sub-second digits.
+        let first = result.photos[0].capture_time.as_ref().unwrap();
+        let second = result.photos[1].capture_time.as_ref().unwrap();
+        assert_eq!(second.unix_ms - first.unix_ms, 100);
+        assert_eq!(first.subsec_resolution_ms, 10);
+    }
+
+    #[test]
+    fn a_raw_and_its_jpeg_are_one_photo_for_a_non_canon_raw() {
+        use exif::fixtures::{jpeg, tiff};
+        let dir = tempfile::tempdir().unwrap();
+        let raw = tiff("2026:08:27 10:00:01", "50", 400, "SONY", Some((7000, 4600)));
+        std::fs::write(dir.path().join("DSC00001.ARW"), &raw).unwrap();
+        std::fs::write(dir.path().join("DSC00001.JPG"), jpeg(&raw, 7000, 4600)).unwrap();
+        let result = scan_folder(dir.path()).expect("a scan");
+        assert!(result.skipped.is_empty(), "{:?}", result.skipped);
+        assert_eq!(result.photos.len(), 1);
+        assert_eq!(result.photos[0].rel_path, "DSC00001.ARW");
+        assert_eq!(
+            result.photos[0].companions,
+            vec!["DSC00001.JPG".to_string()]
+        );
+        assert_eq!(result.photos[0].camera_make.as_deref(), Some("SONY"));
+    }
+
+    #[test]
+    fn a_format_the_reader_cannot_parse_still_appears_with_a_warning() {
+        // A Sony ARW is a real photo. Losing it, even into `skipped`, would leave a photo the user
+        // can see in Finder missing from the cull, which is what task.md §8 forbids. It comes back
+        // ordered by file time, flagged, with the reason in `warnings`.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("DSC00001.ARW"), vec![0u8; 32]).unwrap();
         let result = scan_folder(dir.path()).expect("a scan");
-        assert!(result.photos.is_empty());
-        assert_eq!(result.skipped.len(), 1);
-        assert!(
-            result.skipped[0].reason.contains("ARW"),
-            "{:?}",
-            result.skipped
+        assert!(result.skipped.is_empty(), "{:?}", result.skipped);
+        assert_eq!(result.photos.len(), 1);
+        let photo = &result.photos[0];
+        assert_eq!(
+            photo.capture_time.as_ref().map(|t| t.source),
+            Some(TimeSource::FileModified)
         );
+        assert!(!photo.warnings.is_empty(), "{:?}", photo.warnings);
     }
 
     #[test]

@@ -360,19 +360,19 @@ impl<'a> Iterator for Boxes<'a> {
 /// Offsets in the file are relative to the TIFF header, so every accessor takes a stream-relative
 /// offset and adds `base`. Reads past the end of the buffer return `None` instead of panicking,
 /// which is what makes a truncated file a warning rather than a crash.
-struct Tiff<'a> {
+pub(super) struct Tiff<'a> {
     data: &'a [u8],
     base: usize,
     little: bool,
 }
 
 /// One IFD entry, resolved to where its value actually is.
-struct Entry {
-    tag: u16,
-    kind: u16,
-    count: u32,
+pub(super) struct Entry {
+    pub(super) tag: u16,
+    pub(super) kind: u16,
+    pub(super) count: u32,
     /// Offset of the value, stream-relative (already resolved for the ≤4-byte inline case).
-    value_offset: usize,
+    pub(super) value_offset: usize,
 }
 
 /// The TIFF field types this parser understands. Anything else is skipped, which is what lets a
@@ -390,7 +390,7 @@ fn type_size(kind: u16) -> Option<usize> {
 }
 
 impl<'d> Tiff<'d> {
-    fn new(data: &'d [u8], base: usize) -> Option<Tiff<'d>> {
+    pub(super) fn new(data: &'d [u8], base: usize) -> Option<Tiff<'d>> {
         let order = data.get(base..base + 2)?;
         let little = match order {
             b"II" => true,
@@ -400,7 +400,21 @@ impl<'d> Tiff<'d> {
         Some(Tiff { data, base, little })
     }
 
-    fn u16_at(&self, offset: usize) -> Option<u16> {
+    pub(super) fn data(&self) -> &'d [u8] {
+        self.data
+    }
+
+    pub(super) fn base(&self) -> usize {
+        self.base
+    }
+
+    /// `len` bytes at the stream-relative `offset`.
+    pub(super) fn bytes(&self, offset: usize, len: usize) -> Option<&'d [u8]> {
+        let start = self.base.checked_add(offset)?;
+        self.data.get(start..start.checked_add(len)?)
+    }
+
+    pub(super) fn u16_at(&self, offset: usize) -> Option<u16> {
         let bytes = self.data.get(self.base.checked_add(offset)?..)?.get(..2)?;
         Some(match self.little {
             true => u16::from_le_bytes(bytes.try_into().expect("two bytes")),
@@ -408,7 +422,7 @@ impl<'d> Tiff<'d> {
         })
     }
 
-    fn u32_at(&self, offset: usize) -> Option<u32> {
+    pub(super) fn u32_at(&self, offset: usize) -> Option<u32> {
         let bytes = self.data.get(self.base.checked_add(offset)?..)?.get(..4)?;
         Some(match self.little {
             true => u32::from_le_bytes(bytes.try_into().expect("four bytes")),
@@ -417,11 +431,11 @@ impl<'d> Tiff<'d> {
     }
 
     /// The first IFD, which in a `CMT*` box is IFD0.
-    fn ifd0(&self) -> Option<Entries<'_, '_>> {
+    pub(super) fn ifd0(&self) -> Option<Entries<'_, '_>> {
         self.entries_at(self.u32_at(4)? as usize)
     }
 
-    fn entries_at(&self, offset: usize) -> Option<Entries<'_, '_>> {
+    pub(super) fn entries_at(&self, offset: usize) -> Option<Entries<'_, '_>> {
         let count = self.u16_at(offset)? as usize;
         Some(Entries {
             tiff: self,
@@ -431,27 +445,27 @@ impl<'d> Tiff<'d> {
         })
     }
 
-    fn value_bytes(&self, entry: &Entry) -> Option<&'d [u8]> {
+    pub(super) fn value_bytes(&self, entry: &Entry) -> Option<&'d [u8]> {
         let size = type_size(entry.kind)?.checked_mul(entry.count as usize)?;
         self.data
             .get(self.base.checked_add(entry.value_offset)?..)?
             .get(..size)
     }
 
-    fn string(&self, entry: &Entry) -> Option<String> {
+    pub(super) fn string(&self, entry: &Entry) -> Option<String> {
         let bytes = self.value_bytes(entry)?;
         let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
         let text = String::from_utf8_lossy(&bytes[..end]).into_owned();
         (!text.is_empty()).then_some(text)
     }
 
-    fn first_int(&self, entry: &Entry) -> Option<i64> {
+    pub(super) fn first_int(&self, entry: &Entry) -> Option<i64> {
         self.ints(entry).first().copied()
     }
 
     /// Reads `count` integers of the entry's type. Out-of-range and unknown types give an empty
     /// vector, so a caller that indexes gets `None` from `first_int` rather than a bogus number.
-    fn ints(&self, entry: &Entry) -> Vec<i64> {
+    pub(super) fn ints(&self, entry: &Entry) -> Vec<i64> {
         let bytes = match self.value_bytes(entry) {
             Some(bytes) => bytes,
             None => return Vec::new(),
@@ -483,7 +497,7 @@ impl<'d> Tiff<'d> {
     }
 
     /// The first element of an unsigned RATIONAL, as `f32`.
-    fn first_rational(&self, entry: &Entry) -> Option<f32> {
+    pub(super) fn first_rational(&self, entry: &Entry) -> Option<f32> {
         let bytes = self.value_bytes(entry)?;
         let (numerator, denominator) = match self.little {
             true => (
@@ -505,7 +519,7 @@ impl<'d> Tiff<'d> {
     }
 }
 
-struct Entries<'t, 'd> {
+pub(super) struct Entries<'t, 'd> {
     tiff: &'t Tiff<'d>,
     offset: usize,
     count: usize,
@@ -545,6 +559,12 @@ impl Iterator for Entries<'_, '_> {
 fn read_ifd0(head: &[u8], base: usize, meta: &mut Cr3) -> Result<(), Cr3Error> {
     let tiff = Tiff::new(head, base).ok_or(Cr3Error::NotTiff { box_name: "1" })?;
     let entries = tiff.ifd0().ok_or(Cr3Error::NoMetadata)?;
+    apply_ifd0(&tiff, entries, meta);
+    Ok(())
+}
+
+/// IFD0's tags: dimensions, make, model, orientation.
+pub(super) fn apply_ifd0(tiff: &Tiff<'_>, entries: Entries<'_, '_>, meta: &mut Cr3) {
     for entry in entries {
         match entry.tag {
             0x0100 => meta.width = tiff.first_int(&entry).unwrap_or(0).max(0) as u32,
@@ -559,7 +579,6 @@ fn read_ifd0(head: &[u8], base: usize, meta: &mut Cr3) -> Result<(), Cr3Error> {
             _ => {}
         }
     }
-    Ok(())
 }
 
 /// The Exif IFD, which is where the capture settings live.
@@ -572,6 +591,11 @@ fn read_exif(head: &[u8], base: usize, meta: &mut Cr3) {
         meta.warnings.push("CMT2 has no readable IFD".to_string());
         return;
     };
+    apply_exif(&tiff, entries, meta);
+}
+
+/// The Exif IFD's tags, from whichever container it was found in.
+pub(super) fn apply_exif(tiff: &Tiff<'_>, entries: Entries<'_, '_>, meta: &mut Cr3) {
     for entry in entries {
         match entry.tag {
             0x9003 => meta.date_time_original = tiff.string(&entry),
@@ -609,6 +633,11 @@ fn read_makernote(head: &[u8], base: usize, meta: &mut Cr3) {
         meta.warnings.push("CMT3 has no readable IFD".to_string());
         return;
     };
+    apply_makernote(&tiff, entries, meta);
+}
+
+/// The Canon MakerNote's tags, from a `CMT3` box or from a CR2's Exif IFD.
+pub(super) fn apply_makernote(tiff: &Tiff<'_>, entries: Entries<'_, '_>, meta: &mut Cr3) {
     for entry in entries {
         match entry.tag {
             // CanonCameraSettings: an array of int16 indexed by tag number.
