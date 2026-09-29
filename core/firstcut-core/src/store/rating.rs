@@ -330,7 +330,22 @@ impl Rating {
         }
     }
 
-    /// True for the tiers the Finish step treats as "kept" (task.md §9.7).
+    /// **The single answer to "is this photo kept in this mode".**
+    ///
+    /// Task.md §9.7: the Finish step only keeps the Keep tier, and this is what decides it. It is
+    /// a thin wrapper over [`Rating::tier`] on purpose, and it exists so there is **exactly one**
+    /// function to call. REV-78: the Finish planner used to read the raw `keep` field while the UI
+    /// showed `display_rating`, so a 4-star photo in keep mode got a green Keep ring and was then
+    /// moved to the trash. Two implementations of one rule, and the user lost the photo.
+    ///
+    /// Everything that acts on or shows a keep goes through here: the filmstrip ring, the tier
+    /// counts, the split-folder names, and `fileops::plan_finish`. If you are about to compare
+    /// `rating.keep` directly, you are about to reintroduce REV-78 — call this instead.
+    ///
+    /// The invariant this guarantees is asserted by
+    /// `the_ui_never_shows_a_keep_that_finish_would_trash`, and again at the level that actually
+    /// moves files in `fileops::tests`.
+    #[must_use]
     pub fn is_kept(&self, mode: RatingMode) -> bool {
         matches!(self.tier(mode), Tier::Keep)
     }
@@ -587,6 +602,79 @@ mod tests {
                 assert_eq!(
                     returned.label, there.label,
                     "{state:?} changed label on a round trip"
+                );
+            }
+        }
+    }
+
+    /// REV-78. The invariant that keeps a photo from being shown as a Keep and then trashed: for
+    /// **every** reachable rating, in **both** modes, what the UI shows and what Finish does are the
+    /// same question asked the same way.
+    ///
+    /// It used to be false, and the consequence was the worst bug this project can ship: a 4-star
+    /// photo in keep mode was shown with a green Keep ring and then moved to the trash, because
+    /// the UI read `display_rating` and the Finish planner read the raw `keep` field.
+    #[test]
+    fn the_ui_never_shows_a_keep_that_finish_would_trash() {
+        let mut states = Vec::new();
+        for stars in 0..=Rating::MAX_STARS {
+            for keep in [false, true] {
+                for flag in [Flag::None, Flag::Pick, Flag::Reject] {
+                    for label in [None, Some(ColorLabel::Green)] {
+                        states.push(Rating::new(stars, flag, label, keep));
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            states.len(),
+            6 * 2 * 3 * 2,
+            "the matrix must cover the whole space"
+        );
+
+        for state in &states {
+            for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+                assert_eq!(
+                    display_tier(state, mode) == Tier::Keep,
+                    state.is_kept(mode),
+                    "{state:?} in {mode}: the UI and Finish disagree about whether it is kept"
+                );
+            }
+        }
+    }
+
+    /// The same invariant stated in the terms the user would use, so the failure names the photo
+    /// rather than a boolean: whatever the filmstrip draws a green ring on, Finish keeps.
+    #[test]
+    fn every_ring_the_ui_draws_survives_finish() {
+        for stars in 0..=Rating::MAX_STARS {
+            for keep in [false, true] {
+                let state = Rating::new(stars, Flag::None, None, keep);
+                for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+                    let shown_as_keep = display_tier(&state, mode) == Tier::Keep;
+                    if shown_as_keep {
+                        assert!(
+                            state.is_kept(mode),
+                            "{stars} stars keep={keep} in {mode} draws a Keep ring and would be \
+                             trashed. A wrong merge hides photos; a wrong unkeep deletes them."
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A rejected photo is never a keep, in either mode, whatever the stars say.
+    #[test]
+    fn a_reject_flag_is_never_a_keep_in_any_mode() {
+        for stars in 0..=Rating::MAX_STARS {
+            let rejected = Rating::new(stars, Flag::Reject, None, true);
+            for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+                assert_eq!(display_tier(&rejected, mode), Tier::Rejected);
+                assert!(
+                    !rejected.is_kept(mode),
+                    "{stars} stars + reject + keep={} must not be kept in {mode}",
+                    rejected.keep
                 );
             }
         }

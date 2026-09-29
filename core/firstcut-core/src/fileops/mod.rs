@@ -545,7 +545,7 @@ pub fn open_in_lightroom(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::rating::{ColorLabel, Flag};
+    use crate::store::rating::{ColorLabel, Flag, Tier};
     use std::fs;
 
     /// IMG_0001 is a RAW with a paired JPEG and a sidecar already on disk, left unrated.
@@ -648,6 +648,126 @@ mod tests {
         folders.sort();
         folders.dedup();
         folders
+    }
+
+    /// REV-78, at the level where a photo is actually lost. The Finish planner must decide from
+    /// the **mapped** rating, the same one the filmstrip draws, and not from the raw `keep` field.
+    ///
+    /// The reported failure was: a 4-star photo in keep mode showed a green Keep ring and was then
+    /// scheduled for the trash. Unrated photos go to `_Not kept`, so "trashed" here means the plan
+    /// contains a move for a photo the UI promised would be kept.
+    #[test]
+    fn a_photo_the_ui_shows_as_kept_is_never_moved_to_not_kept() {
+        for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+            for stars in 0..=Rating::MAX_STARS {
+                for keep in [false, true] {
+                    let shoot = Shoot::new();
+                    // Rate the second photo (the one with no companion) and leave the first alone.
+                    let rating = Rating::new(stars, Flag::None, None, keep);
+                    let ratings = HashMap::from([(2u64, rating)]);
+
+                    let plan = plan_finish(
+                        shoot.path(),
+                        &shoot.photos(),
+                        &ratings,
+                        &FinishOptions {
+                            unkept: UnkeptAction::MoveToSubfolder("_Not kept".into()),
+                            kept: KeptAction::None,
+                            rating_mode: mode,
+                        },
+                        0,
+                    );
+
+                    // What the filmstrip would draw.
+                    let shown_as_keep =
+                        crate::store::rating::display_tier(&rating, mode) == Tier::Keep;
+                    let discarded = file_names(&plan, "IMG_0002");
+
+                    if shown_as_keep {
+                        assert!(
+                            discarded.is_empty(),
+                            "{stars} stars keep={keep} in {mode} draws a Keep ring but Finish \
+                             would discard it: {discarded:?}"
+                        );
+                    } else {
+                        assert!(
+                            !discarded.is_empty(),
+                            "{stars} stars keep={keep} in {mode} is not shown as kept, so Finish \
+                             should dispose of it, but produced no operations at all"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same rule for a **permanent delete**, which is the one option that cannot be undone. A
+    /// false positive here destroys the photograph, so it gets its own test rather than being
+    /// folded into the move test above.
+    #[test]
+    fn a_photo_the_ui_shows_as_kept_is_never_permanently_deleted() {
+        for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+            for stars in 4..=Rating::MAX_STARS {
+                let shoot = Shoot::new();
+                let rating = Rating::stars(stars);
+                assert_eq!(
+                    crate::store::rating::display_tier(&rating, mode),
+                    Tier::Keep,
+                    "{stars} stars in {mode} must read as a keep"
+                );
+
+                let plan = plan_finish(
+                    shoot.path(),
+                    &shoot.photos(),
+                    &HashMap::from([(2u64, rating)]),
+                    &FinishOptions {
+                        unkept: UnkeptAction::DeletePermanently,
+                        kept: KeptAction::None,
+                        rating_mode: mode,
+                    },
+                    0,
+                );
+
+                assert!(
+                    plan.ops.is_empty() || file_names(&plan, "IMG_0002").is_empty(),
+                    "{stars} stars in {mode} would be deleted even though the UI shows it as kept: \
+                     {:?}",
+                    plan.ops
+                );
+            }
+        }
+    }
+
+    /// The Finish **summary** counts tiers, so the count the user approves and the set of files
+    /// that are actually kept have to come from the same rule. A summary that says "12 kept" while
+    /// the plan trashes 3 of them is the same bug wearing a different hat.
+    #[test]
+    fn the_kept_count_agrees_with_the_files_kept() {
+        for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+            for stars in 0..=Rating::MAX_STARS {
+                let shoot = Shoot::new();
+                let rating = Rating::stars(stars);
+                let kept_by_rating = rating.is_kept(mode);
+
+                let plan = plan_finish(
+                    shoot.path(),
+                    &shoot.photos(),
+                    &HashMap::from([(2u64, rating)]),
+                    &FinishOptions {
+                        unkept: UnkeptAction::DeletePermanently,
+                        kept: KeptAction::None,
+                        rating_mode: mode,
+                    },
+                    0,
+                );
+                let actually_deleted = !file_names(&plan, "IMG_0002").is_empty();
+                assert_eq!(
+                    kept_by_rating, !actually_deleted,
+                    "{stars} stars in {mode}: the rating says kept={kept_by_rating} but the plan \
+                     deleted={actually_deleted}"
+                );
+            }
+        }
     }
 
     #[test]
