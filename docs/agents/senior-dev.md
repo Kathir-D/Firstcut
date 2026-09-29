@@ -125,23 +125,35 @@ Commit and push review.md after every review pass; others read it live from your
 
 ## Live status
 
-_Last updated: 2026-09-29, pass 1_
+_Last updated: 2026-09-29, pass 2 (in-flight review)_
 
 ### Current focus
 
-Pre-flight review of the six v0.1 contract drafts and the bootstrap skeleton, before anything is
-frozen or built on. 55 findings filed (0 P0 · 23 P1 · 29 P2 · 3 P3). No P0: nothing built yet
-violates anything, and inventing a P0 to look thorough would waste your time.
+Pass 2: reviewed the **uncommitted** work in all 8 worktrees rather than waiting for commits —
+nobody is blocked and nobody is waiting on me, which is exactly when a second pair of eyes pays.
+19 new findings (REV-56 … REV-74) and 13 existing ones marked `addressed in WIP` from reading the
+code. 74 findings filed in total: 62 open, 8 addressed in WIP, 4 narrowed.
 
-Next: keep the board current as PRs appear, verify each `fixed in <commit>`, and re-approve each
-contract for the v1.0 freeze once its P1s are closed. No P0 has ever been filed in this project;
-if you think I have missed a real one, tell me.
+Verified rather than assumed this pass: infra's whole UniFFI → xcframework → static-framework →
+`CoreBridge` chain **builds and tests clean** (I ran it), app-logic's Caps Lock handling is
+**correct** including the regression test that stops Caps Lock contaminating other chords (I was
+about to file a false positive there), and 128 orientation changes across 2,880 files confirm
+core-batch's hard-split rule never fires inside a burst.
+
+Still no P0, and that is not leniency: a P0 means data loss, a crash or a broken build, and in
+pass 1 nothing was built yet. Pass 2 found one wrong-merge bug (REV-63) that is *close* to P0 in
+kind — a hard join is not revisable — but it needs a specific file layout to trigger, so P1 with a
+test is the honest call. If you think I have missed a real P0, tell me and I will re-grade it.
+
+Next: keep polling the worktrees, verify each `fixed in <commit>` against the diff, re-approve each
+contract for the v1.0 freeze once its P1s close, and hold the wave-1 gate until they do.
 
 ### Review passes
 
 | Date | Scope reviewed | Findings filed | Commit |
 | --- | --- | --- | --- |
-| 2026-09-29 | Pre-flight: all 6 contract drafts, `task.md` §0.2–§0.8 + §3, the bootstrap skeleton (`core/` workspace, `project.yml`, `CoreTypes.swift`, exiftool fixtures), and a measured check of §3 against the fixtures | REV-1 … REV-55 | this commit |
+| 2026-09-29 | Pre-flight: all 6 contract drafts, `task.md` §0.2–§0.8 + §3, the bootstrap skeleton (`core/` workspace, `project.yml`, `CoreTypes.swift`, exiftool fixtures), and a measured check of §3 against the fixtures | REV-1 … REV-55 | pass 1 |
+| 2026-09-29 | Pass 2, in flight: uncommitted work in all 8 worktrees — infra (UniFFI/build/CI, **build verified by running it**), core-batch (`order`/signals/scorer/`visual_sig`), core-store (DB/identity/rating), app-logic (`AppModel`/keymap/router), ui (window/toolbar/filmstrip), pipeline (decode spike) | REV-56 … REV-74, plus 13 marked addressed in WIP | pass 2 |
 
 Verified myself, not taken on trust: `cargo test` + `cargo fmt --check` + `cargo clippy` clean;
 `xcodegen` → `xcodebuild test` → TEST SUCCEEDED; §3 recomputed from all 2,880 exiftool records
@@ -151,7 +163,9 @@ Verified myself, not taken on trust: `cargo test` + `cargo fmt --check` + `cargo
 
 | Date | What | Commit |
 | --- | --- | --- |
-| 2026-09-29 | Contract pre-flight review, 55 findings, no contract approved for freeze | see branch `agent/senior-dev` |
+| 2026-09-29 | Contract pre-flight review, 55 findings, no contract approved for freeze | `d36818a` |
+| 2026-09-29 | Board cross-reference fixes | `5401d4c` |
+| 2026-09-29 | Pass 2 in-flight review: 19 new findings, 13 addressed in WIP, infra's build verified end to end | see branch tip |
 
 ### Blockers
 
@@ -202,6 +216,13 @@ Conventions I will hold everyone to from here on:
 - **I am not the owner of anything you are.** If I disagree with a finding, dispute it in your
   status file with the reason and we go to the owner together. Do not quietly skip a finding, and
   do not treat "senior-dev said so" as a substitute for understanding the change.
+- **Mock the protocol, never copy the struct.** Four agents are now writing their own version of
+  the same types in the same hour, under different names. ui's `CullViewState` and app-logic's
+  `ImageProviding` are protocols and are the right shape; app-logic's `PipelineMirror` structs and
+  the `SessionTypes` renames are not. Every copy is an adapter in week 3. (REV-56, REV-72, REV-73.)
+- **I check before I file, and I file what I checked.** Pass 2: I was ready to report that Caps Lock
+  broke every digit shortcut, read the test, found `Keymap.normalized` already strips it, and did
+  not file it. The review board is only worth reading if every line survived that.
 - **Measured facts beat remembered facts.** task.md §3 had two wrong numbers (drive mode, the
   "13 gaps"); I recomputed all of it from the fixtures and the corrected table is at the top of
   `review.md`. When you record a measurement, record how you measured it, so the next agent can
