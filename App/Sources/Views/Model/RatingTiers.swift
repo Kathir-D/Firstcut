@@ -11,7 +11,7 @@ import Foundation
 
 enum RatingTiers {
   /// task.md §6.1 in stars mode. Reject wins over stars, as §6.1 specifies.
-  static func tier(for rating: Rating, mode: RatingMode) -> CullTier {
+  static func tier(for rating: Rating, mode: RatingMode) -> Tier {
     switch mode {
     case .stars:
       if rating.flag == .reject { return .rejected }

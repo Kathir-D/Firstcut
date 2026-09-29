@@ -8,7 +8,10 @@
 
 import Foundation
 
-public enum CommandMenu: String, Hashable, Sendable, CaseIterable, Codable {
+/// Which menu a command lives in. Named `MenuSection`, not `CommandMenu`: `CommandMenu` is a
+/// SwiftUI view, and a same-module type of that name shadows it, so `CommandMenu("Photo") { … }` in
+/// the menu bar resolved to this enum and failed to compile.
+public enum MenuSection: String, Hashable, Sendable, CaseIterable, Codable {
     case photo
     case view
     case file
@@ -19,7 +22,7 @@ public enum CommandMenu: String, Hashable, Sendable, CaseIterable, Codable {
 
 public struct CommandCatalogEntry: Hashable, Sendable, Identifiable {
     public let command: Command
-    public let menu: CommandMenu
+    public let menu: MenuSection
     public let title: String
 
     public var id: String {
@@ -113,7 +116,7 @@ public enum CommandCatalog {
     }
 
     /// Entries for one menu, in display order.
-    public static func entries(in menu: CommandMenu) -> [CommandCatalogEntry] {
+    public static func entries(in menu: MenuSection) -> [CommandCatalogEntry] {
         all.filter { $0.menu == menu }
     }
 }

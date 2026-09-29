@@ -51,6 +51,11 @@ targets:
     platform: macOS
     sources:
       - path: App/Sources
+        excludes:
+          # A standalone measurement harness with top-level code, which is only legal in a
+          # main.swift. It never belongs in the app target; run it with
+          # `swiftc -DSPIKE App/Sources/Pipeline/Spike/DecodeSpike.swift` instead.
+          - "Pipeline/Spike"
       - path: App/Resources
     dependencies:
       - target: FirstcutCore

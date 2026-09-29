@@ -437,4 +437,20 @@ public struct CullProgress: Hashable, Sendable {
         guard totalPhotos > 0 else { return 0 }
         return Double(ratedPhotos) / Double(totalPhotos)
     }
+
+    // Display accessors for the HUD (task.md §9.6). The single type carries both the raw counts
+    // and the shaped values the views read, so a view never recomputes a count from the photos —
+    // which is the mistake REV-53 exists to prevent.
+    /// 0-based, for the HUD's own arithmetic. `batchNumber` is the 1-based display value.
+    public var batchIndex: Int { max(0, batchNumber - 1) }
+    /// Photos in the **whole shoot** that have no rating yet — the HUD's "unrated left", which is a
+    /// shoot-wide number and not a per-batch one (it is what tells the user how much work is left).
+    /// `photosLeftInBatch` is the per-batch count. Deriving this from the global pair rather than
+    /// from the current batch is what `PreviewCullViewStateTests.progressTotals` pins down.
+    public var photosRemaining: Int { max(0, totalPhotos - ratedPhotos) }
+    public var keeps: Int { self[.keep] }
+    public var good: Int { self[.good] }
+    public var maybe: Int { self[.maybe] }
+    /// Wall clock since the session was opened. Not stored on the model; the HUD supplies it.
+    public var elapsed: TimeInterval { 0 }
 }

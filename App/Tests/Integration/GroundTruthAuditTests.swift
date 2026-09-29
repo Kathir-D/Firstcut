@@ -134,7 +134,18 @@ final class GroundTruthAuditTests: XCTestCase {
 
     /// Writes the worksheet and one contact sheet per mandatory boundary, so the look can actually
     /// happen. Prints the paths; skips when the photos are absent.
+    ///
+    /// **Opt-in**, via `FIRSTCUT_QA_AUDIT=1`, for two reasons. It decodes real 6000×4000 CR3s across
+    /// 42 GB, so it runs for many minutes, and it is a *producing* step, not an assertion: it makes
+    /// the artefacts a human needs for REV-55's ground truth. Leaving it in the default pass meant
+    /// every `xcodebuild test` paid that cost to assert nothing. Run it deliberately:
+    ///
+    ///     FIRSTCUT_QA_AUDIT=1 xcodebuild … -only-testing:FirstcutIntegrationTests test
     func testGenerateAuditArtefacts() throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["FIRSTCUT_QA_AUDIT"] == "1",
+            "Set FIRSTCUT_QA_AUDIT=1 to render the audit contact sheets (slow: decodes the real photos)."
+        )
         try skipUnlessTestPhotos()
         for game in Game.allCases {
             let plan = try BoundarySampler.plan(for: game)

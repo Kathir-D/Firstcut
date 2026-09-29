@@ -40,7 +40,7 @@ struct CullPhoto: Identifiable, Equatable {
   var fileName: String
   var meta: PhotoMeta
   var rating: Rating
-  var tier: CullTier
+  var tier: Tier
   var isKeep: Bool
 }
 
@@ -52,24 +52,10 @@ struct CullBatch: Identifiable, Equatable {
   var isProvisional: Bool
 }
 
-/// The tier a photo is in, in the current rating mode. The **model** produces this; see `CullPhoto`.
-enum CullTier: String, CaseIterable, Sendable {
-  case keep
-  case good
-  case maybe
-  case unrated
-  case rejected
-
-  var displayName: String {
-    switch self {
-    case .keep: "Keep"
-    case .good: "Good"
-    case .maybe: "Maybe"
-    case .unrated: "Unrated"
-    case .rejected: "Rejected"
-    }
-  }
-}
+// A photo's tier is `Tier` (App/Sources/Session/SessionTypes.swift) — the same five cases, the
+// same titles, one type. `Tier` used to be declared here as well (REV-56: parallel vocabularies
+// for one concept), and the duplicate is exactly why the HUD's `keeps/good/maybe` and core-store's
+// `[Tier: Int]` counts could not be the same value.
 
 enum CullPhase: Equatable {
   case welcome
@@ -108,21 +94,11 @@ enum CullViewBackground: Equatable, Sendable {
   case compare
 }
 
-struct CullProgress: Equatable {
-  var batchIndex: Int
-  var batchCount: Int
-  var photosRemaining: Int
-  var keeps: Int
-  var good: Int
-  var maybe: Int
-  var unvisitedBatchCount: Int
-  var elapsed: TimeInterval
-
-  static let empty = CullProgress(
-    batchIndex: 0, batchCount: 0, photosRemaining: 0,
-    keeps: 0, good: 0, maybe: 0, unvisitedBatchCount: 0, elapsed: 0
-  )
-}
+// `CullProgress` used to be redeclared here, which is REV-56 — app-logic and ui each invented one
+// and the merged tree would not compile ('invalid redeclaration'). There is one type now, in
+// App/Sources/Session/SessionTypes.swift, because it is part of the state the model owns: it carries
+// the per-tier counts that the HUD and the finish summary both read, and the values a view would
+// otherwise recompute from the photos (REV-53).
 
 @MainActor
 protocol CullImageSource: AnyObject {

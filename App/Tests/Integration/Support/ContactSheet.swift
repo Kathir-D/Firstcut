@@ -13,6 +13,7 @@
 // committed. `AuditOutput.directory` is `$FIRSTCUT_QA_AUDIT_DIR`, defaulting to a temp directory.
 
 import CoreGraphics
+import CoreText
 import Foundation
 import AppKit
 import ImageIO
@@ -138,9 +139,16 @@ public enum ContactSheet {
                 CGRect(x: originX, y: originY, width: CGFloat(cell), height: CGFloat(cell)))
 
             if let image = downsample(url: url, to: cell) {
-                context.draw(
-                    image,
-                    in: CGRect(x: originX, y: originY, width: CGFloat(cell), height: CGFloat(cell)))
+                // The context is y-flipped (see the flip above) so the caption can be at the top, and
+                // CGContext.draw draws images into that flipped space upside down. Undo the flip for
+                // the image only, around the cell's own centre. Verified by looking at the sheet:
+                // before this the frames rendered rotated 180°, which is not something a test
+                // catches and makes a human boundary audit read the wrong way round.
+                context.saveGState()
+                context.translateBy(x: originX, y: originY + CGFloat(cell))
+                context.scaleBy(x: 1, y: -1)
+                context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(cell), height: CGFloat(cell)))
+                context.restoreGState()
             }
 
             let captionText = labels?[safe: index] ?? name
@@ -174,16 +182,29 @@ public enum ContactSheet {
     }
 
     /// Draws flipped text into a context whose coordinate system is y-down (see the flip above).
+    ///
+    /// Core Text, not `NSString.draw(in:withAttributes:)`. The AppKit version needs
+    /// `NSGraphicsContext.current`, which is main-thread-only state, and XCTest runs this method off
+    /// the main thread inside a hosted app — that took the whole test host down, not just the test.
+    /// Core Text draws into the `CGContext` directly and is safe from any thread.
     private static func draw(_ string: String, in rect: CGRect, font: NSFont, in context: CGContext) {
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-        (string as NSString).draw(
-            in: rect,
-            withAttributes: [
+        let attributed = NSAttributedString(
+            string: string,
+            attributes: [
                 .font: font,
                 .foregroundColor: NSColor.white,
-            ])
-        NSGraphicsContext.restoreGraphicsState()
+            ]
+        )
+        let line = CTLineCreateWithAttributedString(attributed)
+        context.textPosition = CGPoint(x: rect.minX, y: rect.minY)
+        // The context is already y-flipped (see the flip above), so undo it for the glyph run and
+        // put it back afterwards, rather than flipping the whole context again.
+        context.saveGState()
+        context.textMatrix = .identity
+        context.scaleBy(x: 1, y: -1)
+        context.textPosition = CGPoint(x: rect.minX, y: -rect.maxY)
+        CTLineDraw(line, context)
+        context.restoreGState()
     }
 
     /// Thumbnail-quality decode straight from the embedded preview. `kCGImageSourceThumbnailMaxPixelSize`

@@ -33,7 +33,7 @@ final class PreviewCullViewState: CullViewState {
   var showsClippingOverlay = false
   var autoAdvanceEnabled = false
   var viewerBackgroundDarkness: Double = 0.13
-  private(set) var progress: CullProgress = .empty
+  private(set) var progress: CullProgress = CullProgress()
   let images: CullImageSource
 
   private var allPhotos: [PhotoID: CullPhoto] = [:]
@@ -249,28 +249,26 @@ final class PreviewCullViewState: CullViewState {
   }
 
   private func recomputeProgress() {
-    var keeps = 0
-    var good = 0
-    var maybe = 0
-    var remaining = 0
-    for (id, rating) in ratings {
-      switch RatingTiers.tier(for: rating, mode: ratingMode) {
-      case .keep: keeps += 1
-      case .good: good += 1
-      case .maybe: maybe += 1
-      default: break
-      }
-      if allPhotos[id]?.tier == .unrated { remaining += 1 }
+    // Counted over *every* photo, not over `ratings`: the shoot starts with no ratings at all, so
+    // iterating the rated ones alone counted zero unrated photos and the HUD read "0 unrated left"
+    // on a freshly opened folder.
+    var counts: [Tier: Int] = [:]
+    for photo in allPhotos.values {
+      counts[photo.tier, default: 0] += 1
     }
+    let total = allPhotos.count
+    let rated = total - counts[.unrated, default: 0]
     progress = CullProgress(
-      batchIndex: currentBatchIndex,
+      batchNumber: batches.isEmpty ? 0 : currentBatchIndex + 1,
       batchCount: batches.count,
-      photosRemaining: remaining,
-      keeps: keeps,
-      good: good,
-      maybe: maybe,
-      unvisitedBatchCount: batches.filter { !$0.isVisited }.count,
-      elapsed: Date().timeIntervalSince(startedAt)
+      photoNumber: currentPhotoIndex + 1,
+      photoCount: photosInCurrentBatch.count,
+      photosLeftInBatch: max(0, photosInCurrentBatch.count - currentPhotoIndex - 1),
+      batchesLeft: max(0, batches.count - currentBatchIndex - 1),
+      unvisitedBatches: batches.count(where: { !$0.isVisited }),
+      counts: counts,
+      totalPhotos: total,
+      ratedPhotos: rated
     )
   }
 }

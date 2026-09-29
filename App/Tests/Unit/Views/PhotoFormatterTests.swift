@@ -56,7 +56,7 @@ struct PhotoFormatterTests {
 }
 
 @Suite("Rating tiers")
-struct CullTierTests {
+struct TierTests {
   @Test("Stars map to the tiers in task.md §6.1")
   func stars() {
     #expect(RatingTiers.tier(for: Rating(stars: 5), mode: .stars) == .keep)
