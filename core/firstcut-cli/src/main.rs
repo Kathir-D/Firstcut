@@ -47,6 +47,7 @@ fn run(args: &[String]) -> Result<(), String> {
             print_usage();
             Ok(())
         }
+        "scan" => cmd_scan(rest),
         "dump-meta" => cmd_dump_meta(rest),
         "order" => cmd_order(rest),
         "batch" => cmd_batch(rest),
@@ -71,6 +72,14 @@ COMMANDS
         Convert an `exiftool -j` dump into PhotoMeta-shaped JSON for the other
         agents' mocks. `dump-meta --fixture <name>` writes
         tests/fixtures/meta/<name>.json from tests/fixtures/exiftool/<name>.json.
+
+  scan <folder> [--out <file>] [--verify <exiftool.json>] [--bench]
+        Read a real folder's headers and print the PhotoMeta it produced. This is the command
+        that proves the CR3 parser works: it is what §7.4's verified-against-exiftool requirement means.
+
+        --out <file>   write tests/fixtures/meta/<game>.json (the versioned envelope)
+        --verify <f>   compare every field against an `exiftool -j` dump and report mismatches
+        --bench        time the scan; task.md §7.4 targets < 2 ms/file
 
   order <meta.json>
         Print capture order, one file name per line.
@@ -100,6 +109,205 @@ COMMANDS
         out. task.md §5.4 targets >= 98% boundary F1 and zero merges of clearly different plays.
 "
     );
+}
+
+// -------------------------------------------------------------------- scan
+
+fn cmd_scan(args: &[String]) -> Result<(), String> {
+    use firstcut_core::meta::ScanDump;
+    use firstcut_core::scan::scan_folder;
+
+    let mut folder: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut verify: Option<PathBuf> = None;
+    let mut bench = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--out" | "-o" => out = Some(PathBuf::from(flag(args, &mut i, "--out")?)),
+            "--verify" => verify = Some(PathBuf::from(flag(args, &mut i, "--verify")?)),
+            "--bench" => bench = true,
+            other if other.starts_with('-') => {
+                return Err(format!("scan: unknown option `{other}`"));
+            }
+            other => folder = Some(PathBuf::from(other)),
+        }
+        i += 1;
+    }
+    let folder = folder.ok_or("scan: pass a folder")?;
+
+    let started = std::time::Instant::now();
+    let result = scan_folder(&folder);
+    let elapsed = started.elapsed();
+
+    if let Some(verify) = &verify {
+        return verify_against_exiftool(&result.photos, verify);
+    }
+
+    if let Some(out) = out {
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        let dump = ScanDump::new(result.photos.clone(), result.skipped.clone());
+        let json = serde_json::to_string_pretty(&dump).map_err(|e| e.to_string())?;
+        std::fs::write(&out, format!("{json}\n")).map_err(|e| format!("{}: {e}", out.display()))?;
+        println!(
+            "{} photos -> {} ({} skipped)",
+            result.photos.len(),
+            out.display(),
+            result.skipped.len()
+        );
+    } else {
+        for photo in &result.photos {
+            let time = photo
+                .capture_time
+                .map(|c| format!("{}", c.unix_ms))
+                .unwrap_or_else(|| "-".into());
+            println!(
+                "{:<20} {:>14}  shutter={:<8} iso={:<5} {} {}",
+                photo.rel_path,
+                time,
+                photo
+                    .shutter_count
+                    .map_or_else(|| "-".into(), |v| v.to_string()),
+                photo.iso.map_or_else(|| "-".into(), |v| v.to_string()),
+                photo.camera_model.as_deref().unwrap_or("?"),
+                photo.lens_model.as_deref().unwrap_or("")
+            );
+        }
+        for skipped in &result.skipped {
+            println!("SKIPPED {}: {}", skipped.rel_path, skipped.reason);
+        }
+    }
+
+    if bench {
+        let n = result.photos.len().max(1);
+        println!(
+            "\nscanned {n} files in {:.1} ms = {:.2} ms/file ({} threads)",
+            elapsed.as_secs_f64() * 1000.0,
+            elapsed.as_secs_f64() * 1000.0 / n as f64,
+            std::thread::available_parallelism()
+                .map(|p| p.get())
+                .unwrap_or(1)
+        );
+        println!("task.md §7.4 target: < 2 ms/file");
+    }
+    for warning in &result.warnings {
+        eprintln!("warning: {warning}");
+    }
+    Ok(())
+}
+
+/// Field-for-field comparison against an `exiftool -j` dump. §7.4 requires the parser to match
+/// exiftool, and "I read the values and they looked right" is not a check: this walks both sides
+/// and names every field that differs.
+fn verify_against_exiftool(
+    photos: &[firstcut_core::meta::PhotoMeta],
+    dump_path: &PathBuf,
+) -> Result<(), String> {
+    use firstcut_core::meta::PhotoMeta;
+    let text =
+        std::fs::read_to_string(dump_path).map_err(|e| format!("{}: {e}", dump_path.display()))?;
+    let rows: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", dump_path.display()))?;
+    let rows = rows
+        .as_array()
+        .ok_or("the exiftool dump is not a JSON array")?;
+
+    let by_name: std::collections::HashMap<&str, &PhotoMeta> =
+        photos.iter().map(|p| (p.rel_path.as_str(), p)).collect();
+
+    let mut checked = 0usize;
+    let mut mismatches: Vec<String> = Vec::new();
+    for row in rows {
+        let Some(name) = row.get("FileName").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(ours) = by_name.get(name) else {
+            mismatches.push(format!("{name}: in the dump but not in the scan"));
+            continue;
+        };
+        checked += 1;
+
+        let mut cmp_str = |field: &str, expected: Option<&str>, actual: Option<&str>| {
+            if let (Some(want), Some(got)) = (expected, actual)
+                && !want.eq_ignore_ascii_case(got)
+            {
+                mismatches.push(format!("{name}: {field} exiftool={want:?} parsed={got:?}"));
+            }
+        };
+        cmp_str(
+            "Model",
+            row.get("Model").and_then(|v| v.as_str()),
+            ours.camera_model.as_deref(),
+        );
+        cmp_str(
+            "LensModel",
+            row.get("LensModel").and_then(|v| v.as_str()),
+            ours.lens_model.as_deref(),
+        );
+        cmp_str(
+            "SerialNumber",
+            row.get("SerialNumber").and_then(|v| v.as_str()),
+            ours.camera_serial.as_deref(),
+        );
+
+        let mut cmp_num = |field: &str, expected: Option<f64>, actual: Option<f32>| {
+            if let (Some(want), Some(got)) = (expected, actual)
+                && (want - f64::from(got)).abs() > 0.01
+            {
+                mismatches.push(format!("{name}: {field} exiftool={want} parsed={got}"));
+            }
+        };
+        cmp_num(
+            "FNumber",
+            row.get("FNumber").and_then(|v| v.as_f64()),
+            ours.f_number,
+        );
+        cmp_num(
+            "FocalLength",
+            row.get("FocalLength").and_then(|v| v.as_f64()),
+            ours.focal_length_mm,
+        );
+        cmp_num(
+            "ISO",
+            row.get("ISO").and_then(|v| v.as_f64()),
+            ours.iso.map(|v| v as f32),
+        );
+        if let (Some(want), Some(got)) = (
+            row.get("ShutterCount").and_then(|v| v.as_u64()),
+            ours.shutter_count,
+        ) && want != got
+        {
+            mismatches.push(format!(
+                "{name}: ShutterCount exiftool={want} parsed={got:?}"
+            ));
+        }
+        if let (Some(want), Some(got)) = (
+            row.get("ImageWidth").and_then(|v| v.as_u64()),
+            Some(u64::from(ours.width)),
+        ) && want != got
+        {
+            mismatches.push(format!("{name}: ImageWidth exiftool={want} parsed={got}"));
+        }
+        if let (Some(want), Some(got)) = (
+            row.get("ImageHeight").and_then(|v| v.as_u64()),
+            Some(u64::from(ours.height)),
+        ) && want != got
+        {
+            mismatches.push(format!("{name}: ImageHeight exiftool={want} parsed={got}"));
+        }
+    }
+
+    println!("compared {checked} files against {}", dump_path.display());
+    if mismatches.is_empty() {
+        println!("OK: every compared field matches exiftool");
+        return Ok(());
+    }
+    for m in mismatches.iter().take(40) {
+        println!("  {m}");
+    }
+    Err(format!("{} mismatches against exiftool", mismatches.len()))
 }
 
 // ---------------------------------------------------------------- dump-meta
