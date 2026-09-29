@@ -163,8 +163,13 @@ fn ordering_is_capture_time_on_every_game() {
 
 #[test]
 fn file_name_rollover_does_not_affect_order() {
-    // Game4VRE ends at IMG_9999, so the fixture is the rollover case without needing a synthetic
-    // one: names run backwards through the whole folder while times run forwards.
+    // Game4VRE ends at IMG_9999, so it exercises the high end of the numbering space.
+    //
+    // It does NOT contain a name inversion, and that is the point: senior-dev measured zero
+    // inversions across all 2,880 files in all four games, with Game4VRE running 9146..9999
+    // monotonically. An earlier version of this test asserted `inverted > 0` and failed, which is
+    // how we know the committed dumps cannot catch name-based ordering. That case is now covered
+    // by `a_scrambled_photo_set_produces_a_byte_identical_order`, which is the test that can.
     let photos = load_photos("Game4VRE");
     let numbers: Vec<u32> = photos.iter().filter_map(|p| p.file_number).collect();
     assert!(numbers.iter().any(|&n| n >= 9999), "expected the 9999 end");
@@ -175,11 +180,16 @@ fn file_name_rollover_does_not_affect_order() {
         .iter()
         .map(|id| photos.iter().find(|p| p.id == *id).unwrap().rel_path.as_str())
         .collect();
-    let inverted = names
-        .windows(2)
-        .filter(|w| w[1].parse_num() < w[0].parse_num())
-        .count();
-    assert!(inverted > 0, "the fixture must contain at least one name inversion");
+
+    // Names run forwards here, so order is sorted by capture time iff it is sorted by number.
+    // This documents the coincidence rather than pretending it is a test of the rule.
+    let by_number: Vec<u32> = names.iter().map(|n| n.parse_num()).collect();
+    let mut sorted = by_number.clone();
+    sorted.sort_unstable();
+    assert_eq!(
+        by_number, sorted,
+        "Game4VRE: order is not by number, which is expected and is why the scramble test exists"
+    );
 }
 
 /// Pull the number out of `IMG_0451.CR3` without pulling in a regex crate.
@@ -245,12 +255,165 @@ fn a_synthetic_rollover_shoot_orders_by_time() {
     photos[0].file_number = Some(9998);
 
     let ids = order::order(&photos);
-    let names: Vec<&str> = ids.iter().map(|id| photos[id.0 as usize].rel_path.as_str()).collect();
+    // Look the photo up by id. REV-66: the old `photos[id.0 as usize]` treated a PhotoId as an
+    // array index, which works only while every fixture happens to set `id == index` and otherwise
+    // asserts against the wrong photo -- here it indexed out of bounds.
+    let names: Vec<&str> = ids
+        .iter()
+        .map(|id| {
+            photos
+                .iter()
+                .find(|p| p.id == *id)
+                .unwrap_or_else(|| panic!("order returned an id that is not in the input"))
+                .rel_path
+                .as_str()
+        })
+        .collect();
     assert_eq!(
         names,
         ["IMG_9998.CR3", "IMG_9999.CR3", "IMG_0001.CR3", "IMG_0002.CR3"],
         "capture time wins over the name across the rollover"
     );
+}
+
+/// REV-26, and the most important test in this file.
+///
+/// **File-name order is byte-identical to capture order in all 2,880 files of all four games, and
+/// Game4VRE runs 9146..9999 monotonically, so the `IMG_9999 -> IMG_0001` rollover never occurs in
+/// the committed dumps.** A completely name-based `order()` therefore passes every other test in
+/// this file, every F1 number and every CI run, while violating a locked decision in task.md §2.
+///
+/// So this test renames every photo to a name that is deliberately *anti-correlated* with capture
+/// time and asserts the produced order is **byte-identical** to the unscrambled one. The scramble
+/// is deterministic (seeded by the photo id), so this is a CI test, not a local curiosity.
+#[test]
+fn a_scrambled_photo_set_produces_a_byte_identical_order() {
+    use firstcut_core::batch::PhotoId;
+    use firstcut_core::order;
+
+    for game in GAMES {
+        let photos = load_photos(game);
+        let base: Vec<PhotoId> = order::order(&photos);
+
+        // Deterministic scramble: a multiplicative permutation of the file number, so names are
+        // shuffled but no two photos collide and the mapping is stable across runs.
+        let scrambled: Vec<cli_fixture::PhotoMeta> = photos
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let mut clone = p.clone();
+                let scrambled_number = scramble_number(i as u64, photos.len() as u64);
+                clone.rel_path = format!("ZZ_{scrambled_number:05}.CR3");
+                // The id is a hash of the path in production, so re-derive it from the new path --
+                // that is exactly what a real re-scan after files are renamed would produce.
+                clone.id = PhotoId(firstcut_core::batch::fnv1a64(clone.rel_path.as_bytes()));
+                clone.companions = Vec::new();
+                clone
+            })
+            .collect();
+
+        let after: Vec<PhotoId> = order::order(&scrambled);
+        assert_eq!(after.len(), base.len(), "{game}: scramble changed the photo count");
+
+        // Compare by *capture identity*, not by PhotoId: the ids are hashes of the paths, which
+        // the scramble changed. A name-based order would emit these in scrambled order and fail.
+        let by_id: std::collections::HashMap<PhotoId, &cli_fixture::PhotoMeta> =
+            photos.iter().map(|p| (p.id, p)).collect();
+        let scrambled_by_id: std::collections::HashMap<PhotoId, &cli_fixture::PhotoMeta> =
+            scrambled.iter().map(|p| (p.id, p)).collect();
+
+        let base_times: Vec<Option<i64>> = base
+            .iter()
+            .map(|id| {
+                by_id.get(id)
+                    .and_then(|p| p.capture_time.as_ref())
+                    .map(|c| c.unix_ms)
+            })
+            .collect();
+        let after_times: Vec<Option<i64>> = after
+            .iter()
+            .map(|id| {
+                scrambled_by_id.get(id)
+                    .and_then(|p| p.capture_time.as_ref())
+                    .map(|c| c.unix_ms)
+            })
+            .collect();
+
+        assert_eq!(
+            after_times, base_times,
+            "{game}: renaming the files changed the order, so order() is reading the file name"
+        );
+
+        // And prove the scramble actually bit: name order differs from capture order in the
+        // scrambled set. Without this the test would pass vacuously.
+        let scrambled_numbers: Vec<u64> = scrambled.iter().map(|p| scramble_number_of(&p.rel_path)).collect();
+        let mut sorted = scrambled_numbers.clone();
+        sorted.sort_unstable();
+        assert_ne!(
+            scrambled_numbers, sorted,
+            "{game}: the scramble did not actually permute the names"
+        );
+        sorted.clear();
+
+        // Self-check: the scramble must be a bijection, or two photos share a name and the
+        // resulting failure looks like a name-ordering bug in `order()` rather than a bad fixture.
+        let mut seen = std::collections::HashSet::new();
+        for p in &scrambled {
+            assert!(
+                seen.insert(p.rel_path.clone()),
+                "{game}: the scramble produced a duplicate name {}",
+                p.rel_path
+            );
+        }
+        assert_eq!(seen.len(), photos.len(), "{game}: the scramble lost a photo");
+    }
+}
+
+/// A deterministic, **bijective** permutation of `0..len` onto `0..len`.
+///
+/// It has to be bijective, not merely scattered: an earlier version did `(x * K) % (len+1)) % len`,
+/// which collided two photos onto the same name, and the resulting duplicate-name test failure
+/// looked exactly like a name-ordering bug in `order()`. That is the trap this test walks into --
+/// when it fails, confirm the scramble is a permutation before believing the order is wrong.
+fn scramble_number(index: u64, len: u64) -> u64 {
+    if len == 0 {
+        return 0;
+    }
+    // Affine permutation (a*x + c) mod len is a bijection for any a coprime with len. `index`
+    // within a single run is a permutation of 0..len, and a fixed coprime multiplier keeps it one.
+    // Falling back to the identity at len == 1 keeps the gcd search from dividing by zero.
+    let mut a = 2_654_435_761u64 % len;
+    if a == 0 {
+        a = 1;
+    }
+    while gcd(a, len) != 1 {
+        a = (a + 1) % len;
+        if a == 0 {
+            a = 1;
+        }
+    }
+    (index * a) % len
+}
+
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+fn scramble_number_of(rel_path: &str) -> u64 {
+    rel_path
+        .rsplit_once('.')
+        .map_or(0, |(stem, _)| {
+            stem.chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0)
+        })
 }
 
 /// Ground-truth F1. Skipped per game until a human has verified that game's boundaries.
