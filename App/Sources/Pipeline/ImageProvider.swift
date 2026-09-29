@@ -581,7 +581,7 @@ final class DecodeEngine: @unchecked Sendable {
     /// `decodeThumbnail` with `kCGImageSourceCreateThumbnailWithTransform`, showed them right way
     /// up, so the same photo appeared twice in two orientations. `CGImageSourceCreateImageAtIndex`
     /// has no transform option, so the rotation is applied here from the parsed orientation.
-    static func decodeFull(url: URL, orientation: UInt8) -> CGImage? {
+    static func decodeFull(url: URL, orientation: UInt8 = 1) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
         guard
             let raw = CGImageSourceCreateImageAtIndex(

@@ -111,7 +111,7 @@ final class PhotoViewerHostView: NSView {
     host?.setViewportSize(bounds.size)
   }
 
-  private func adopt(_ host: any PhotoViewerHost?) {
+  private func adopt(_ host: (any PhotoViewerHost)?) {
     guard let host, let view = host as? NSView else { return }
     view.removeFromSuperview()
     view.frame = bounds
