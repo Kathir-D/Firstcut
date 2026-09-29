@@ -202,9 +202,10 @@ _Last updated: 2026-09-29 — deliverable 0 (rescue and consolidate) substantial
 
 ### Current focus
 
-Deliverable 0. All eight branches are merged onto `agent/worker`; PR #5 is open and will stay
-open. Both suites run on the merged tree and the Swift side is green end to end. Working through
-the remaining P1s (REV-63, REV-68, REV-12/59) and then deliverable 2, the CR3 parser.
+Deliverable 0 complete; both suites green and running. senior-dev owns the merge (ruling of
+2026-09-29: I push, they merge — no consolidating, no merging, no rebasing main). Working the
+remaining P1s: REV-68 rename reconciliation, then REV-64 `visual_sig`, REV-12/59 CI strictness,
+`PipelineMirror` deletion, then deliverable 2 (the CR3 parser).
 
 ### Verified state on the merged tree
 
@@ -214,24 +215,33 @@ Run, not assumed:
 | --- | --- |
 | `cargo fmt --manifest-path core/Cargo.toml --all --check` | clean |
 | `cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings` | clean |
-| `cargo test --manifest-path core/Cargo.toml` | 198 pass, **1 fail** — `ground_truth_exists_for_every_game` |
-| `xcodebuild … test` (all three bundles) | **TEST SUCCEEDED**, exit 0 — 155 unit, 16 integration, 3 performance |
+| `cargo test --manifest-path core/Cargo.toml` | **203 + 8 + 17 pass, 0 fail** |
+| `xcodebuild … test` (all three bundles) | **TEST SUCCEEDED**, exit 0 — 155 unit / 16 integration / 3 perf |
 
-The one Rust failure is real outstanding work, not a broken build: no ground truth exists for any
-of the four games. It cannot be produced by me — task.md §12 requires it to be built by **looking at
-the photographs**, and the test that fails says so in its message and names the command to run.
+Boundary F1 is **UNMEASURED**. `cargo test` prints, on every run:
+
+```
+SKIPPED: no verified ground truth for ["Game1JENKS", "Gane2NC", "Game3KC", "Game4VRE"].
+Boundary F1 is UNMEASURED; the 98% target in task.md §5.4 is NOT demonstrated.
+```
+
+Green suite, unproven claim, stated every run. senior-dev owns building the ground truth.
 
 ### Done log
 
 | Date | What | Commit |
 | --- | --- | --- |
-| 2026-09-29 | Merged 8 branches; resolved `Cargo.lock` + `firstcut-core/Cargo.toml` as unions | `928696e`…`f9f93a2` |
-| 2026-09-29 | **REV-69** rating mapping: one pure function, one table, `Rating::tier` is the single mapped authority the filmstrip, counts, split folders and Finish decision all read | `7d3335d` |
-| 2026-09-29 | **REV-26** scrambled-name ordering test; **REV-66** PhotoId-as-index fix | `7d3335d` |
-| 2026-09-29 | **REV-56** deleted duplicate `CullProgress`, `CullTier`, `RatingTiers`; deleted the second `FirstcutTestSupport.swift` | `156145f` |
-| 2026-09-29 | `CommandMenu` shadowing fix; DecodeSpike `#if SPIKE`; TCC hang in the test host | `156145f`, next |
-| 2026-09-29 | Unkeeping clears the 5 stars it invented (found by app-logic's P-key test) | see log |
-| 2026-09-29 | `firstcut contact-sheet` + `firstcut eval`, both verified to work *and* to fail correctly | this commit |
+| 2026-09-29 | Merged 8 branches; conflicts were `Cargo.lock` + `firstcut-core/Cargo.toml`, both unions | `928696e`…`f9f93a2` |
+| 2026-09-29 | **REV-69** one rating-mode mapping; `Rating::tier` is the single mapped authority | `7d3335d` |
+| 2026-09-29 | **REV-26** scrambled-name ordering test; **REV-66** PhotoId-as-index | `7d3335d` |
+| 2026-09-29 | **REV-56** deleted duplicate `CullProgress`, `CullTier`, `RatingTiers`, `FirstcutTestSupport` | `156145f` |
+| 2026-09-29 | `CommandMenu` shadowing; `DecodeSpike` `#if SPIKE`; TCC hang in the test host | `156145f`, `604d49e` |
+| 2026-09-29 | Unkeeping clears the 5 stars it invented | `6ee33e2` |
+| 2026-09-29 | `firstcut contact-sheet` + `eval`, verified to fail correctly | `8d1216f` |
+| 2026-09-29 | **REV-63** signed Δt + `time_is_fallback`; 7 tests | `9a2b83f` |
+| 2026-09-29 | **REV-78 (P0)** one function answers "is this kept"; trash decision tested | `f9ac687` |
+| 2026-09-29 | Ground-truth test: red failure → loud skip | `f9ac687` |
+| 2026-09-29 | Core Text contact sheets ported, rendered and **looked at** | `15861c4` |
 
 ### Bugs found in the rescued work, and what they were
 
