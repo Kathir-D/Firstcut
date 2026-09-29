@@ -1,0 +1,7 @@
+# Owner: infra. UniFFI bindings configuration.
+# https://mozilla.github.io/uniffi-rs/managers/config.html
+#
+# The Rust crate is `firstcut_core`; the Swift module must be `FirstcutCore` (docs/contracts/build.md),
+# and the low-level Clang module it imports is `FirstcutCoreFFI`.
+[bindings.swift]
+module_name = "FirstcutCore"

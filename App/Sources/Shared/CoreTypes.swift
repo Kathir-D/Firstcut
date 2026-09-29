@@ -16,7 +16,11 @@ public enum RawFormat: String, Sendable, Codable {
 }
 
 public enum FileKind: Sendable, Codable, Equatable {
-    case raw(RawFormat), jpeg, heif, tiff, png
+    case raw(RawFormat)
+    case jpeg
+    case heif
+    case tiff
+    case png
 }
 
 public enum TimeSource: String, Sendable, Codable { case exif, fileModified }
@@ -99,7 +103,10 @@ public struct Rating: Sendable, Codable, Equatable {
     public var label: ColorLabel? = nil
     public var keep: Bool = false
     public init(stars: UInt8 = 0, flag: Flag = .none, label: ColorLabel? = nil, keep: Bool = false) {
-        self.stars = stars; self.flag = flag; self.label = label; self.keep = keep
+        self.stars = stars
+        self.flag = flag
+        self.label = label
+        self.keep = keep
     }
 }
 

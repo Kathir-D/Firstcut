@@ -9,7 +9,19 @@ publish.workspace = true
 [lib]
 crate-type = ["lib", "staticlib"]
 
+# infra: the UniFFI bindings generator, so no one has to `cargo install` a tool.
+# Run it with `cargo run -p firstcut-core --bin uniffi-bindgen -- generate …` (scripts/build-core.sh does).
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[[bin]]
+name = "uniffi-bindgen-swift"
+path = "src/bin/uniffi-bindgen-swift.rs"
+
 [dependencies]
+# infra: the Rust<->Swift bridge. Keep this first and alphabetical with the agents' crates.
+uniffi = { version = "0.32", features = ["cli"] }
 # core-store
 libc = "0.2"         # statfs/stat for the volume identity of a session folder
 rusqlite = { version = "0.37", features = ["bundled"] }  # session DB (WAL)

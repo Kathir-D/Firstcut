@@ -20,3 +20,7 @@ pub mod xmp;
 
 // infra (UniFFI exports)
 pub mod ffi;
+
+// Generates the scaffolding that the Swift bindings in App/Generated/ call into.
+// Must stay at the crate root; the rest of ffi.rs is the only place exports are added.
+uniffi::setup_scaffolding!();
