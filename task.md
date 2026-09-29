@@ -859,11 +859,74 @@ Each milestone ends with something runnable and measured.
 
 ---
 
-## 15. Open questions
+## 15. Open questions & things to know
 
-- [ ] Arrow at the end of a batch: stop, or roll into the next batch? (Planned: setting, default stop.)
-- [ ] Should consecutive single frames a few seconds apart be grouped into one batch or stay 1-photo
-      batches? Decide from ground truth on the test games.
+> Written at the 2026-09-29 merge. Part A needs a decision from the owner (Kathir); the agent should
+> ask rather than guess. Part B is work only a human can do. Part C is context that is not obvious from
+> the code. Tick or strike items as they are settled, and record the answer in §2 (Decisions).
+
+### A. Decisions still to make
+
+- [ ] **Arrow at the end of a batch:** stop, or roll into the next batch? (Planned: a setting, default
+      stop.)
+- [ ] **Single frames a few seconds apart:** group into one batch, or keep as 1-photo batches? Decide
+      from the ground truth on the test games (§5.4).
+- [ ] **The high-speed pauses at the end of Game1JENKS** (`IMG_6117`–`IMG_6164`, ~11 fps with 0.2–0.8 s
+      re-press pauses): one play (one batch) or several? Only a person looking at the photos can say.
+- [ ] **Ordering key (REV-65):** §5.1 puts camera serial first in the sort key, §2 (locked) says
+      capture time + sub-second + shutter count. Which is right for a two-body shoot?
+- [ ] **Which duplicate implementation survives (§0.3):** `meta/cr3.rs` (consolidated) or the worker's
+      `parked/worker-scan-cr3.rs`; the consolidated `AppEnvironment` wiring or the worker's
+      `LiveCullViewState`/`PreviewPipeline`. Default: keep the consolidated ones and delete `parked/`
+      once nothing useful is left in it.
+- [ ] **App icon:** design, or ship v0.1.0 with a placeholder?
+- [ ] **CI toolchain (REV-58):** CI builds with Xcode 16.2, local builds use Xcode 27. Pin CI to a newer
+      Xcode when a runner image has one, or keep 16.2 as the "minimum toolchain" check?
+- [ ] **Minimum macOS 15 support:** is a macOS 15 machine or VM available to test on? The dev machine
+      is macOS 27, so the macOS 15 fallback (§9.1, §13) cannot be verified without one. If not, ship
+      "macOS 26+ tested, 15 best-effort" and say so in the README.
+- [ ] **Delete the old `agent/*` branches** on GitHub (all contained in `main`)? Not done: it is
+      irreversible on the remote, so it waits for a yes.
 - [x] ~~40 fps test shoot~~ → Game1JENKS covers high-speed bursts (~11 fps recorded, see §3).
 - [x] ~~Sony samples~~ → not available; only Canon is tested (see §8).
-- [ ] App icon design.
+
+### B. Work only a human can do
+
+- [ ] **Ground truth for batching (blocks M1).** Run `firstcut contact-sheet --game <g>` (Core Text
+      renderer in `tools/contact-sheet/`), look at every ambiguous-zone boundary (~210 across the four
+      games), and write `tests/fixtures/ground-truth/<g>.json` (file names only). An agent must not
+      synthesise this; self-certified ground truth proves nothing, and the ≥ 98% boundary-F1 claim
+      depends on it.
+- [ ] **`HOMEBREW_TAP_TOKEN` repo secret** on `Kathir-D/Firstcut`, with write access to
+      `Kathir-D/homebrew-tap`. Without it the release workflow attaches the cask to the release instead
+      of pushing it to the tap.
+- [ ] **Confirm Lightroom / Capture One read the XMP sidecars** (ratings survive) on a copy of a few
+      photos; this needs the apps, which the agent does not have.
+- [ ] **Visual sign-off** of each §9 screen against Finder's gallery view, on macOS 26+ and 15.
+- [ ] **The `v0.1.0` tag** and the README screenshots/GIF, once the UI is right.
+
+### C. Things to know
+
+- **The tree is not green.** `xcodebuild test` fails to compile (`RealRawDecodeTests.swift` vs the
+  in-progress `ImageProvider.swift`); Rust is green. See §0.2.
+- **Nothing about accuracy or speed is measured yet.** Boundary F1 is unmeasured (no ground truth) and
+  none of the §7.3 targets has a recorded number. Do not claim either.
+- **Ad-hoc signing means TCC re-prompts on every rebuild.** With no paid Apple Developer account there
+  is no stable signature, so a rebuilt app asking for `~/Documents` access blocks forever when
+  unattended. Folder access must come from `NSOpenPanel` only; real-photo tests are opt-in
+  (`FIRSTCUT_ALLOW_PHOTO_TESTS=1`).
+- **Only Canon R8 CR3 is testable.** Every other format in §8 is implemented from its spec and unverified;
+  the README must say so.
+- **A rename orphans a rating (REV-68)** until per-photo rename reconciliation exists; `PhotoId` is a
+  hash of the relative path.
+- **Ratings must reach the sidecar.** A 4-star photo was once exported as `xmp:Rating="0"` (fixed in
+  `5c98cf8`); keep an end-to-end test on it. Likewise keep/trash must be decided from the *mapped* tier,
+  and unkeeping must clear the 5 stars it invented (§0.3).
+- **Rebuilding kills a running app.** Concurrent builds replace the binary under a running process and
+  macOS reports "Firstcut quit unexpectedly". Close the app before building; §0.5 has the
+  `NSQuitAlwaysKeepsWindows` fix for the phantom relaunch.
+- **Dev environment is cleaned.** All worktrees, `core/target`, generated Xcode project and DerivedData
+  were removed at the end of the merge; run `scripts/generate-project.sh` first (needs `xcodegen`,
+  Rust via `~/.cargo/bin`, and `swift-format`). Rust is not on the default `PATH` in non-login shells.
+- **History for the retired process** (review board, per-agent charters) is only in git:
+  `git show 4d4e43d:docs/review.md`, `git show 4d4e43d:docs/agents/`.
