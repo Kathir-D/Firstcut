@@ -357,11 +357,14 @@ fn no_sigs() -> HashMap<PhotoId, firstcut_core::batch::VisualSig> {
 /// written, and the ground truth still has to be typed out by someone who looked.
 fn cmd_contact_sheet(args: &[String]) -> Result<(), String> {
     use std::fs;
+    use std::process::Command;
 
     let mut game: Option<String> = None;
     let mut out: Option<PathBuf> = None;
     let mut from: Option<String> = None;
     let mut to: Option<String> = None;
+    let mut cell_size: Option<usize> = None;
+    let mut columns: Option<usize> = None;
     let mut all = false;
     let mut i = 0;
     while i < args.len() {
@@ -371,6 +374,20 @@ fn cmd_contact_sheet(args: &[String]) -> Result<(), String> {
             "--from" => from = Some(flag(args, &mut i, "--from")?),
             "--to" => to = Some(flag(args, &mut i, "--to")?),
             "--all" => all = true,
+            "--cell" => {
+                cell_size = Some(
+                    flag(args, &mut i, "--cell")?
+                        .parse()
+                        .map_err(|_| "bad --cell (pixels per side)")?,
+                )
+            }
+            "--columns" => {
+                columns = Some(
+                    flag(args, &mut i, "--columns")?
+                        .parse()
+                        .map_err(|_| "bad --columns")?,
+                )
+            }
             other => return Err(format!("contact-sheet: unknown option `{other}`")),
         }
         i += 1;
@@ -417,8 +434,12 @@ fn cmd_contact_sheet(args: &[String]) -> Result<(), String> {
         if all {
             return true;
         }
+        // Stop at the extension. Collecting every digit in the name gives "IMG_6149.CR3" -> 61493,
+        // which silently matches nothing, so `--from/--to` looked like it filtered everything out.
         let number = |n: &str| -> u32 {
-            n.chars()
+            n.rsplit_once('.')
+                .map_or(n, |(stem, _)| stem)
+                .chars()
                 .filter(char::is_ascii_digit)
                 .collect::<String>()
                 .parse()
@@ -430,10 +451,12 @@ fn cmd_contact_sheet(args: &[String]) -> Result<(), String> {
         }
     };
 
-    let mut rendered = 0usize;
+    // Build the boundary list, then hand the rendering to the Core Text tool in
+    // `tools/contact-sheet`. The CLI decides *which* boundaries a human has to look at; the tool
+    // decides how to draw them. Splitting it that way is what lets the renderer be a `main.swift`
+    // (the only place Swift allows top-level code) without dragging AppKit into the Rust CLI.
     let mut skipped = 0usize;
-    let mut pending: Vec<Vec<String>> = Vec::new();
-
+    let mut boundaries = Vec::new();
     for &index in &ambiguous {
         let a = name_of(&folder, outcome.order[index - 1]);
         let b = name_of(&folder, outcome.order[index]);
@@ -441,56 +464,101 @@ fn cmd_contact_sheet(args: &[String]) -> Result<(), String> {
             skipped += 1;
             continue;
         }
-        // The frames either side of the boundary: the last of the previous burst and the first of
-        // the next are what a human needs to judge "same play or not".
-        let before: Vec<String> = outcome.order[index.saturating_sub(4)..index]
+        // The frames either side of the boundary. A human judging "same play or not" needs a couple
+        // of each: one frame tells them the exposure, four tell them the motion.
+        let before_count = index.saturating_sub(3);
+        let mut frames: Vec<String> = outcome.order[before_count..index]
             .iter()
             .map(|id| name_of(&folder, *id))
             .collect();
-        let after: Vec<String> = outcome.order[index..(index + 4).min(outcome.order.len())]
-            .iter()
-            .map(|id| name_of(&folder, *id))
-            .collect();
-        let mut strip = before;
-        strip.push(b.clone());
-        strip.extend(after);
-
-        let dest = out.join(format!(
-            "boundary-{index:05}-{}.jpg",
-            b.trim_end_matches(".CR3")
-        ));
-        let rendered_ok = render_strip(&shoot, &strip, &dest);
-        if rendered_ok {
-            rendered += 1;
-        }
-        pending.push(strip);
+        let boundary_frame = index - before_count;
+        frames.extend(
+            outcome.order[index..(index + 4).min(outcome.order.len())]
+                .iter()
+                .map(|id| name_of(&folder, *id)),
+        );
+        boundaries.push(serde_json::json!({
+            "index": index,
+            "game": game,
+            "photos": shoot.display().to_string(),
+            "beforeName": a,
+            "afterName": b,
+            "gapMs": outcome.verdicts[index - 1].signals.dt_ms,
+            "reason": reason_for(&outcome.verdicts[index - 1]),
+            "frames": frames,
+            "boundaryFrame": boundary_frame,
+        }));
     }
 
-    // The plan is the hand-off: which boundaries a human still has to rule on, in order.
-    let plan = serde_json::json!({
-        "schema": "contact-sheet/1",
-        "game": game,
-        "meta": meta.display().to_string(),
-        "photos": shoot.display().to_string(),
-        "ambiguous_boundaries": ambiguous.len(),
-        "rendered": rendered,
-        "out_of_range": skipped,
-        "note": "A human must decide these. `firstcut eval` scores the result. Nothing here is \
-                 ground truth on its own: writing the ground truth by looking at the photographs is \
-                 the requirement (task.md §12, docs/agents/worker.md deliverable 4).",
-        "strips": pending,
+    if boundaries.is_empty() {
+        return Err(format!(
+            "no ambiguous boundaries left to look at{}. Either the range is empty, or the batcher \
+             is confident about this stretch.",
+            if skipped > 0 {
+                format!(" ({skipped} fell outside --from/--to)")
+            } else {
+                String::new()
+            }
+        ));
+    }
+
+    // The renderer builds on first use; it is a separate binary precisely so `cargo build` does not
+    // depend on a Swift toolchain being present.
+    let script = repo_path("scripts/build-contact-sheet.sh")
+        .display()
+        .to_string();
+    if !PathBuf::from(&script).exists() {
+        return Err("contact-sheet: scripts/build-contact-sheet.sh is missing".into());
+    }
+    let build = Command::new("bash")
+        .arg(&script)
+        .output()
+        .map_err(|e| format!("running {script}: {e}"))?;
+    if !build.status.success() {
+        return Err(format!(
+            "contact-sheet: building the renderer failed:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        ));
+    }
+    let bin = std::env::var("FIRSTCUT_CONTACT_SHEET_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| repo_path("build/tools/contact-sheet"));
+    let out_str = out.display().to_string();
+
+    let request = serde_json::json!({
+        "outDir": out_str,
+        "cellSize": cell_size,
+        "columns": columns,
+        "boundaries": boundaries,
     });
-    let plan_path = out.join("plan.json");
-    fs::write(
-        &plan_path,
-        serde_json::to_string_pretty(&plan).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| format!("writing {}: {e}", plan_path.display()))?;
+
+    use std::io::Write;
+    let mut child = Command::new(&bin)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("running {}: {e}", bin.display()))?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or("contact-sheet: could not open the renderer's stdin")?
+        .write_all(
+            serde_json::to_vec(&request)
+                .map_err(|e| e.to_string())?
+                .as_slice(),
+        )
+        .map_err(|e| format!("writing the request: {e}"))?;
+    let status = child
+        .wait()
+        .map_err(|e| format!("waiting for the renderer: {e}"))?;
+    if !status.success() {
+        return Err(format!("contact-sheet: the renderer exited {status}"));
+    }
 
     println!(
-        "{game}: {} ambiguous boundaries, {rendered} strips rendered to {}, {skipped} outside --from/--to",
-        ambiguous.len(),
-        out.display()
+        "\n{game}: {} ambiguous boundaries, {skipped} outside --from/--to",
+        boundaries.len()
     );
     println!(
         "A human still has to look at these and write tests/fixtures/ground-truth/{game}.json."
@@ -498,49 +566,26 @@ fn cmd_contact_sheet(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// One strip: the embedded preview of each frame, scaled to the same height, side by side.
-/// Uses `sips`, which reads the full-size JPEG a CR3 already carries, so this is fast enough to
-/// run over a whole game.
-fn render_strip(shoot: &std::path::Path, names: &[String], dest: &std::path::Path) -> bool {
-    use std::process::Command;
-    let mut made = Vec::new();
-    let tmp = std::env::temp_dir().join(format!("firstcut-strip-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&tmp);
-    for (n, name) in names.iter().enumerate() {
-        let src = shoot.join(name);
-        if !src.is_file() {
-            continue;
-        }
-        let dst = tmp.join(format!("{n:02}.jpg"));
-        let ok = Command::new("/usr/bin/sips")
-            .args(["-s", "format", "jpeg", "-Z", "320", "--out"])
-            .arg(&dst)
-            .arg(&src)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
-            made.push(dst);
-        }
+/// Why a boundary was left ambiguous, for the sheet's caption. Timers alone cannot decide these;
+/// the caption says what the batcher saw, which is what makes the sheet worth looking at.
+fn reason_for(v: &firstcut_core::batch::BoundaryVerdict) -> &'static str {
+    use firstcut_core::batch::signals::Decision;
+    if v.signals.shutter_count_gap.unwrap_or(0) > 1 {
+        return "frames deleted in camera";
     }
-    if made.is_empty() {
-        return false;
+    if v.signals.orientation_changed {
+        return "orientation change";
     }
-    // A contact sheet as a PDF of the frames, one per page, is enough to *look* at and needs no
-    // image library. `sips` cannot compose, so the strip is a folder + an index instead.
-    let folder = dest.with_extension("");
-    let _ = std::fs::create_dir_all(&folder);
-    for (n, f) in made.iter().enumerate() {
-        let _ = std::fs::copy(f, folder.join(format!("{n:02}.jpg")));
+    if v.signals.time_is_fallback {
+        return "mtime fallback";
     }
-    std::fs::write(folder.join("names.txt"), names.join("\n") + "\n").ok();
-    let _ = std::fs::write(
-        dest.with_extension("txt"),
-        folder.display().to_string() + "\n",
-    );
-    true
+    if v.had_sigs {
+        return "visual signatures disagree";
+    }
+    match v.decision {
+        Decision::Ambiguous => "gap in the ambiguous band",
+        _ => "scored",
+    }
 }
 
 // ------------------------------------------------------------------- eval
