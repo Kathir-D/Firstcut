@@ -1,13 +1,13 @@
-//! Compatibility re-export. The types live in [`crate::meta`] now.
+//! `PhotoMeta` in the exact shape of the committed JSON fixtures, plus the exiftool adapter.
 //!
-//! This used to declare `PhotoMeta`, `CaptureTime`, `FileKind` and friends itself, as core-batch's
-//! stand-in while the real scanner did not exist. It does not any more: the scanner, the CLI, the
-//! tests and the FFI all need the *same* type, and two definitions means a permanent adapter
-//! between them -- which is exactly the shape of bug REV-56 describes, where a photo reads as
-//! Keep in one layer and Unrated in another.
+//! `core-meta` owns the real [`PhotoMeta`](docs/contracts/photo-meta.md). This is core-batch's
+//! stand-in, so the CLI, the unit tests and the CI regression test can read
+//! `tests/fixtures/meta/<game>.json` before the real scanner exists and everyone agrees on one
+//! definition of those files. `core-meta` owns only the fields a header parse can supply
+//! (`preview`, `af.points`); the rest converts exactly as it does here.
 //!
-//! The re-exports keep every existing `use crate::batch::fixture::PhotoMeta` working, so this is a
-//! move rather than a rewrite. `meta` is the one definition; nothing here adds to it.
+//! JSON is camelCase with `null` for absent fields, matching `App/Sources/Shared/CoreTypes.swift`,
+//! so the Swift agents can decode these files as `[PhotoMeta]` with no adapter of their own.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -491,80 +491,90 @@ fn raw_format_of(name: &str) -> Option<RawFormat> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::batch::view::Photo;
 
-    /// The id has to be a function of the path so the same folder scanned twice produces the same
-    /// ids -- resume, the ground-truth F1 numbers and the CI regression test all depend on it.
     #[test]
-    fn the_id_is_derived_from_the_path() {
-        let mut a = PhotoMeta::default();
-        a.rel_path = "IMG_0001.CR3".into();
-        let mut b = PhotoMeta::default();
-        b.rel_path = "IMG_0002.CR3".into();
-        assert_ne!(a.id(), b.id());
-        assert_eq!(a.id(), crate::meta::stable_id("IMG_0001.CR3"));
+    fn a_canon_subsec_datetime_becomes_utc_milliseconds() {
+        // 2026:08:27 19:54:49.84 at -06:00 is 2026-08-28 01:54:49.840 UTC.
+        let (ms, res, offset) = parse_subsec_datetime("2026:08:27 19:54:49.84-06:00");
+        assert_eq!(res, 10, "two sub-second digits means 10 ms resolution");
+        assert_eq!(offset, Some(-360));
+        assert_eq!(ms % 1000, 840);
+        assert_eq!(
+            days_from_civil(2026, 8, 28) * 86_400_000 + 3_600_000 + 54 * 60_000 + 49_000 + 840,
+            ms
+        );
     }
 
-    /// A `capture_time` whose source is `FileModified` is a *fallback*: `file_mtime_ms` has to
-    /// report it so the batcher can refuse to hard-join on it (REV-63).
     #[test]
-    fn a_fallback_time_is_reported_as_an_mtime() {
-        let mut p = PhotoMeta::default();
-        p.capture_time = Some(CaptureTime {
-            unix_ms: 1_000,
-            subsec_resolution_ms: 1000,
-            offset_minutes: None,
-            source: TimeSource::FileModified,
-        });
-        assert_eq!(p.file_mtime_ms(), Some(1_000));
-        assert!(!crate::batch::view::time_is_fallback(&p) == false);
+    fn two_photos_ten_milliseconds_apart_keep_their_order() {
+        // The whole point of SubSecTimeOriginal: without it these two frames tie.
+        let (a, _, _) = parse_subsec_datetime("2026:08:27 19:54:49.84-06:00");
+        let (b, _, _) = parse_subsec_datetime("2026:08:27 19:54:49.85-06:00");
+        assert_eq!(b - a, 10);
     }
 
-    /// ...and an EXIF time must not be mistaken for one.
     #[test]
-    fn an_exif_time_is_not_a_fallback() {
-        let mut p = PhotoMeta::default();
-        p.capture_time = Some(CaptureTime {
-            unix_ms: 1_000,
-            subsec_resolution_ms: 10,
-            offset_minutes: Some(-360),
-            source: TimeSource::Exif,
-        });
-        assert_eq!(p.file_mtime_ms(), None);
-        assert!(!crate::batch::view::time_is_fallback(&p));
+    fn sub_second_digits_set_the_resolution() {
+        assert_eq!(parse_subsec_datetime("2026:01:02 03:04:05.1-06:00").1, 1000);
+        assert_eq!(parse_subsec_datetime("2026:01:02 03:04:05.12-06:00").1, 10);
+        assert_eq!(parse_subsec_datetime("2026:01:02 03:04:05.123-06:00").1, 1);
     }
 
-    /// The dump is sorted, so the same folder scanned twice is byte-identical (REV-17).
     #[test]
-    fn the_dump_is_sorted_by_path() {
-        let mut a = PhotoMeta::default();
-        a.rel_path = "IMG_0002.CR3".into();
-        let mut b = PhotoMeta::default();
-        b.rel_path = "IMG_0001.CR3".into();
-        let dump = ScanDump::new(vec![a, b], vec![]);
-        assert_eq!(dump.schema, "photo-meta/1");
-        assert_eq!(dump.photos[0].rel_path, "IMG_0001.CR3");
+    fn a_datetime_without_a_fraction_is_whole_seconds() {
+        let (ms, res, _) = parse_subsec_datetime("2026:01:02 03:04:05-06:00");
+        assert_eq!(res, 1000);
+        assert_eq!(ms % 1000, 0);
     }
 
-    /// A photo with no serial, no time or no shutter count has no fingerprint, and must say so
-    /// rather than hash something incomplete into an identity that collides with another photo's.
     #[test]
-    fn a_fingerprint_needs_every_component() {
-        let mut p = PhotoMeta::default();
-        assert!(p.fingerprint().is_none(), "nothing at all");
-        p.camera_serial = Some("1".into());
-        assert!(p.fingerprint().is_none(), "serial but no time");
-        p.capture_time = Some(CaptureTime {
-            unix_ms: 5,
-            subsec_resolution_ms: 10,
-            offset_minutes: None,
-            source: TimeSource::Exif,
-        });
-        assert!(p.fingerprint().is_none(), "no shutter count");
-        p.shutter_count = Some(7);
-        p.file_size = 100;
-        let fp = p.fingerprint().expect("complete");
-        assert_eq!(fp.shutter_count, 7);
-        assert_eq!(fp.camera_serial, "1");
+    fn an_offset_moves_the_instant_towards_utc() {
+        // The same wall-clock reading east of Greenwich is an *earlier* instant in UTC, so the
+        // +05:30 stamp comes out 11 hours before the -05:30 one.
+        let (east, _, offset) = parse_subsec_datetime("2026:01:02 03:04:05.00+05:30");
+        assert_eq!(offset, Some(330));
+        let (west, _, _) = parse_subsec_datetime("2026:01:02 03:04:05.00-05:30");
+        assert_eq!(west - east, 11 * 3_600_000);
+    }
+
+    #[test]
+    fn a_file_name_number_is_not_its_rank() {
+        assert_eq!(file_number_of("IMG_0451.CR3"), Some(451));
+        assert_eq!(file_number_of("IMG_9999.CR3"), Some(9999));
+        assert_eq!(file_number_of("DSC_0001.ARW"), Some(1));
+        assert_eq!(file_number_of("holiday.CR3"), None);
+    }
+
+    #[test]
+    fn extensions_map_to_formats_case_insensitively() {
+        assert_eq!(raw_format_of("IMG_0001.CR3"), Some(RawFormat::Cr3));
+        assert_eq!(raw_format_of("IMG_0001.cr3"), Some(RawFormat::Cr3));
+        assert_eq!(raw_format_of("a.dng"), Some(RawFormat::Dng));
+        assert_eq!(raw_format_of("a.x3f"), Some(RawFormat::X3f));
+        assert_eq!(raw_format_of("a.jpg"), None);
+    }
+
+    #[test]
+    fn civil_days_match_known_dates() {
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(2000, 3, 1), 11017);
+        assert_eq!(days_from_civil(2026, 8, 28), 20693);
+        // Every date in a month, then a leap day, then the century that is not a leap year.
+        assert_eq!(
+            days_from_civil(2026, 2, 28) + 1,
+            days_from_civil(2026, 3, 1)
+        );
+        assert_eq!(
+            days_from_civil(2024, 2, 29) + 1,
+            days_from_civil(2024, 3, 1)
+        );
+        assert_eq!(
+            days_from_civil(1900, 2, 28) + 1,
+            days_from_civil(1900, 3, 1)
+        );
+        assert_eq!(
+            days_from_civil(2000, 2, 29) + 1,
+            days_from_civil(2000, 3, 1)
+        );
     }
 }

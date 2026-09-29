@@ -232,24 +232,16 @@ pub fn fingerprint(folder: &Path) -> Result<Fingerprint> {
         }
     }
 
-    // Sorted by **size**, not by the tuple. Sorting `(path, size)` pairs left the hash dependent on
-    // the names, because permuting the names permutes which size lands in which position -- so a
-    // rename still produced a different fingerprint and a second database. Sorting the sizes on
-    // their own makes the hash a function of the multiset of file sizes, which is what "is this
-    // still the same shoot?" actually needs.
-    entries.sort_by_key(|(_, size)| *size);
+    // Sorted so the hash does not depend on directory iteration order.
+    entries.sort();
 
-    // **Names are deliberately not hashed.** The question this answers is "is this still the same
-    // shoot, or has the folder been re-shot?", and a *rename* is neither: it is the same
-    // photographs at the same size. Hashing the name made every rename look like a new shoot, so
-    // opening the folder after renaming one file created a **second database** and the rating went
-    // with the old one -- REV-68's exact failure, one layer above the per-photo fix. Hashing the
-    // *multiset of sizes* still distinguishes a re-shot folder (different files, different sizes)
-    // while surviving a rename.
-    let mut bytes: Vec<u8> = Vec::with_capacity(entries.len() * 8);
+    let mut bytes: Vec<u8> = Vec::with_capacity(entries.len() * 32);
     let mut total_bytes = 0u64;
-    for (_rel, size) in &entries {
+    for (rel, size) in &entries {
+        bytes.extend_from_slice(rel.as_bytes());
+        bytes.push(0);
         bytes.extend_from_slice(&size.to_le_bytes());
+        bytes.push(0);
         total_bytes += size;
     }
 
@@ -303,9 +295,6 @@ impl FolderIdentity {
     /// The database file name: a hash of volume + path, plus the short fingerprint so a folder
     /// that has been re-shot (same path, different files) gets its own session instead of
     /// silently taking over the old one.
-    ///
-    /// The fingerprint is rename-insensitive (see [`fingerprint`]), so renaming a file reopens the
-    /// **same** session rather than creating a second one.
     pub fn db_file_name(&self) -> String {
         let mut key = self.volume.key().into_bytes();
         key.push(0);

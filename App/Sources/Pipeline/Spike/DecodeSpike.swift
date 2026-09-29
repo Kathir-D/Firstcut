@@ -669,16 +669,7 @@ for s in samples.prefix(3) {
 // 2. Single-thread decode cost per mode
 note("\n## 2. Single-thread decode cost (\(samples.count) images, warm cache)")
 /// Keeps the optimiser from deleting decodes whose result nothing else reads. Printed at the end.
-///
-/// A `final class` rather than a top-level `var`: under Swift 6 a top-level `var` is implicitly
-/// `@MainActor`, and it cannot then be mutated from a plain top-level func. A reference type with
-/// `nonisolated(unsafe)` mutable state is the honest description -- this is a single-threaded
-/// benchmark harness, and the value is read only by the code that wrote it.
-final class Sink {
-    nonisolated(unsafe) static var shared = Sink()
-    nonisolated(unsafe) var pixels = 0
-    nonisolated(unsafe) var sig = 0
-}
+var sinkPixels = 0
 for vp in viewportSizes {
     let maxPixel = Int(max(vp.px.width, vp.px.height))
     var rows: [String] = []
@@ -699,7 +690,7 @@ for vp in viewportSizes {
         }
         guard let img else { rows.append("    \(name)  FAILED"); continue }
         times.sort()
-        Sink.shared.pixels &+= img.width &+ img.height
+        sinkPixels &+= img.width &+ img.height
         rows.append(String(format: "    %-26@ %8.1f ms (median of 5, min %5.1f)  → %@", name as NSString,
                            times[2], times[0], "\(img.width)x\(img.height)" as NSString))
     }
@@ -721,7 +712,7 @@ for (modeName, maxPixel) in [("thumbnail DCT @3456 (T2 on a 16\" MBP)", 3456),
         default: img = Decoder.thumbnail(sample.jpeg, maxPixel: maxPixel)
         }
         guard let img else { fatalError("decode failed") }
-        Sink.shared.pixels &+= img.width &+ img.height
+        sinkPixels &+= img.width &+ img.height
     }
     note("  \(modeName):")
     for row in rows { note(row) }
@@ -729,10 +720,11 @@ for (modeName, maxPixel) in [("thumbnail DCT @3456 (T2 on a 16\" MBP)", 3456),
 
 // 4. T0 thumbnails + sigs for the whole shoot
 note("\n## 4. T0 (256 px) thumbnail + VisualSig, whole shoot projected")
+var sigSink = 0
 func makeT0(_ sample: Sample) {
     guard let thumb = Decoder.thumbnail(sample.jpeg, maxPixel: 256) else { fatalError("no thumb") }
     let sig = VisualSigSpike.sig(thumb)
-    Sink.shared.sig &+= Int(sig.dhash % 1021) + Int(sig.hist[24])
+    sigSink &+= Int(sig.dhash % 1021) + Int(sig.hist[24])
 }
 let t0Start = Date()
 for s in samples { makeT0(s) }
@@ -749,7 +741,7 @@ if let first = Decoder.thumbnail(samples[0].jpeg, maxPixel: 256) {
     note(String(format: "  256 px thumbnail kept as decoded RGBA: %d bytes each → %.0f MB for 1500, %.0f MB for 2880",
                  thumbBytes, Double(thumbBytes * 1500) / 1e6, Double(thumbBytes * 2880) / 1e6))
 }
-note("  (sig sink: \(Sink.shared.sig))")
+note("  (sig sink: \(sigSink))")
 
 // 5. Reading preview bytes off disk (T1 refill)
 note("\n## 5. Preview byte read from disk (T1 refill, no decode)")
@@ -830,7 +822,7 @@ for (name, px) in [("T2 @1280x800pt", CGSize(width: 2560, height: 1600)),
                 name as NSString, px.text as NSString, Double(b) / 1e6, Int(6.4e9 / Double(b))))
 }
 
-note("\n(sink: \(Sink.shared.pixels) — nothing above was optimised away)")
+note("\n(sink: \(sinkPixels) — nothing above was optimised away)")
 note("\ndone.")
 
 /// Sweep worker counts for one decode mode and print ms/image, images/s, and the time projected
@@ -853,6 +845,12 @@ func workersGrid(_ samples: [Sample], decode: @escaping @Sendable (Sample) -> Vo
     return out
 }
 
+#else
+
+// Compiled to nothing inside the app target. See the header comment for how to run the spike.
+enum PipelineSpikePlaceholder {}
+
+#endif
 
 /// §7.2 benchmark. Answers three questions with numbers:
 ///   a) Does the embedded preview look like a RAW decode, at fit and at 100%?
@@ -983,9 +981,3 @@ func rawDecode(_ url: URL) -> CGImage? {
     guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
     return CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
 }
-#else
-
-// Compiled to nothing inside the app target. See the header comment for how to run the spike.
-enum PipelineSpikePlaceholder {}
-
-#endif

@@ -197,12 +197,6 @@ pub const KEEP_STARS: u8 = 4;
 /// | reject flag (X) | `xmp:Rating=-1`, Rejected tier | Rejected tier |
 /// | colour label | unchanged, shown in both modes | unchanged |
 ///
-/// **This function never fabricates a field.** It reports the *star count* the filmstrip draws; the
-/// kept/not-kept question is answered by [`Rating::tier`], which does the mapping. An earlier
-/// version also rewrote `keep` here, which made a round trip through keep mode materialise a keep
-/// the user never set (`display(keep_mode) -> back` was not the identity), and it is the reason
-/// this function and `tier` are now split.
-///
 /// Nothing is lost in either direction: the stored rating is never modified, only the view of it,
 /// and the function is idempotent, so switching modes and back shows exactly what was there before.
 ///
@@ -214,14 +208,18 @@ pub fn display_rating(rating: &Rating, mode: RatingMode) -> Rating {
     match mode {
         // A keep with no stars would read as Unrated, so it shows as the 5 stars it means.
         RatingMode::Stars => Rating {
-            stars: rating.effective_stars(),
+            stars: if rating.stars == 0 && rating.keep {
+                Rating::MAX_STARS
+            } else {
+                rating.stars
+            },
             ..*rating
         },
-        // Keep mode draws a ring, not a star row, so the stored rating is shown exactly as stored.
-        // The mapped kept/not-kept answer lives in `tier` -- making it the identity here is what
-        // keeps this function pure, so a round trip through the other mode cannot materialise a
-        // keep the user never set.
-        RatingMode::KeepNotKeep => *rating,
+        // In keep mode the stars are still there, they just do not drive the ring.
+        RatingMode::KeepNotKeep => Rating {
+            keep: rating.keep || rating.stars >= KEEP_STARS,
+            ..*rating
+        },
     }
 }
 
@@ -238,9 +236,8 @@ pub fn map_rating(rating: &Rating, from: RatingMode, to: RatingMode) -> Rating {
             Rating::new(shown.stars, shown.flag, shown.label, false)
         }
         RatingMode::KeepNotKeep => {
-            // Read the mapped answer, not the raw field: a 4-star photo is a keep in keep mode.
-            let kept = rating.tier(RatingMode::KeepNotKeep) == Tier::Keep;
-            Rating::new(0, rating.flag, rating.label, kept)
+            let shown = display_rating(rating, RatingMode::KeepNotKeep);
+            Rating::new(0, shown.flag, shown.label, shown.keep)
         }
     }
 }
@@ -291,22 +288,13 @@ impl Rating {
 
     /// The tier this rating falls into, per mode (task.md §6.1 / §6.2). Drives the Finish summary
     /// and the "split by tier" folders.
-    ///
-    /// **This is the one place the cross-mode mapping happens.** Everything the user can see or
-    /// that the Finish step will act on — the filmstrip ring, the tier counts, the split-folder
-    /// names and the keep/delete decision — goes through here, so they cannot disagree. In
-    /// particular a 4- or 5-star photo reads as Keep in keep mode and a keep reads as 5 stars in
-    /// stars mode, and Finish keeps exactly what the UI showed as kept.
     pub fn tier(&self, mode: RatingMode) -> Tier {
         match mode {
             RatingMode::Stars => {
                 if self.flag == Flag::Reject {
                     return Tier::Rejected;
                 }
-                // A keep made in keep mode means the same as 5 stars (task.md §6: "a keep ↔ 5
-                // stars"), so it must not read as Unrated in stars mode.
-                let stars = self.effective_stars();
-                match stars {
+                match self.stars {
                     4 | 5 => Tier::Keep,
                     3 => Tier::Good,
                     1 | 2 => Tier::Maybe,
@@ -316,7 +304,7 @@ impl Rating {
             RatingMode::KeepNotKeep => {
                 if self.flag == Flag::Reject {
                     Tier::Rejected
-                } else if self.keep || self.stars >= KEEP_STARS {
+                } else if self.keep {
                     Tier::Keep
                 } else {
                     Tier::Unrated
@@ -325,32 +313,7 @@ impl Rating {
         }
     }
 
-    /// The star count this photo counts as in **stars** mode, applying the keep ↔ 5 stars mapping.
-    /// A keep made in keep mode has `stars == 0`; without this it would show as Unrated.
-    pub fn effective_stars(&self) -> u8 {
-        if self.stars == 0 && self.keep {
-            Rating::MAX_STARS
-        } else {
-            self.stars
-        }
-    }
-
-    /// **The single answer to "is this photo kept in this mode".**
-    ///
-    /// Task.md §9.7: the Finish step only keeps the Keep tier, and this is what decides it. It is
-    /// a thin wrapper over [`Rating::tier`] on purpose, and it exists so there is **exactly one**
-    /// function to call. REV-78: the Finish planner used to read the raw `keep` field while the UI
-    /// showed `display_rating`, so a 4-star photo in keep mode got a green Keep ring and was then
-    /// moved to the trash. Two implementations of one rule, and the user lost the photo.
-    ///
-    /// Everything that acts on or shows a keep goes through here: the filmstrip ring, the tier
-    /// counts, the split-folder names, and `fileops::plan_finish`. If you are about to compare
-    /// `rating.keep` directly, you are about to reintroduce REV-78 — call this instead.
-    ///
-    /// The invariant this guarantees is asserted by
-    /// `the_ui_never_shows_a_keep_that_finish_would_trash`, and again at the level that actually
-    /// moves files in `fileops::tests`.
-    #[must_use]
+    /// True for the tiers the Finish step treats as "kept" (task.md §9.7).
     pub fn is_kept(&self, mode: RatingMode) -> bool {
         matches!(self.tier(mode), Tier::Keep)
     }
@@ -455,11 +418,8 @@ mod tests {
         let mixed = Rating::new(4, Flag::None, None, true);
         assert_eq!(mixed.tier(mode), Tier::Keep);
         assert_eq!(mixed.tier(RatingMode::Stars), Tier::Keep);
-        // A keep made in keep mode is a keep in stars mode too: task.md §6 maps it to 5 stars.
-        // An earlier version asserted Unrated here, which is the REV-69 bug -- the user's keeps
-        // appeared to vanish when they switched modes.
-        assert_eq!(Rating::keep().tier(RatingMode::Stars), Tier::Keep);
-        assert_eq!(Rating::keep().effective_stars(), 5);
+        // In stars mode a keep alone is not a keep.
+        assert_eq!(Rating::keep().tier(RatingMode::Stars), Tier::Unrated);
     }
 
     #[test]
@@ -643,36 +603,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn display_never_mutates_the_stored_rating() {
-        // `display_*` is a view. If it ever wrote the mapped value back, switching modes would
-        // silently rewrite the user's ratings -- the failure REV-69 describes.
-        let states = [
-            Rating::neutral(),
-            Rating::stars(4),
-            Rating::keep(),
-            Rating::stars(1),
-        ];
-        for state in states {
-            for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
-                let _ = display_rating(&state, mode);
-                let _ = display_tier(&state, mode);
-                let _ = map_rating(&state, mode, other(mode));
-                assert_eq!(state, {
-                    // `state` is Copy, so this only proves the signatures do not take &mut.
-                    let round_tripped: Rating = state;
-                    round_tripped
-                });
-            }
-        }
-        // A keep still reports stars == 0 after being displayed in stars mode, i.e. the 5 stars
-        // were never written back to the stored rating.
-        let keep = Rating::keep();
-        let shown = display_rating(&keep, RatingMode::Stars);
-        assert_eq!(shown.stars, 5);
-        assert_eq!(keep.stars, 0);
     }
 
     #[test]

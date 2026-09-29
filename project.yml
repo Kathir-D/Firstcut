@@ -31,9 +31,6 @@ targets:
     sources:
       - path: App/Generated/FirstcutCore.swift
         optional: true
-      # Lives outside App/Generated because scripts/build-core.sh wipes that directory, and outside
-      # App/Sources because it is only compilable next to the generated enum it wraps.
-      - path: App/CoreSupport
     dependencies:
       # Static Rust core. Linked, never embedded: there is no dynamic library to ship or sign.
       - framework: App/Generated/FirstcutCore.xcframework

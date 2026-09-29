@@ -369,11 +369,7 @@ mod tests {
     #[test]
     fn many_photos_are_all_written() {
         let dir = tempfile::tempdir().unwrap();
-        // 200ms, not 10ms. This test is about *all 25 sidecars landing*, not about how fast the
-        // writer is, and a 10ms deadline makes it a race against whatever else the machine is
-        // doing -- which showed up as an intermittent failure under load. The deadline's actual
-        // value is covered by `a_submitted_write_lands_after_the_deadline` below.
-        let (writer, errors) = writer(Duration::from_millis(200));
+        let (writer, errors) = writer(Duration::from_millis(10));
 
         for photo_id in 1..=25u64 {
             writer.submit(write(
@@ -398,8 +394,7 @@ mod tests {
     #[test]
     fn a_bad_write_is_reported_and_does_not_stop_the_queue() {
         let dir = tempfile::tempdir().unwrap();
-        // See the note in `many_photos_are_all_written`: generous, so this is not a speed test.
-        let (writer, errors) = writer(Duration::from_millis(200));
+        let (writer, errors) = writer(Duration::from_millis(10));
 
         // A directory where a sidecar should be: the write cannot succeed.
         let blocked = dir.path().join("blocked.xmp");

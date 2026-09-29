@@ -8,8 +8,9 @@
 //! - `batch`      print the batches for a folder's metadata
 //! - `gaps`       the Δt histogram and every ambiguous-zone boundary, for tuning thresholds
 //! - `bench`      time `order()` + `batch()` on a folder's metadata
-//! - `contact-sheet`  render the ambiguous-zone boundaries as images for a human to look at
-//! - `eval`       boundary F1 against `tests/fixtures/ground-truth/<game>.json`
+//!
+//! Wave 2 adds `contact-sheet` (visual review of every boundary) and `eval` (boundary F1 against
+//! `tests/fixtures/ground-truth/<game>.json`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -43,14 +44,11 @@ fn run(args: &[String]) -> Result<(), String> {
             print_usage();
             Ok(())
         }
-        "scan" => cmd_scan(rest),
         "dump-meta" => cmd_dump_meta(rest),
         "order" => cmd_order(rest),
         "batch" => cmd_batch(rest),
         "gaps" => cmd_gaps(rest),
         "bench" => cmd_bench(rest),
-        "contact-sheet" => cmd_contact_sheet(rest),
-        "eval" => cmd_eval(rest),
         other => Err(format!("unknown subcommand `{other}`")),
     }
 }
@@ -69,14 +67,6 @@ COMMANDS
         agents' mocks. `dump-meta --fixture <name>` writes
         tests/fixtures/meta/<name>.json from tests/fixtures/exiftool/<name>.json.
 
-  scan <folder> [--out <file>] [--verify <exiftool.json>] [--bench]
-        Read a real folder's headers and print the PhotoMeta it produced. This is the command
-        that proves the CR3 parser works: it is what §7.4's verified-against-exiftool requirement means.
-
-        --out <file>   write tests/fixtures/meta/<game>.json (the versioned envelope)
-        --verify <f>   compare every field against an `exiftool -j` dump and report mismatches
-        --bench        time the scan; task.md §7.4 targets < 2 ms/file
-
   order <meta.json>
         Print capture order, one file name per line.
 
@@ -89,221 +79,8 @@ COMMANDS
 
   bench <meta.json> [--repeat <n>]
         Time order() + batch() and compare against the 2 s / 1,500-file target.
-
-  contact-sheet --game <name> [--from <first>] [--to <last>] [--out <dir>] [--all]
-        The half of deliverable 4 that a machine can do. Renders every ambiguous-zone boundary
-        as a strip of the frames either side of it, so a human can LOOK at the photographs and
-        decide which boundaries are real. It does not decide anything itself: the ground truth
-        has to be written by a person, because only looking can tell two adjacent frames of one
-        burst from two different plays (task.md §12).
-
-        Needs the real RAW files (FIRSTCUT_TEST_PHOTOS) because it renders the actual images.
-        Prints the file names it left ambiguous, which is the list a human then rules on.
-
-  eval <meta.json> [--game <name>] [--truth <file>]
-        Boundary F1 against a ground-truth file, with the wrong merges and wrong splits spelled
-        out. task.md §5.4 targets >= 98% boundary F1 and zero merges of clearly different plays.
 "
     );
-}
-
-// -------------------------------------------------------------------- scan
-
-fn cmd_scan(args: &[String]) -> Result<(), String> {
-    use firstcut_core::meta::ScanDump;
-    use firstcut_core::scan::scan_folder;
-
-    let mut folder: Option<PathBuf> = None;
-    let mut out: Option<PathBuf> = None;
-    let mut verify: Option<PathBuf> = None;
-    let mut bench = false;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--out" | "-o" => out = Some(PathBuf::from(flag(args, &mut i, "--out")?)),
-            "--verify" => verify = Some(PathBuf::from(flag(args, &mut i, "--verify")?)),
-            "--bench" => bench = true,
-            other if other.starts_with('-') => {
-                return Err(format!("scan: unknown option `{other}`"));
-            }
-            other => folder = Some(PathBuf::from(other)),
-        }
-        i += 1;
-    }
-    let folder = folder.ok_or("scan: pass a folder")?;
-
-    let started = std::time::Instant::now();
-    let result = scan_folder(&folder);
-    let elapsed = started.elapsed();
-
-    if let Some(verify) = &verify {
-        return verify_against_exiftool(&result.photos, verify);
-    }
-
-    if let Some(out) = out {
-        if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-        }
-        let dump = ScanDump::new(result.photos.clone(), result.skipped.clone());
-        let json = serde_json::to_string_pretty(&dump).map_err(|e| e.to_string())?;
-        std::fs::write(&out, format!("{json}\n")).map_err(|e| format!("{}: {e}", out.display()))?;
-        println!(
-            "{} photos -> {} ({} skipped)",
-            result.photos.len(),
-            out.display(),
-            result.skipped.len()
-        );
-    } else {
-        for photo in &result.photos {
-            let time = photo
-                .capture_time
-                .map(|c| format!("{}", c.unix_ms))
-                .unwrap_or_else(|| "-".into());
-            println!(
-                "{:<20} {:>14}  shutter={:<8} iso={:<5} {} {}",
-                photo.rel_path,
-                time,
-                photo
-                    .shutter_count
-                    .map_or_else(|| "-".into(), |v| v.to_string()),
-                photo.iso.map_or_else(|| "-".into(), |v| v.to_string()),
-                photo.camera_model.as_deref().unwrap_or("?"),
-                photo.lens_model.as_deref().unwrap_or("")
-            );
-        }
-        for skipped in &result.skipped {
-            println!("SKIPPED {}: {}", skipped.rel_path, skipped.reason);
-        }
-    }
-
-    if bench {
-        let n = result.photos.len().max(1);
-        println!(
-            "\nscanned {n} files in {:.1} ms = {:.2} ms/file ({} threads)",
-            elapsed.as_secs_f64() * 1000.0,
-            elapsed.as_secs_f64() * 1000.0 / n as f64,
-            std::thread::available_parallelism()
-                .map(|p| p.get())
-                .unwrap_or(1)
-        );
-        println!("task.md §7.4 target: < 2 ms/file");
-    }
-    for warning in &result.warnings {
-        eprintln!("warning: {warning}");
-    }
-    Ok(())
-}
-
-/// Field-for-field comparison against an `exiftool -j` dump. §7.4 requires the parser to match
-/// exiftool, and "I read the values and they looked right" is not a check: this walks both sides
-/// and names every field that differs.
-fn verify_against_exiftool(
-    photos: &[firstcut_core::meta::PhotoMeta],
-    dump_path: &PathBuf,
-) -> Result<(), String> {
-    use firstcut_core::meta::PhotoMeta;
-    let text =
-        std::fs::read_to_string(dump_path).map_err(|e| format!("{}: {e}", dump_path.display()))?;
-    let rows: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", dump_path.display()))?;
-    let rows = rows
-        .as_array()
-        .ok_or("the exiftool dump is not a JSON array")?;
-
-    let by_name: std::collections::HashMap<&str, &PhotoMeta> =
-        photos.iter().map(|p| (p.rel_path.as_str(), p)).collect();
-
-    let mut checked = 0usize;
-    let mut mismatches: Vec<String> = Vec::new();
-    for row in rows {
-        let Some(name) = row.get("FileName").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(ours) = by_name.get(name) else {
-            mismatches.push(format!("{name}: in the dump but not in the scan"));
-            continue;
-        };
-        checked += 1;
-
-        let mut cmp_str = |field: &str, expected: Option<&str>, actual: Option<&str>| {
-            if let (Some(want), Some(got)) = (expected, actual)
-                && !want.eq_ignore_ascii_case(got)
-            {
-                mismatches.push(format!("{name}: {field} exiftool={want:?} parsed={got:?}"));
-            }
-        };
-        cmp_str(
-            "Model",
-            row.get("Model").and_then(|v| v.as_str()),
-            ours.camera_model.as_deref(),
-        );
-        cmp_str(
-            "LensModel",
-            row.get("LensModel").and_then(|v| v.as_str()),
-            ours.lens_model.as_deref(),
-        );
-        cmp_str(
-            "SerialNumber",
-            row.get("SerialNumber").and_then(|v| v.as_str()),
-            ours.camera_serial.as_deref(),
-        );
-
-        let mut cmp_num = |field: &str, expected: Option<f64>, actual: Option<f32>| {
-            if let (Some(want), Some(got)) = (expected, actual)
-                && (want - f64::from(got)).abs() > 0.01
-            {
-                mismatches.push(format!("{name}: {field} exiftool={want} parsed={got}"));
-            }
-        };
-        cmp_num(
-            "FNumber",
-            row.get("FNumber").and_then(|v| v.as_f64()),
-            ours.f_number,
-        );
-        cmp_num(
-            "FocalLength",
-            row.get("FocalLength").and_then(|v| v.as_f64()),
-            ours.focal_length_mm,
-        );
-        cmp_num(
-            "ISO",
-            row.get("ISO").and_then(|v| v.as_f64()),
-            ours.iso.map(|v| v as f32),
-        );
-        if let (Some(want), Some(got)) = (
-            row.get("ShutterCount").and_then(|v| v.as_u64()),
-            ours.shutter_count,
-        ) && want != got
-        {
-            mismatches.push(format!(
-                "{name}: ShutterCount exiftool={want} parsed={got:?}"
-            ));
-        }
-        if let (Some(want), Some(got)) = (
-            row.get("ImageWidth").and_then(|v| v.as_u64()),
-            Some(u64::from(ours.width)),
-        ) && want != got
-        {
-            mismatches.push(format!("{name}: ImageWidth exiftool={want} parsed={got}"));
-        }
-        if let (Some(want), Some(got)) = (
-            row.get("ImageHeight").and_then(|v| v.as_u64()),
-            Some(u64::from(ours.height)),
-        ) && want != got
-        {
-            mismatches.push(format!("{name}: ImageHeight exiftool={want} parsed={got}"));
-        }
-    }
-
-    println!("compared {checked} files against {}", dump_path.display());
-    if mismatches.is_empty() {
-        println!("OK: every compared field matches exiftool");
-        return Ok(());
-    }
-    for m in mismatches.iter().take(40) {
-        println!("  {m}");
-    }
-    Err(format!("{} mismatches against exiftool", mismatches.len()))
 }
 
 // ---------------------------------------------------------------- dump-meta
@@ -554,359 +331,6 @@ fn no_sigs() -> HashMap<PhotoId, firstcut_core::batch::VisualSig> {
     HashMap::new()
 }
 
-// -------------------------------------------------------------- contact-sheet
-
-/// Renders the ambiguous-zone boundaries as image strips, so a human can decide which ones are
-/// real. Writes a `plan.json` next to the images: the machine's part is done when that file is
-/// written, and the ground truth still has to be typed out by someone who looked.
-fn cmd_contact_sheet(args: &[String]) -> Result<(), String> {
-    use std::fs;
-    use std::process::Command;
-
-    let mut game: Option<String> = None;
-    let mut out: Option<PathBuf> = None;
-    let mut from: Option<String> = None;
-    let mut to: Option<String> = None;
-    let mut cell_size: Option<usize> = None;
-    let mut columns: Option<usize> = None;
-    let mut all = false;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--game" => game = Some(flag(args, &mut i, "--game")?),
-            "--out" => out = Some(PathBuf::from(flag(args, &mut i, "--out")?)),
-            "--from" => from = Some(flag(args, &mut i, "--from")?),
-            "--to" => to = Some(flag(args, &mut i, "--to")?),
-            "--all" => all = true,
-            "--cell" => {
-                cell_size = Some(
-                    flag(args, &mut i, "--cell")?
-                        .parse()
-                        .map_err(|_| "bad --cell (pixels per side)")?,
-                )
-            }
-            "--columns" => {
-                columns = Some(
-                    flag(args, &mut i, "--columns")?
-                        .parse()
-                        .map_err(|_| "bad --columns")?,
-                )
-            }
-            other => return Err(format!("contact-sheet: unknown option `{other}`")),
-        }
-        i += 1;
-    }
-    let game = game.ok_or("contact-sheet: pass --game <name>")?;
-    let meta = repo_path(&format!("tests/fixtures/meta/{game}.json"));
-    let folder = Folder::load(&meta)?;
-    let outcome = batch_with(&folder.photos, &HashMap::new(), &[], BatchParams::default());
-
-    let photos_root = std::env::var("FIRSTCUT_TEST_PHOTOS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("~/Documents/testing"));
-    let photos_root =
-        photos_root
-            .to_string_lossy()
-            .strip_prefix('~')
-            .map_or(photos_root.clone(), |rest| {
-                let home = std::env::var("HOME").unwrap_or_default();
-                PathBuf::from(home).join(rest)
-            });
-    let shoot = photos_root.join(&game);
-    if !shoot.is_dir() {
-        return Err(format!(
-            "contact-sheet needs the real photos at {}, and it did not render anything without \
-             them. Set FIRSTCUT_TEST_PHOTOS. It deliberately does not fall back to a placeholder: \
-             the point of this command is that a human looks at the actual frames.",
-            shoot.display()
-        ));
-    }
-
-    // Only the boundaries timing alone cannot decide. The rest are decided by the clock and do
-    // not need a human; this is the whole visual-refinement budget (task.md §3).
-    let ambiguous: Vec<usize> = outcome
-        .verdicts
-        .iter()
-        .filter(|v| v.decision == Decision::Ambiguous)
-        .map(|v| v.index)
-        .collect();
-
-    let out = out.unwrap_or_else(|| repo_path(&format!("docs/qa/contact-sheets/{game}")));
-    fs::create_dir_all(&out).map_err(|e| format!("creating {}: {e}", out.display()))?;
-
-    let in_range = |name: &str| -> bool {
-        if all {
-            return true;
-        }
-        // Stop at the extension. Collecting every digit in the name gives "IMG_6149.CR3" -> 61493,
-        // which silently matches nothing, so `--from/--to` looked like it filtered everything out.
-        let number = |n: &str| -> u32 {
-            n.rsplit_once('.')
-                .map_or(n, |(stem, _)| stem)
-                .chars()
-                .filter(char::is_ascii_digit)
-                .collect::<String>()
-                .parse()
-                .unwrap_or(0)
-        };
-        match (&from, &to) {
-            (Some(f), Some(t)) => number(name) >= number(f) && number(name) <= number(t),
-            _ => true,
-        }
-    };
-
-    // Build the boundary list, then hand the rendering to the Core Text tool in
-    // `tools/contact-sheet`. The CLI decides *which* boundaries a human has to look at; the tool
-    // decides how to draw them. Splitting it that way is what lets the renderer be a `main.swift`
-    // (the only place Swift allows top-level code) without dragging AppKit into the Rust CLI.
-    let mut skipped = 0usize;
-    let mut boundaries = Vec::new();
-    for &index in &ambiguous {
-        let a = name_of(&folder, outcome.order[index - 1]);
-        let b = name_of(&folder, outcome.order[index]);
-        if !in_range(&a) {
-            skipped += 1;
-            continue;
-        }
-        // The frames either side of the boundary. A human judging "same play or not" needs a couple
-        // of each: one frame tells them the exposure, four tell them the motion.
-        let before_count = index.saturating_sub(3);
-        let mut frames: Vec<String> = outcome.order[before_count..index]
-            .iter()
-            .map(|id| name_of(&folder, *id))
-            .collect();
-        let boundary_frame = index - before_count;
-        frames.extend(
-            outcome.order[index..(index + 4).min(outcome.order.len())]
-                .iter()
-                .map(|id| name_of(&folder, *id)),
-        );
-        boundaries.push(serde_json::json!({
-            "index": index,
-            "game": game,
-            "photos": shoot.display().to_string(),
-            "beforeName": a,
-            "afterName": b,
-            "gapMs": outcome.verdicts[index - 1].signals.dt_ms,
-            "reason": reason_for(&outcome.verdicts[index - 1]),
-            "frames": frames,
-            "boundaryFrame": boundary_frame,
-        }));
-    }
-
-    if boundaries.is_empty() {
-        return Err(format!(
-            "no ambiguous boundaries left to look at{}. Either the range is empty, or the batcher \
-             is confident about this stretch.",
-            if skipped > 0 {
-                format!(" ({skipped} fell outside --from/--to)")
-            } else {
-                String::new()
-            }
-        ));
-    }
-
-    // The renderer builds on first use; it is a separate binary precisely so `cargo build` does not
-    // depend on a Swift toolchain being present.
-    let script = repo_path("scripts/build-contact-sheet.sh")
-        .display()
-        .to_string();
-    if !PathBuf::from(&script).exists() {
-        return Err("contact-sheet: scripts/build-contact-sheet.sh is missing".into());
-    }
-    let build = Command::new("bash")
-        .arg(&script)
-        .output()
-        .map_err(|e| format!("running {script}: {e}"))?;
-    if !build.status.success() {
-        return Err(format!(
-            "contact-sheet: building the renderer failed:\n{}",
-            String::from_utf8_lossy(&build.stderr)
-        ));
-    }
-    let bin = std::env::var("FIRSTCUT_CONTACT_SHEET_BIN")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| repo_path("build/tools/contact-sheet"));
-    let out_str = out.display().to_string();
-
-    let request = serde_json::json!({
-        "outDir": out_str,
-        "cellSize": cell_size,
-        "columns": columns,
-        "boundaries": boundaries,
-    });
-
-    use std::io::Write;
-    let mut child = Command::new(&bin)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
-        .map_err(|e| format!("running {}: {e}", bin.display()))?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("contact-sheet: could not open the renderer's stdin")?
-        .write_all(
-            serde_json::to_vec(&request)
-                .map_err(|e| e.to_string())?
-                .as_slice(),
-        )
-        .map_err(|e| format!("writing the request: {e}"))?;
-    let status = child
-        .wait()
-        .map_err(|e| format!("waiting for the renderer: {e}"))?;
-    if !status.success() {
-        return Err(format!("contact-sheet: the renderer exited {status}"));
-    }
-
-    println!(
-        "\n{game}: {} ambiguous boundaries, {skipped} outside --from/--to",
-        boundaries.len()
-    );
-    println!(
-        "A human still has to look at these and write tests/fixtures/ground-truth/{game}.json."
-    );
-    Ok(())
-}
-
-/// Why a boundary was left ambiguous, for the sheet's caption. Timers alone cannot decide these;
-/// the caption says what the batcher saw, which is what makes the sheet worth looking at.
-fn reason_for(v: &firstcut_core::batch::BoundaryVerdict) -> &'static str {
-    use firstcut_core::batch::signals::Decision;
-    if v.signals.shutter_count_gap.unwrap_or(0) > 1 {
-        return "frames deleted in camera";
-    }
-    if v.signals.orientation_changed {
-        return "orientation change";
-    }
-    if v.signals.time_is_fallback {
-        return "mtime fallback";
-    }
-    if v.had_sigs {
-        return "visual signatures disagree";
-    }
-    match v.decision {
-        Decision::Ambiguous => "gap in the ambiguous band",
-        _ => "scored",
-    }
-}
-
-// ------------------------------------------------------------------- eval
-
-fn cmd_eval(args: &[String]) -> Result<(), String> {
-    use firstcut_core::batch::GroundTruth;
-
-    let (folder, opts, meta_path) = load_folder_with_path(args)?;
-    let mut truth_path = None;
-    let mut game: Option<String> = None;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--truth" => truth_path = Some(PathBuf::from(flag(args, &mut i, "--truth")?)),
-            "--game" => game = Some(flag(args, &mut i, "--game")?),
-            other if other.starts_with('-') => {
-                return Err(format!("eval: unknown option `{other}`"));
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    // The game is not derivable from the photo names -- every file is `IMG_nnnn.CR3` in all four
-    // games -- so it comes from the meta file's own directory, or from `--game`.
-    let game = game.unwrap_or_else(|| {
-        meta_path
-            .file_stem()
-            .map_or_else(String::new, |s| s.to_string_lossy().to_string())
-    });
-    let truth_path = truth_path
-        .unwrap_or_else(|| repo_path(&format!("tests/fixtures/ground-truth/{game}.json")));
-
-    if !truth_path.exists() {
-        return Err(format!(
-            "no ground truth at {}. Build it by LOOKING at the photographs: \
-             `firstcut contact-sheet --game {game}` renders every ambiguous boundary, then a human \
-             rules on them and writes the result. task.md §5.4 needs >= 98% boundary F1 and this \
-             project will not fake the number to get it.",
-            truth_path.display()
-        ));
-    }
-
-    let truth: GroundTruth =
-        serde_json::from_str(&std::fs::read_to_string(&truth_path).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("parsing {}: {e}", truth_path.display()))?;
-
-    let outcome = batch_with(&folder.photos, &HashMap::new(), &[], BatchParams::default());
-    let predicted: Vec<Vec<String>> = outcome
-        .batches
-        .iter()
-        .map(|b| b.photo_ids.iter().map(|id| name_of(&folder, *id)).collect())
-        .collect();
-    let m = firstcut_core::batch::evaluate_names(&predicted, &truth);
-
-    println!("game            {}", truth.game);
-    println!(
-        "verified        {}",
-        if truth.verified.is_empty() {
-            "(not recorded)"
-        } else {
-            &truth.verified
-        }
-    );
-    println!(
-        "boundaries      {} truth, {} predicted",
-        m.truth_boundaries, m.predicted_boundaries
-    );
-    println!(
-        "precision       {:.1}%   ({}/{} true positives)",
-        m.precision * 100.0,
-        m.true_positives,
-        m.truth_boundaries
-    );
-    println!(
-        "recall          {:.1}%   ({}/{} found)",
-        m.recall * 100.0,
-        m.true_positives,
-        m.truth_boundaries
-    );
-    println!(
-        "F1              {:.1}%   <- task.md §5.4 targets 98%",
-        m.f1_percent()
-    );
-    println!("wrong merges    {}", m.wrong_merges);
-    println!("wrong splits    {}", m.wrong_splits);
-    println!("missed batches  {}", m.missed_batches);
-    if !m.missing_photos.is_empty() {
-        println!(
-            "missing photos  {:?}",
-            &m.missing_photos[..m.missing_photos.len().min(10)]
-        );
-    }
-    for example in m.merge_examples.iter().take(5) {
-        println!("  merged: {}", example.join(" + "));
-    }
-
-    let mut bad = false;
-    if m.f1 < 0.98 {
-        println!("\nFAIL: F1 is below the 98% target");
-        bad = true;
-    }
-    if m.wrong_merges > 0 {
-        println!(
-            "\nFAIL: {} wrongly merged bursts -- a wrong merge hides photos, which is the one \
-                 failure this project exists to prevent",
-            m.wrong_merges
-        );
-        bad = true;
-    }
-    if bad {
-        return Err("ground truth not met".into());
-    }
-    let _ = opts;
-    println!("\nOK: inside the target");
-    Ok(())
-}
-
 // ------------------------------------------------------------------- shared
 
 #[derive(Default)]
@@ -919,10 +343,6 @@ struct Opts {
 }
 
 fn load_folder(args: &[String]) -> Result<(Folder, Opts), String> {
-    load_folder_with_path(args).map(|(f, o, _)| (f, o))
-}
-
-fn load_folder_with_path(args: &[String]) -> Result<(Folder, Opts, PathBuf), String> {
     let mut path: Option<PathBuf> = None;
     let mut opts = Opts {
         repeat: 5,
@@ -948,10 +368,6 @@ fn load_folder_with_path(args: &[String]) -> Result<(Folder, Opts, PathBuf), Str
                         .map_err(|_| "bad --freeze-to")?,
                 );
             }
-            // Consumed by the calling subcommand, not by the folder loader.
-            "--truth" | "--game" => {
-                i += 1;
-            }
             other if other.starts_with('-') => return Err(format!("unknown option `{other}`")),
             other => path = Some(PathBuf::from(other)),
         }
@@ -960,7 +376,7 @@ fn load_folder_with_path(args: &[String]) -> Result<(Folder, Opts, PathBuf), Str
 
     let path = path.ok_or("pass a metadata fixture (tests/fixtures/meta/<game>.json)")?;
     let folder = Folder::load(&path)?;
-    Ok((folder, opts, path))
+    Ok((folder, opts))
 }
 
 fn frozen_batches(folder: &Folder, opts: &Opts) -> Vec<firstcut_core::batch::Batch> {

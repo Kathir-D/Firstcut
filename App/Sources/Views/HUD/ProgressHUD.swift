@@ -11,9 +11,9 @@ struct ProgressHUD: View {
   var body: some View {
     GlassCapsule {
       HStack(spacing: 14) {
-        metric("\(progress.batchNumber)", "of \(max(progress.batchCount, 1)) batches")
+        metric("\(progress.batchIndex + 1)", "of \(max(progress.batchCount, 1)) batches")
         divider
-        metric("\(progress.unratedPhotos)", "unrated left")
+        metric("\(progress.photosRemaining)", "unrated left")
         divider
         metric("\(progress.keeps)", "keep")
         metric("\(progress.good)", "good")
@@ -27,7 +27,7 @@ struct ProgressHUD: View {
     .frame(maxWidth: Appearance.hudMaxWidth)
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      "Progress: batch \(progress.batchNumber) of \(progress.batchCount), \(progress.unratedPhotos) unrated, \(progress.keeps) keeps"
+      "Progress: batch \(progress.batchIndex + 1) of \(progress.batchCount), \(progress.photosRemaining) unrated, \(progress.keeps) keeps"
     )
   }
 

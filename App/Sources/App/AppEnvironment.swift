@@ -19,14 +19,8 @@
 
 import AppKit
 import Foundation
-import OSLog
 import Observation
 import UniformTypeIdentifiers
-
-/// Opened folders are logged, failures especially. "Firstcut did nothing when I picked a folder" is
-/// otherwise unanswerable after the fact: the window looks the same whether the core refused the
-/// folder, the session opened and no photos parsed, or the images never decoded.
-let logger = Logger(subsystem: "com.kathird.firstcut", category: "session")
 
 @MainActor
 @Observable
@@ -47,17 +41,6 @@ final class AppEnvironment {
   /// A folder chosen but not opened yet — see `open(folder:)`, which is why this is not just a
   /// property the views read.
   private(set) var pendingFolderURL: URL?
-
-  /// The real pipeline, and the real model over it.
-  ///
-  /// This is the swap point the whole mock arrangement was built around. `PreviewCullViewState`
-  /// generated 148 batches from a seed, so the window could be built and screenshotted before the
-  /// core existed -- and it was still wired in here afterwards, which meant the shipped app showed
-  /// photographs that were never on disk.
-  private let previewPipeline: PreviewPipeline
-  private let previewImages: EmbeddedPreviewSource
-  private let model: AppModel
-  private var live: LiveCullViewState
 
   private init() {
     // `shared` is a `static let`, so this runs at `NSApplicationMain` — which in an XCTest process
