@@ -4,6 +4,9 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
+**Status (2026-09-29): planning.** The plan is agreed; **no app code has been written yet, and coding
+does not start until the owner gives the go-ahead.** The next step is M0's remaining setup (§14).
+
 ---
 
 ## 1. What Firstcut is
@@ -19,8 +22,8 @@ has been seen, Firstcut asks what to do with everything you didn't keep.
 1. **Zero waiting.** Every photo you can reach with the arrow keys or the batch buttons is already
    decoded and on the GPU. No spinners, no progressive "blurry then sharp" loading, no throttling
    after 50 photos (the core Lightroom pain point this app exists to fix).
-2. **Burst-aware batching** that is accurate for slow continuous shooting *and* 40 fps electronic
-   shutter bursts, using every signal in the files (time, shutter count, lens/exposure data,
+2. **Burst-aware batching** that is accurate for anything from slow continuous shooting to 40 fps
+   electronic shutter bursts (the test set reaches ~11 fps; thresholds adapt to each burst's speed), using every signal in the files (time, shutter count, lens/exposure data,
    visual similarity) — not file names.
 3. **Looks and feels like a first-party Apple app.** Finder's gallery view is the reference: large
    image, filmstrip underneath, unified toolbar, Liquid Glass. Always dark.
@@ -38,6 +41,10 @@ has been seen, Firstcut asks what to do with everything you didn't keep.
 - No card ingest/import. Firstcut opens **one folder already on disk** containing the whole shoot.
 - No multi-folder sessions (e.g. `100CANON` + `101CANON` as one session). One folder = one session.
 - No Intel Macs, no iOS/iPadOS.
+- No keyboard shortcut for zoom (pinch / click only).
+- No manual batch editing (split/merge); batching is fully automatic.
+- No network access, accounts, telemetry, or analytics. Firstcut works entirely offline.
+- English only for v0.1 (strings still go through `String(localized:)` so localization is possible later).
 
 ---
 
@@ -53,11 +60,11 @@ has been seen, Firstcut asks what to do with everything you didn't keep.
 | Core logic | **Rust** static library (`firstcut-core`) exposed to Swift via **UniFFI**: scanning, metadata parsing, ordering, batching, SQLite session DB, XMP read/write, file operations, undo log |
 | Appearance | **Always dark** (forced `NSAppearance.darkAqua`), neutral gray photo background |
 | Rating modes | Two modes, chosen in Settings: **Stars** and **Keep / Not keep** (see §6) |
-| Rating scope | You can only rate photos in the batch you are currently in |
+| Rating scope | You can only rate photos in the batch you are currently in; to change another batch's photo, navigate to that batch |
 | Batching | Fully automatic, no manual split/merge UI |
 | Ordering | By capture time + sub-second + shutter count, **never by file name** (Canon `IMG_9999` → `IMG_0001` rollover) |
 | Storage of ratings | XMP sidecars **and** app DB (DB = instant resume; XMP = interoperability) |
-| Shortcuts | Lightroom Classic defaults, all remappable |
+| Shortcuts | Lightroom Classic defaults, all remappable. Batch navigation: ⌘← / ⌘→ + toolbar ‹ › buttons; arrow keys are for photos only |
 | Distribution | Personal Homebrew tap + GitHub Releases (ad-hoc signed `.zip`, curl install) + build from source, same setup as [Sonar](https://github.com/Kathir-D/Sonar#install). **No paid Apple Developer account** → no notarization (see §13) |
 | License | **GPL-3.0** (copyleft: anyone who distributes a modified version must release its source under GPL-3.0 too) |
 | Zoom | **Mouse/trackpad only, no keyboard shortcut**: pinch to zoom in/out; click a spot → 100% there (one step); click again → back to fit |
@@ -231,7 +238,7 @@ data is preserved and mapped (a keep ↔ 5 stars by default).
 | 2 or 1 star | Maybe | **Maybe** |
 | No rating | Not good (not reviewed or not wanted) | **Unrated** → handled at the end |
 | X (reject flag) | Explicit reject | **Rejected** → handled at the end, same as unrated |
-| P (pick flag) | Supported for Lightroom parity; independent of stars |
+| P (pick flag) | Supported for Lightroom parity; independent of stars | (no effect on tier) |
 
 - [ ] Filmstrip shows stars under/over each thumbnail (small, Finder-like), flags as badges.
 - [ ] Viewer HUD shows the current photo's stars/flag/color label.
@@ -254,7 +261,9 @@ data is preserved and mapped (a keep ↔ 5 stars by default).
 - [ ] **Auto-advance** after rating/flag: setting, off by default; toggled also with Caps Lock
       (Lightroom behavior) — configurable.
 - [ ] Color labels 6–9 (red, yellow, green, blue) available in both modes.
-- [ ] Every rating change is undoable (⌘Z / ⇧⌘Z), including across batches.
+- [ ] Every rating change is undoable (⌘Z / ⇧⌘Z), including across batches: undoing a change made in
+      another batch first navigates to that batch and photo, then reverts it (so the rule "only rate
+      in the current batch" still holds visibly).
 - [ ] Each change writes to the DB immediately and to XMP on a debounced background queue
       (≤ 1 s), flushed on batch change and on quit. A crash never loses more than ~1 s.
 
@@ -277,6 +286,9 @@ The single most important property of the app: **navigation never waits for deco
 - [ ] **Memory budget**: default = 40% of physical RAM (≈6.4 GB on 16 GB), configurable in Settings
       → Performance. Respond to `DispatchSource` memory-pressure warnings by shedding T3 → T1 far
       batches → T2 beyond ±1 batch, never the current batch.
+- [ ] **No lazy loading anywhere reachable**: nothing in the previous, current, or next batch is ever
+      decoded on demand. If a cache miss does happen, it is a bug: log it in the debug HUD and count it
+      in the stress test.
 - [ ] **Priority scheduler** (not FIFO): current frame > rest of current batch > next batch >
       previous batch > further batches. Re-prioritize instantly on every navigation. Cancel work
       for batches that fell out of range.
@@ -380,6 +392,11 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
 ### 9.1 Window & toolbar
 
 - [ ] Single-window app (`NSWindow` + unified toolbar, full-size content view, glass toolbar items).
+- [ ] Liquid Glass on macOS 26+: system toolbar glass, SwiftUI `glassEffect` / `GlassEffectContainer`
+      for floating controls (HUD, overlays), AppKit `NSGlassEffectView` where views are AppKit. Use
+      stock controls wherever possible so they pick up system styling automatically.
+- [ ] Standard macOS menu bar (File, Edit, View, Photo, Window, Help) with every command listed and
+      its current (remapped) shortcut shown.
 - [ ] Toolbar, left: **‹ › batch navigation buttons** (Previous batch / Next batch) in a glass
       capsule like Finder's back/forward.
 - [ ] Toolbar, title: batch position + file name, e.g. `Batch 12 of 148 — IMG_8231`.
@@ -527,6 +544,9 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
       ratings (current state), history (undo/redo log), file_ops (finish-step moves for undo).
 - [ ] **Resume**: reopening a folder restores batches, ratings, current batch/photo, zoom lock, view.
 - [ ] If the DB is missing but XMP sidecars exist, import ratings from XMP.
+- [ ] Ordering and batches never depend on file names; add a synthetic rollover fixture
+      (`IMG_9998`, `IMG_9999`, `IMG_0001`, `IMG_0002` with increasing capture times) since the test
+      games don't cross 9999 inside one folder.
 - [ ] Watch the folder with FSEvents: new files appear in new batches at the end (or are re-batched if
       not yet visited); deleted/renamed files are removed gracefully.
 - [ ] **XMP sidecars**: `<basename>.xmp` next to the RAW (Lightroom naming), writing `xmp:Rating`,
@@ -550,6 +570,9 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 - [ ] Performance tests (§7.3) with baselines; fail CI on >10% regression (local perf job, since CI
       can't access the test photos).
 - [ ] UI checks: screenshots of each view on macOS 26+ and 15 compared to Finder side by side.
+- [ ] Rollover test with the synthetic fixture from §11.
+- [ ] Batching review is done by **looking at the photos** (contact sheets per batch), not only by
+      checking timestamps, for every boundary in the ambiguous zone.
 - [ ] Manual QA checklist: full cull of each test game start to finish in both rating modes,
       including finish-step moves and undo.
 
@@ -563,6 +586,7 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
       Swift bindings, package `FirstcutCore.xcframework`.
 - [ ] XcodeGen `project.yml` → `Firstcut.xcodeproj` (generated, git-ignored), pre-build phase runs
       `build-core.sh` when Rust sources changed.
+- [ ] `scripts/build-app.sh`: build-core → xcodegen → `xcodebuild` Release → ad-hoc sign → `dist/Firstcut.app`.
 - [ ] Swift 6 strict concurrency, warnings as errors in CI; `cargo clippy -D warnings`, `rustfmt`,
       `swift-format`.
 
@@ -577,7 +601,9 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 
 Same setup as [Sonar](https://github.com/Kathir-D/Sonar#install): three install paths in the README.
 
-- [ ] **Homebrew (recommended)**: cask `firstcut` in the personal tap `Kathir-D/homebrew-tap`:
+- [ ] **Homebrew (recommended)**: add cask `Casks/firstcut.rb` to the existing tap
+      [`Kathir-D/homebrew-tap`](https://github.com/Kathir-D/homebrew-tap) (it already holds `sonar.rb`;
+      reuse that cask's structure):
       `brew tap Kathir-D/tap && brew trust Kathir-D/tap && brew install --cask firstcut`.
   - `brew trust` is required: Homebrew 7 refuses to load casks from an untrusted tap.
   - Not eligible for `homebrew/cask` (ad-hoc signed apps fail Gatekeeper assessment), so a personal
@@ -596,27 +622,81 @@ Same setup as [Sonar](https://github.com/Kathir-D/Sonar#install): three install 
       Developer account).
 - [ ] Keep the app non-sandboxed; store folder bookmarks anyway in case of a future sandboxed build.
 
+### Repository & README upkeep
+
+- [x] README in the [awesome-readme](https://github.com/matiassingers/awesome-readme) style (header,
+      badges, TOC, features, shortcuts, formats, install, build, architecture, roadmap, license).
+- [x] README install section mirrors [Sonar](https://github.com/Kathir-D/Sonar#install): Homebrew,
+      curl direct download, build from source.
+- [x] README warns that only Canon has been tested.
+- [x] GPL-3.0 `LICENSE`.
+- [ ] Add screenshots and a short GIF of culling a burst to the README once the UI exists (M3/M7).
+- [ ] Keep README in sync with reality: shortcut table, formats table, roadmap checkboxes, and the
+      version/URL in the curl example on every release.
+- [ ] GitHub issue templates: bug report (camera model, file format, macOS version, steps) and feature
+      request; `CONTRIBUTING.md` once there is code to contribute to.
+- [ ] Add `THIRD-PARTY-NOTICES.md` if any third-party code/crates with attribution requirements ship in
+      the app (check every crate license is GPL-3.0 compatible).
+
 ---
 
 ## 14. Milestones
 
 Each milestone ends with something runnable and measured.
 
-1. **M0 — Repo & toolchain** ✅ repo, README, task.md, license, gitignore. Next: XcodeGen project,
-   Rust workspace, UniFFI bridge "hello", CI skeleton.
-2. **M1 — Core scan + order + batch (CLI)**: `firstcut-cli batch ~/Documents/testing/Game3KC`
-   prints batches; CR3 parser complete; ground truth for all four games; batching F1 measured.
-3. **M2 — Pipeline spike**: minimal window that arrows through a whole game from the cache with
-   zero misses; memory budget + scheduler; measure all §7.3 targets.
-4. **M3 — Core UX**: Finder-style window, toolbar, viewer, filmstrip, batch nav, both rating modes,
-   XMP + DB, undo, resume.
-5. **M4 — Inspection tools**: zoom/zoom lock, AF overlay, info panel, histogram, clipping, grid,
-   compare, HUD.
-6. **M5 — Finish flow + settings + keymap editor**.
-7. **M6 — Formats**: Sony next, then all others (spec-based, untested beyond Canon); RAW+JPEG pairs.
-8. **M7 — Polish**: Liquid Glass fidelity pass vs Finder, macOS 15 fallback, accessibility
-   (VoiceOver labels, reduce transparency/motion), app icon.
-9. **M8 — Release**: CI release pipeline, zip release, Homebrew tap, README screenshots, v0.1.0.
+### M0 — Repo & toolchain
+
+- [x] Project name chosen (**Firstcut**), public repo `Kathir-D/Firstcut` created and pushed.
+- [x] `task.md`, `README.md`, `AGENTS.md`, GPL-3.0 `LICENSE`, `.gitignore` (excludes all RAW
+      extensions and `.xmp`), `.gitattributes`, `.editorconfig`.
+- [x] Xcode 27 selected as the active developer directory (`xcode-select`).
+- [x] Rust stable (1.98.1) installed via rustup; `~/.cargo/env` sourced from `~/.zprofile`.
+- [x] `exiftool` installed (Homebrew) for checking the metadata parser.
+- [x] Test data measured (§3).
+- [ ] Install `xcodegen` and `swift-format` (Homebrew).
+- [ ] Rust workspace (`core/`: `firstcut-core`, `firstcut-cli`), UniFFI set up.
+- [ ] `project.yml` + minimal app target that calls one Rust function through UniFFI ("hello").
+- [ ] `scripts/build-core.sh`, `scripts/build-app.sh`, `VERSION`.
+- [ ] CI skeleton (fmt, clippy, tests, app build).
+
+### M1 — Core scan + order + batch (CLI)
+
+- [ ] CR3 header parser complete (all fields in §7.4), verified against exiftool on all four games.
+- [ ] `firstcut-cli batch <folder>` prints batches; `contact-sheet` output for visual review.
+- [ ] Ground truth for all four games; batching F1 measured and ≥ 98%.
+
+### M2 — Pipeline spike
+
+- [ ] Minimal window that arrows through a whole game from the cache with zero misses.
+- [ ] Memory budget + priority scheduler; embedded-preview vs RAW quality benchmark (§7.2).
+- [ ] All §7.3 targets measured and recorded here.
+
+### M3 — Core UX
+
+- [ ] Finder-style window, toolbar, viewer, filmstrip, batch navigation.
+- [ ] Both rating modes, XMP + DB, undo, resume, welcome window.
+
+### M4 — Inspection tools
+
+- [ ] Pinch/click zoom, zoom lock, AF overlay, info panel, histogram, clipping, grid, compare, HUD.
+
+### M5 — Finish flow, settings, keymap editor
+
+- [ ] Finish Cull flow (§9.7), all Settings tabs (§9.8), keyboard shortcut editor.
+
+### M6 — Formats
+
+- [ ] Sony next, then all others (spec-based, untested beyond Canon); RAW + JPEG/HEIF pairs;
+      JPEG/HEIF-only folders.
+
+### M7 — Polish
+
+- [ ] Liquid Glass fidelity pass vs Finder, macOS 15 fallback, accessibility (VoiceOver labels,
+      Reduce Transparency / Reduce Motion), app icon.
+
+### M8 — Release
+
+- [ ] CI release pipeline, zip release, `firstcut.rb` in the Homebrew tap, README screenshots, v0.1.0.
 
 ---
 
