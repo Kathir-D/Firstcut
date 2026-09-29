@@ -12,7 +12,7 @@ the keyboard — without ever waiting for a photo to load.
 ![Swift](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-core-000000?logo=rust)
 ![Status](https://img.shields.io/badge/status-in%20development-orange)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
 </div>
 
@@ -28,7 +28,6 @@ the keyboard — without ever waiting for a photo to load.
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Supported formats](#supported-formats)
 - [Installation](#installation)
-- [Building from source](#building-from-source)
 - [Architecture](#architecture)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
@@ -61,8 +60,9 @@ Firstcut does **not** use AI to rate or reject photos. You make every call; it j
     rings in the filmstrip show your picks at a glance.
 - 🖥️ **Feels like Finder** — large photo with a filmstrip underneath, Liquid Glass toolbar, native
   macOS look. Always dark, so it doesn't affect how you judge a photo.
-- 🔍 **Focus checking** — 100% zoom at the cursor, zoom lock across a burst, and an overlay of the
-  camera's autofocus point.
+- 🔍 **Focus checking** — pinch to zoom, or click any spot to jump to 100% right there (click again to
+  go back). Zoom lock keeps that spot as you arrow through a burst, and an overlay shows the camera's
+  autofocus point.
 - ℹ️ **Lightroom-style info panel**, histogram, clipping warnings, grid, and 2–4-up compare views.
 - ⌨️ **Lightroom keyboard shortcuts** out of the box, every one remappable.
 - 🔁 **Undo everything and resume anytime** — your progress is saved as you go.
@@ -82,7 +82,8 @@ Firstcut does **not** use AI to rate or reject photos. You make every call; it j
 
 ## Keyboard shortcuts
 
-Defaults match Lightroom Classic. All of them can be changed in **Settings → Keyboard**.
+Defaults match Lightroom Classic. All of them can be changed in **Settings → Keyboard**. Zooming
+uses the mouse or trackpad instead of a key: pinch, or click a spot to view it at 100%.
 
 | Action | Shortcut |
 | --- | --- |
@@ -92,7 +93,6 @@ Defaults match Lightroom Classic. All of them can be changed in **Settings → K
 | Keep (Keep mode) · Pick flag | `P` |
 | Reject / unflag | `X` / `U` |
 | Color labels | `6` `7` `8` `9` |
-| Zoom to 100% at cursor | `Z` or `Space` |
 | Info panel | `I` |
 | Grid / Loupe / Compare | `G` / `E` / `C` |
 | Auto-advance | `Caps Lock` |
@@ -120,27 +120,51 @@ Canon is the first priority, then Sony. Every major RAW format is supported:
 
 RAW + JPEG/HEIF pairs are treated as a single photo.
 
+> [!WARNING]
+> Firstcut has **only been tested with Canon cameras** (CR3, including C-RAW). The other formats are
+> built to their published specs and should work, but haven't been tried on real files. If something
+> doesn't look right with your camera, please [open an issue](https://github.com/Kathir-D/Firstcut/issues).
+
 ## Installation
 
 > [!IMPORTANT]
 > Requires a Mac with Apple Silicon running macOS 15 Sequoia or later. Liquid Glass styling needs
 > macOS 26 Tahoe or later; macOS 15 gets the closest native equivalent.
+>
+> These instructions are for the first release (v0.1.0), which isn't out yet.
 
 ### Homebrew (recommended)
 
 ```sh
-brew install --cask kathir-d/tap/firstcut
+brew tap Kathir-D/tap
+brew trust Kathir-D/tap
+brew install --cask firstcut
 ```
+
+Installs to `/Applications/Firstcut.app` and updates with `brew upgrade --cask firstcut`. **No
+Gatekeeper approval needed** — see the note below.
+
+`brew trust` is required: Homebrew 7 refuses to load casks from an untrusted tap.
+
+> **Why a personal tap?** Homebrew's official cask repository only accepts apps that pass Gatekeeper.
+> Firstcut is ad-hoc signed and not notarized (the project has no paid Apple Developer account), so
+> it's distributed through its own tap instead. The cask clears the quarantine attribute after
+> Homebrew has verified the download's SHA-256, so the app opens without a prompt.
 
 ### Direct download
 
-1. Download the latest `Firstcut.dmg` from [Releases](https://github.com/Kathir-D/Firstcut/releases).
-2. Drag **Firstcut** into **Applications**.
-3. Firstcut isn't notarized by Apple, so the first launch is blocked. Open **System Settings →
-   Privacy & Security**, scroll down, and click **Open Anyway** next to the Firstcut message. You
-   only need to do this once.
+```sh
+curl -fLO https://github.com/Kathir-D/Firstcut/releases/download/v0.1.0/Firstcut-0.1.0.zip
+unzip Firstcut-0.1.0.zip
+sudo mv Firstcut.app /Applications/
+open /Applications/Firstcut.app
+```
 
-## Building from source
+`curl` doesn't set the quarantine attribute, so this usually opens without a prompt. If macOS does
+ask, approve it once in **System Settings › Privacy & Security › Open Anyway**. A download through a
+browser always needs that step.
+
+### Build from source
 
 **Requirements:** Xcode 26 or later, Rust (stable, via [rustup](https://rustup.rs)),
 [XcodeGen](https://github.com/yonaskolb/XcodeGen).
@@ -148,11 +172,18 @@ brew install --cask kathir-d/tap/firstcut
 ```sh
 git clone https://github.com/Kathir-D/Firstcut.git
 cd Firstcut
-rustup target add aarch64-apple-darwin
+scripts/build-app.sh
+open dist/Firstcut.app
+```
+
+`scripts/build-app.sh` builds the Rust core, generates the Xcode project, builds Release, ad-hoc signs
+the app, and leaves it at `dist/Firstcut.app`. To work in Xcode instead:
+
+```sh
 brew install xcodegen
-./scripts/build-core.sh   # builds the Rust core and Swift bindings
+scripts/build-core.sh     # Rust core + Swift bindings
 xcodegen                  # generates Firstcut.xcodeproj
-open Firstcut.xcodeproj
+open Firstcut.xcodeproj   # run the Firstcut scheme
 ```
 
 Run the Rust tests with `cargo test --manifest-path core/Cargo.toml`. Tests that need real photos
@@ -188,4 +219,6 @@ submitting, and never commit photos — test images stay outside the repository.
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Firstcut is free software released under the [GNU General Public License v3.0](LICENSE). You can
+use, study, change, and share it. If you distribute a modified version, you must release its source
+code under the same license.

@@ -58,8 +58,10 @@ has been seen, Firstcut asks what to do with everything you didn't keep.
 | Ordering | By capture time + sub-second + shutter count, **never by file name** (Canon `IMG_9999` → `IMG_0001` rollover) |
 | Storage of ratings | XMP sidecars **and** app DB (DB = instant resume; XMP = interoperability) |
 | Shortcuts | Lightroom Classic defaults, all remappable |
-| Distribution | GitHub Releases (ad-hoc signed DMG) + personal Homebrew tap. **No paid Apple Developer account** → no notarization (see §11) |
-| License | MIT |
+| Distribution | Personal Homebrew tap + GitHub Releases (ad-hoc signed `.zip`, curl install) + build from source, same setup as [Sonar](https://github.com/Kathir-D/Sonar#install). **No paid Apple Developer account** → no notarization (see §13) |
+| License | **GPL-3.0** (copyleft: anyone who distributes a modified version must release its source under GPL-3.0 too) |
+| Zoom | **Mouse/trackpad only, no keyboard shortcut**: pinch to zoom in/out; click a spot → 100% there (one step); click again → back to fit |
+| Testing | **Canon only** (the only RAW files available). All other formats are implemented from their specs and must work, but are untested; the README says so |
 | Test data | `~/Documents/testing` (never committed; see §12) |
 
 ---
@@ -82,6 +84,8 @@ These numbers shape the architecture — re-measure when anything changes.
 | AF data | `AFAreaMode`, `AFPointsInFocus`, `AFAreaXPositions/YPositions` present → AF point overlay is possible |
 | ImageIO metadata coverage | ImageIO exposes almost none of the Canon MakerNote → **Rust must parse CR3 MakerNotes itself** |
 | Frame interval inside bursts (Game3KC) | ~0.16 s (≈6 fps) |
+| Frame interval inside bursts (Game1JENKS) | **~0.09 s (≈11 fps)**, with 13 gaps of 40–60 ms. The fastest bursts in the set are at the end (`IMG_6117`–`IMG_6164`): 48 frames at 90 ms, broken by 0.23–0.77 s pauses where the shutter was released and pressed again during the same play |
+| Shutter modes in Game1JENKS | Electronic (692), Electronic First Curtain (16); drive `Continuous, High+` / `High` / `Low` all appear |
 | Gap histogram, Game3KC (919 gaps) | ≤0.2 s: 663 · 0.2–0.5 s: 24 · 0.5–2 s: 57 · 2–30 s: 101 · >30 s: 74 |
 | File name rollover | Game4VRE ends at `IMG_9999`; rollover to `IMG_0001` within a shoot is possible |
 
@@ -90,6 +94,8 @@ These numbers shape the architecture — re-measure when anything changes.
   and 100% zoom can use it instantly. True RAW decode becomes an optional "exact" toggle.
 - 166 ms/image single-threaded is too slow to do on keypress but trivially fast to do *ahead of
   time* across 8–10 performance cores → the whole design is **prefetch everything reachable**.
+- Game1JENKS is the **high-speed test case**. No file in the set is 25 ms apart (true 40 fps), so the
+  thresholds must be derived from the local frame interval, not hard-coded to one speed.
 - The ~80 gaps between 0.2 s and 2 s are the ambiguous zone where timing alone can't decide a
   burst boundary → visual similarity + exposure/lens signals decide those.
 
@@ -139,7 +145,9 @@ Firstcut/
 │   ├── firstcut-core/        # library crate (UniFFI)
 │   ├── firstcut-cli/         # dev CLI: scan/batch/benchmark a folder, dump JSON
 │   └── Cargo.toml
-├── scripts/                  # build-core.sh (→ XCFramework), make-dmg.sh, bench scripts
+├── scripts/                  # build-core.sh (→ XCFramework), build-app.sh (→ dist/Firstcut.app), bench scripts
+├── Casks/                    # firstcut.rb, mirrored into Kathir-D/homebrew-tap
+├── VERSION
 ├── tests/fixtures/           # ground-truth batch files (filenames only — no images)
 ├── .github/workflows/        # CI + release
 ├── project.yml               # XcodeGen spec (no hand-edited .pbxproj merge conflicts)
@@ -203,8 +211,9 @@ Batches are computed once when a folder is opened (and cached in the session DB)
       bursts. Target ≥ 98% boundary F1 on all four games; zero merges of clearly different plays.
 - [ ] Regression test in CI that runs the batcher on committed **metadata dumps** (JSON of the
       extracted fields + hashes, no images) so CI doesn't need the 42 GB of RAW files.
-- [ ] Ask for a 40 fps electronic-shutter test shoot (current test set is ~6 fps) and add it to
-      ground truth.
+- [ ] Use the end of Game1JENKS (`IMG_6117`–`IMG_6164`, ~11 fps with 0.2–0.8 s re-press pauses) as the
+      high-speed / ambiguous-pause regression case. Decide from the photos whether those pauses are
+      one play (one batch) or several.
 
 ---
 
@@ -326,6 +335,11 @@ The single most important property of the app: **navigation never waits for deco
 
 **Priority:** Canon first, Sony second, everything else must work.
 
+**Testing scope:** only Canon files are available, so only Canon is tested. Every other format is
+implemented from its published spec (and the ExifTool tag docs), relies on Apple's ImageIO for
+decoding, and must fail gracefully (placeholder + reason) rather than crash if something is off. The
+README states that only Canon has been tested.
+
 | Brand | Extensions | Metadata parser | Preview / decode |
 | --- | --- | --- | --- |
 | Canon | `.CR3` (incl. C-RAW), `.CR2`, `.CRW` | Rust: ISO-BMFF + CMT1–4 IFDs + Canon MakerNote (CR3), TIFF + MakerNote (CR2), CIFF (CRW) | ImageIO embedded preview; CIRAWFilter |
@@ -352,8 +366,9 @@ The single most important property of the app: **navigation never waits for deco
 - [ ] Generic fallback: if the Rust parser doesn't recognize a file, ask ImageIO for its properties
       from Swift and pass them in, so no supported-by-macOS file is ever skipped.
 - [ ] Unsupported/corrupt files: shown in the filmstrip with a placeholder + reason, never block.
-- [ ] Validate every parser field against `exiftool` output on sample files for each brand
-      (`firstcut-cli verify <folder>` diff report). Collect sample files per brand (raw.pixls.us).
+- [ ] Validate every Canon parser field against `exiftool` output on the test games
+      (`firstcut-cli verify <folder>` diff report). Non-Canon parsers are checked with unit tests on
+      hand-built header byte fixtures only.
 
 ---
 
@@ -378,9 +393,14 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
 
 - [ ] Photo fills the area above the filmstrip, aspect-fit, rounded corners like Finder's gallery.
 - [ ] Neutral dark gray background (configurable darkness).
-- [ ] **Zoom**: Z or Space toggles fit ↔ 100% **at the cursor position**; pinch and scroll/⌘-scroll
-      zoom; drag to pan; double-click toggles.
-- [ ] **Zoom lock** (setting, and toggle key): when on, arrowing to the next frame keeps the same zoom
+- [ ] **Zoom (mouse/trackpad only, no keyboard shortcut)**:
+  - **Pinch** to zoom in and out smoothly (trackpad magnify gesture), anchored at the pinch point.
+  - **Click** a spot on the photo → jumps to **100% centered on that spot** (a single step, no
+    multi-level zoom). **Click again** → back to fit.
+  - When zoomed, drag (or two-finger scroll) pans. A click that turned into a drag must not toggle
+    zoom.
+  - Zoom in/out animates with the system spring, like Photos/Preview.
+- [ ] **Zoom lock** (setting, also in the View menu, no default key): when on, arrowing to the next frame keeps the same zoom
       level and position, so sharpness can be compared across the burst. T3 prefetches neighbours
       while zoom-locked.
 - [ ] **AF point overlay** (toggle): draw the in-focus AF point(s)/area from MakerNote data, mapped
@@ -480,8 +500,6 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 | Toggle flag | ` |
 | Color label red / yellow / green / blue | 6 / 7 / 8 / 9 |
 | Toggle auto-advance | Caps Lock |
-| Zoom fit ↔ 100% at cursor | Z / Space |
-| Toggle zoom lock | ⇧Z |
 | Info panel | I |
 | Grid / Loupe / Compare | G / E / C |
 | Clipping overlay | J |
@@ -493,6 +511,7 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 | Full screen | ⌃⌘F |
 | Settings | ⌘, |
 
+- [ ] Zoom has **no keyboard shortcut** by design (pinch / click only, see §9.2).
 - [ ] Keymap stored as JSON in Application Support; default keymap shipped in the bundle.
 - [ ] Key handling via a single `NSEvent` local monitor / responder-chain router so no view steals keys;
       key repeat on arrows must be smooth.
@@ -550,23 +569,32 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 ### CI (GitHub Actions, `macos-latest` arm64 runners)
 
 - [ ] On PR/push: Rust fmt/clippy/test, Swift build + unit tests, batching regression on metadata dumps.
-- [ ] On tag `v*`: build Release, **ad-hoc sign** (`codesign --force --deep -s -`), build DMG, attach to
-      a GitHub Release with SHA-256.
+- [ ] On tag `v*`: `scripts/build-app.sh` builds Release, stamps `VERSION` + an increasing build number,
+      **ad-hoc signs** (`codesign --force --deep -s -`), zips `Firstcut-<version>.zip`, attaches it to a
+      GitHub Release with its SHA-256.
 
 ### Distribution
 
-- [ ] **GitHub Releases**: DMG, ad-hoc signed. Because it isn't notarized, first launch on macOS 15+
-      needs **System Settings → Privacy & Security → Open Anyway** (right-click → Open no longer
-      bypasses Gatekeeper). Document this with screenshots in the README.
-- [ ] **Homebrew**: personal tap `Kathir-D/homebrew-tap` with cask `firstcut`
-      (`brew install --cask kathir-d/tap/firstcut`). The cask strips the quarantine attribute in a
-      `postflight` step so it opens without the Gatekeeper prompt. Release workflow bumps the cask
-      version + sha256 automatically.
+Same setup as [Sonar](https://github.com/Kathir-D/Sonar#install): three install paths in the README.
+
+- [ ] **Homebrew (recommended)**: cask `firstcut` in the personal tap `Kathir-D/homebrew-tap`:
+      `brew tap Kathir-D/tap && brew trust Kathir-D/tap && brew install --cask firstcut`.
+  - `brew trust` is required: Homebrew 7 refuses to load casks from an untrusted tap.
+  - Not eligible for `homebrew/cask` (ad-hoc signed apps fail Gatekeeper assessment), so a personal
+    tap is the route.
+  - The cask clears the quarantine attribute in a `postflight` block (after Homebrew has verified
+    the SHA-256), so the app opens with no Gatekeeper prompt. Homebrew's `--no-quarantine` flag was
+    removed in 7.x.
+  - Release workflow bumps the cask version + sha256 automatically; `brew upgrade --cask firstcut`
+    updates it.
+- [ ] **Direct download (curl)**: `curl -fLO …/Firstcut-<version>.zip`, unzip, move to
+      `/Applications`. curl doesn't set quarantine so it usually opens without a prompt; a browser
+      download does, and needs one **System Settings → Privacy & Security → Open Anyway**.
+- [ ] **Build from source**: `git clone`, `scripts/build-app.sh`, `open dist/Firstcut.app`; or open the
+      generated Xcode project and run the `Firstcut` scheme.
 - [ ] Optional later: in-app updates via **Sparkle** (EdDSA-signed appcast works without an Apple
       Developer account).
-- [ ] Never ship a hardened-runtime entitlement set that breaks ad-hoc signing; keep the app
-      non-sandboxed (folder access needs no security-scoped bookmarks outside the sandbox, but store
-      bookmarks anyway for future App Store/sandbox work).
+- [ ] Keep the app non-sandboxed; store folder bookmarks anyway in case of a future sandboxed build.
 
 ---
 
@@ -585,10 +613,10 @@ Each milestone ends with something runnable and measured.
 5. **M4 — Inspection tools**: zoom/zoom lock, AF overlay, info panel, histogram, clipping, grid,
    compare, HUD.
 6. **M5 — Finish flow + settings + keymap editor**.
-7. **M6 — Formats**: Sony next, then all others; `verify` against exiftool; RAW+JPEG pairs.
+7. **M6 — Formats**: Sony next, then all others (spec-based, untested beyond Canon); RAW+JPEG pairs.
 8. **M7 — Polish**: Liquid Glass fidelity pass vs Finder, macOS 15 fallback, accessibility
    (VoiceOver labels, reduce transparency/motion), app icon.
-9. **M8 — Release**: CI release pipeline, DMG, Homebrew tap, README screenshots, v0.1.0.
+9. **M8 — Release**: CI release pipeline, zip release, Homebrew tap, README screenshots, v0.1.0.
 
 ---
 
@@ -597,7 +625,6 @@ Each milestone ends with something runnable and measured.
 - [ ] Arrow at the end of a batch: stop, or roll into the next batch? (Planned: setting, default stop.)
 - [ ] Should consecutive single frames a few seconds apart be grouped into one batch or stay 1-photo
       batches? Decide from ground truth on the test games.
-- [ ] Need a **40 fps electronic-shutter** test shoot to validate high-speed bursts (current test set is
-      ~6 fps).
-- [ ] Need sample Sony `.ARW` bursts (second priority brand) — own files or raw.pixls.us samples.
+- [x] ~~40 fps test shoot~~ → Game1JENKS covers high-speed bursts (~11 fps recorded, see §3).
+- [x] ~~Sony samples~~ → not available; only Canon is tested (see §8).
 - [ ] App icon design.
