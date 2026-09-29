@@ -10,3 +10,4 @@ publish.workspace = true
 crate-type = ["lib", "staticlib"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
