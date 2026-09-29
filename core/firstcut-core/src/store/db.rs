@@ -26,14 +26,32 @@ pub fn default_sessions_dir(home: &Path) -> PathBuf {
         .join("Sessions")
 }
 
-/// Photo ids and batch ids are `u64` in the contracts; SQLite integers are `i64`. Masking the top
-/// bit keeps the round trip lossless and keeps ids positive.
+/// Photo ids and batch ids are `u64` in the contracts; SQLite integers are signed `i64`, and the
+/// store must never write a negative one.
+///
+/// The conversion keeps the **top bit clear**, and that is only safe because every id is produced
+/// by `batch::fnv1a64`, which masks to 63 bits. The two have to agree, and the two functions here
+/// are the other half of that:
+///
+/// ```text
+/// fnv1a64 -> & 0x7fff_ffff_ffff_ffff  (when the id is built)
+/// id_to_i64   -> the same value, as a positive i64
+/// i64_to_id   -> the same value back
+/// ```
+///
+/// The bug this shape replaces masked on the way in and on the way out, which is **not** an
+/// involution: an id whose top bit was set came back as a different number, so a rating written to
+/// the database and read back in the next session was keyed to a photo that did not exist. It is
+/// the worst possible failure for a data store -- the write succeeds, the read is confident, and
+/// the user's rating is simply gone. Caught by `a_rating_survives_closing_and_reopening`.
+pub const ID_MASK: u64 = 0x7fff_ffff_ffff_ffff;
+
 pub fn id_to_i64(id: u64) -> i64 {
-    (id & 0x7fff_ffff_ffff_ffff) as i64
+    (id & ID_MASK) as i64
 }
 
 pub fn i64_to_id(value: i64) -> u64 {
-    (value as u64) & 0x7fff_ffff_ffff_ffff
+    (value as u64) & ID_MASK
 }
 
 /// How the session database that was opened relates to the folder that was asked for.

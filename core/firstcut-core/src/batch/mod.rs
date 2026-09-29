@@ -58,7 +58,11 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
         hash ^= u64::from(b);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    hash
+    // Keep the top bit clear. SQLite integers are signed and the store stores ids as positive
+    // i64, so an id with bit 63 set could not survive a round trip through the database -- it
+    // would come back as a different photo, and a rating keyed to it would silently vanish.
+    // See `store::db::ID_MASK`, which is the other half of this.
+    hash & crate::store::db::ID_MASK
 }
 
 /// [`PhotoId`] for a path relative to the session folder.
