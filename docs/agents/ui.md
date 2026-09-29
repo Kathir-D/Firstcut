@@ -89,7 +89,7 @@ keep mode end to end, and the rest of the menu bar. Blocked on REQ-ui-1 (`AppMod
 
 | Date | What | Commit |
 | --- | --- | --- |
-| 2026-09-29 | Wave 1: window + unified toolbar + menus + forced dark; Finder-style AppKit filmstrip with selection plate, stars/flags/labels and keep rings; viewer placeholder + host seam for pipeline; info panel with all §9.5 fields; progress HUD; `Assets.xcassets`; Finder reference screenshots in `docs/ui/`; 29 unit tests | `ui: wave 1 window, toolbar, menus, filmstrip` |
+| 2026-09-29 | Wave 1: window + unified toolbar + menus + forced dark; Finder-style AppKit filmstrip with selection plate, stars/flags/labels and keep rings; viewer placeholder + host seam for pipeline; info panel with all §9.5 fields; progress HUD; `Assets.xcassets`; Finder reference screenshots in `docs/ui/`; 29 unit tests | `701a00d` |
 
 ### Blockers
 
