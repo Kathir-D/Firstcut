@@ -1,0 +1,123 @@
+name: release
+
+# Owner: infra. Publishes a release when a v* tag is pushed (task.md §13):
+#
+#   VERSION from the tag -> build-app.sh (ad-hoc signed) -> package-release.sh (zip + SHA-256)
+#   -> GitHub Release with the zip, its checksum and the cask -> the cask is bumped in
+#   Kathir-D/homebrew-tap, so `brew upgrade --cask firstcut` picks it up.
+#
+# No paid Apple Developer account, so there is no Developer ID and no notarization. That is a
+# supported state, not a mistake, with one measured consequence: Homebrew downloads with curl,
+# which sets no quarantine attribute, so `brew install --cask firstcut` lands a working app. A
+# browser download does set it, and Gatekeeper's assessment of an un-notarized app is "rejected",
+# so a user who fetches the zip by hand may have to approve it once in
+# System Settings > Privacy & Security. The cask clears the attribute in its postflight block.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macos-15 is the arm64 (M1) image for public repos; Firstcut is Apple Silicon only.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The release workflow rewrites VERSION from the tag and the cask from the artifact, so
+          # it needs the branch, not a detached tag.
+          fetch-depth: 0
+
+      - name: Stamp VERSION from the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "${GITHUB_REF_NAME#v}" > VERSION
+
+      - name: Rust tests
+        run: |
+          cargo fmt --manifest-path core/Cargo.toml --all --check
+          cargo clippy --manifest-path core/Cargo.toml --all-targets --all-features -- -D warnings
+          cargo test --manifest-path core/Cargo.toml --all-features
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Build the app
+        run: ./scripts/build-app.sh
+        env:
+          # CFBundleVersion is the build identity Homebrew and `about` show. The run number is
+          # increasing across releases; locally build-app.sh falls back to 1.
+          BUILD_NUMBER: ${{ github.run_number }}
+
+      - name: Package
+        run: ./scripts/package-release.sh
+
+      - name: signing-state
+        run: |
+          echo "::warning::Firstcut is distributed ad-hoc signed and un-notarized (no paid Apple Developer account). 'brew install --cask firstcut' is unaffected; a browser download of the zip may need one-time manual approval in System Settings > Privacy & Security."
+
+      # Fill in the cask so `brew install --cask firstcut` works without a human editing a file
+      # between two CI runs. Asserting the placeholder is gone with `grep -q ... && exit 1` is the
+      # wrong way round: when the placeholder IS gone grep exits 1, the && short-circuits, and that
+      # 1 becomes the step's exit status, failing the step precisely when it succeeded.
+      - name: Stamp the cask
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          VERSION="$(cat VERSION)"
+          SHA="$(cut -d' ' -f1 dist/SHA256SUMS.txt)"
+          test -n "$SHA"
+          sed -i.bak -e "s/^ *version \".*\"/  version \"$VERSION\"/" \
+                      -e "s/REPLACE_WITH_RELEASE_SHA256/$SHA/" Casks/firstcut.rb
+          rm -f Casks/firstcut.rb.bak
+          if grep -q "REPLACE_WITH_RELEASE_SHA256" Casks/firstcut.rb; then
+            echo "::error::cask still holds the placeholder after substitution"
+            exit 1
+          fi
+          echo "cask version: $VERSION"
+          echo "cask sha256:  $SHA"
+          ruby -c Casks/firstcut.rb
+
+      - name: Bump the Homebrew cask in Kathir-D/homebrew-tap
+        if: startsWith(github.ref, 'refs/tags/')
+        # Needs a token with write access to the tap. Until HOMEBREW_TAP_TOKEN is configured this
+        # step is skipped with a warning instead of failing the release; the cask in the release
+        # assets is the source of truth until then.
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the tap update. The cask is attached to this release; copy it into the tap by hand."
+            exit 0
+          fi
+          ./scripts/bump-cask.sh
+
+      - name: Release notes
+        if: always() && startsWith(github.ref, 'refs/tags/')
+        run: |
+          {
+            echo "## Firstcut ${GITHUB_REF_NAME#v}"
+            echo
+            echo "- \`Firstcut-${GITHUB_REF_NAME#v}.zip\` (ad-hoc signed, not notarized)"
+            echo "- SHA-256: \`$(cut -d' ' -f1 dist/SHA256SUMS.txt)\`"
+            echo
+            echo "Install: \`brew tap Kathir-D/tap && brew trust Kathir-D/tap && brew install --cask firstcut\`"
+            echo
+            echo "A browser download of the zip sets the quarantine attribute, so macOS asks for one"
+            echo "manual approval in System Settings > Privacy & Security. Homebrew does not."
+          } > dist/RELEASE_NOTES.md
+
+      - uses: softprops/action-gh-release@v2
+        # Only publish on tag pushes; a manual dispatch stops after packaging.
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/Firstcut-*.zip
+            dist/SHA256SUMS.txt
+            Casks/firstcut.rb
+          body_path: dist/RELEASE_NOTES.md
+          fail_on_unmatched_files: true
