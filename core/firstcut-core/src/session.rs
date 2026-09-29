@@ -110,6 +110,8 @@ pub struct Session {
     frozen: Vec<crate::batch::Batch>,
     rating_mode: RatingMode,
     warnings: Vec<String>,
+    /// Whether this session was created rather than resumed, recorded at open.
+    created: bool,
 }
 
 impl std::fmt::Debug for Session {
@@ -173,6 +175,7 @@ impl Session {
             batches: Vec::new(),
             rating_mode: RatingMode::Stars,
             warnings: Vec::new(),
+            created: false,
         };
         session.load_state()?;
         session.rebatch();
@@ -181,6 +184,7 @@ impl Session {
             crate::store::db::MatchKind::Created => SessionMatch::Created,
             _ => SessionMatch::Resumed,
         };
+        session.created = matches!(match_kind, SessionMatch::Created);
         Ok((session, match_kind, scan))
     }
 
@@ -200,6 +204,11 @@ impl Session {
 
     pub fn folder(&self) -> &Path {
         &self.folder
+    }
+
+    /// True when this session was created rather than resumed.
+    pub fn was_created(&self) -> bool {
+        self.created
     }
 
     pub fn photos(&self) -> &[PhotoMeta] {
