@@ -10,3 +10,11 @@ publish.workspace = true
 crate-type = ["lib", "staticlib"]
 
 [dependencies]
+# core-store
+libc = "0.2"         # statfs/stat for the volume identity of a session folder
+rusqlite = { version = "0.37", features = ["bundled"] }  # session DB (WAL)
+thiserror = "2"
+
+[dev-dependencies]
+# core-store
+tempfile = "3"
