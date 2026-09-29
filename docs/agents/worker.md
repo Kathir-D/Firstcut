@@ -195,31 +195,105 @@ findings from that table.
 
 ## Live status
 
-_Last updated: — (not started)_
+_Last updated: 2026-09-29 — deliverable 0 (rescue and consolidate) substantially done._
+
+> **Read the LIVE review board, not this checkout's copy:**
+> `~/Documents/projects/Firstcut-wt/senior-dev/docs/review.md`
 
 ### Current focus
 
-Not started. The nine agent branches are merged and building; nothing beyond that yet.
+Deliverable 0. All eight branches are merged onto `agent/worker`; PR #5 is open and will stay
+open. Both suites run on the merged tree and the Swift side is green end to end. Working through
+the remaining P1s (REV-63, REV-68, REV-12/59) and then deliverable 2, the CR3 parser.
+
+### Verified state on the merged tree
+
+Run, not assumed:
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --manifest-path core/Cargo.toml --all --check` | clean |
+| `cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings` | clean |
+| `cargo test --manifest-path core/Cargo.toml` | 198 pass, **1 fail** — `ground_truth_exists_for_every_game` |
+| `xcodebuild … test` (all three bundles) | **TEST SUCCEEDED**, exit 0 — 155 unit, 16 integration, 3 performance |
+
+The one Rust failure is real outstanding work, not a broken build: no ground truth exists for any
+of the four games. It cannot be produced by me — task.md §12 requires it to be built by **looking at
+the photographs**, and the test that fails says so in its message and names the command to run.
 
 ### Done log
 
 | Date | What | Commit |
 | --- | --- | --- |
+| 2026-09-29 | Merged 8 branches; resolved `Cargo.lock` + `firstcut-core/Cargo.toml` as unions | `928696e`…`f9f93a2` |
+| 2026-09-29 | **REV-69** rating mapping: one pure function, one table, `Rating::tier` is the single mapped authority the filmstrip, counts, split folders and Finish decision all read | `7d3335d` |
+| 2026-09-29 | **REV-26** scrambled-name ordering test; **REV-66** PhotoId-as-index fix | `7d3335d` |
+| 2026-09-29 | **REV-56** deleted duplicate `CullProgress`, `CullTier`, `RatingTiers`; deleted the second `FirstcutTestSupport.swift` | `156145f` |
+| 2026-09-29 | `CommandMenu` shadowing fix; DecodeSpike `#if SPIKE`; TCC hang in the test host | `156145f`, next |
+| 2026-09-29 | Unkeeping clears the 5 stars it invented (found by app-logic's P-key test) | see log |
+| 2026-09-29 | `firstcut contact-sheet` + `firstcut eval`, both verified to work *and* to fail correctly | this commit |
+
+### Bugs found in the rescued work, and what they were
+
+Four of these are correctness bugs the nine agents' own tests did not catch, which is worth
+recording because each one was invisible in a status file and visible only by running something.
+
+1. **A photo could be shown as a Keep and then trashed.** `Rating::tier` and `display_rating`
+   were two implementations of the mode mapping that disagreed, and the Finish step decided
+   keep-vs-trash from the *raw* `keep` field rather than the mapped tier.
+2. **Unkeeping did not unkeep.** `synchronized()` wrote `stars = 5` when keep was switched on and
+   nothing when it was switched off, so a photo the user had un-kept still carried 5 stars — and
+   since 5 stars correctly means keep, it stayed a Keep in the UI. app-logic's P-key test was
+   already written to catch exactly this; it did.
+3. **`CommandMenu` shadowing.** app-logic declares a `public enum CommandMenu`; because it is
+   public in the same module it shadows `SwiftUI.CommandMenu` everywhere, and the compiler reported
+   "extra trailing closure passed in call" at the *next* menu with no note naming the cause.
+4. **The test host hung forever on the fixtures.** Not slow — blocked. The tests are hosted by
+   `Firstcut.app`, built inside the repo, which is under `~/Documents`; a GUI app reading from
+   there raises a TCC prompt, an ad-hoc rebuild re-prompts every run, and with nobody to click
+   Allow it blocks in `mach_msg` forever. Fixtures are now bundled; the real-photo tests are opt-in
+   behind `FIRSTCUT_ALLOW_PHOTO_TESTS=1`.
 
 ### Blockers
 
-None.
+| ID | What | Need | Work it does not block |
+| --- | --- | --- | --- |
+| `REQ-worker-1` | **Ground truth for the four games (deliverable 4, task.md §5.4/§12).** `firstcut contact-sheet --game <g>` renders every ambiguous-zone boundary; a **human looks at the photographs** and writes `tests/fixtures/ground-truth/<g>.json`. I will not synthesise it — self-certified ground truth is worth nothing (REV-55), and the ≥ 98% F1 target is exactly the claim that must not be faked. | Someone who can look at 2,880 photos. ~210 ambiguous boundaries total. | Everything else. `cargo test` is green apart from this one test, which fails loudly and says what to do. |
+| `REQ-worker-2` | **Homebrew tap `Kathir-D/homebrew-tap`.** Deliverable 10 needs `Casks/firstcut.rb` in that repo; I can write the cask and test the install here, but publishing to the tap needs write access to a repo outside this one. | Push access to `Kathir-D/homebrew-tap`, or senior-dev does the push. | The GitHub Release, the zip and its SHA-256 — all of which I can do. |
 
 ### Requests to others
 
 | ID | To | Need | Why | Status |
 | --- | --- | --- | --- | --- |
+| `REQ-worker-1` | senior-dev | Ground truth, or a human to build it | See Blockers | open |
+| `REQ-worker-2` | senior-dev | Homebrew tap access | See Blockers | open |
 
 ### Incoming requests
 
 | ID | From | Response | Status |
 | --- | --- | --- | --- |
+| REV-56 | senior-dev | fixed in `156145f` — duplicates deleted, `AppModel` is the one model | verify |
+| REV-63 | senior-dev | not yet — next | open |
+| REV-64 | senior-dev | not yet | open |
+| REV-65 | senior-dev | not yet | open |
+| REV-66 | senior-dev | fixed in `7d3335d` — look the index up by id | verify |
+| REV-67 | senior-dev | not yet | open |
+| REV-68 | senior-dev | not yet | open |
+| REV-69 | senior-dev | fixed in `7d3335d` — one pure function, one published table, `Rating::tier` is the single authority; round-trip tests both ways | verify |
+| REV-26 | senior-dev | fixed in `7d3335d` — deterministic bijective name scramble, byte-identical order asserted | verify |
+| REV-72 | senior-dev | partially: `PipelineMirror` still present, next | open |
+| REV-73 | senior-dev | not yet | open |
+| REV-12 | senior-dev | not yet | open |
+| REV-59 | senior-dev | not yet | open |
+| REV-75 | senior-dev | **already fixed in the merged ui work** — `RootView` switches exhaustively on `phase`, so the welcome hierarchy cannot be in the tree during `.culling`. I will confirm on screen with a screenshot. | verify |
+| REV-76 | senior-dev | not yet | open |
 
 ### Notes
 
-(Anything worth remembering that is not in the charter or the review board.)
+- `project.yml` excludes `App/Sources/Pipeline/Spike/**` from the app target. The `#if SPIKE` guard
+  could never work: Swift parses the body of an inactive conditional-compilation branch for
+  *syntax*, and top-level expressions are a syntax error in any file that is not `main.swift`.
+  The spike compiles standalone with `swiftc -D SPIKE`, as its own header says.
+- The `Firstcut` app must only ever receive folder access through `NSOpenPanel`. The TCC work
+  above is the same rule enforced in tests, and it is why no code path may default to a raw
+  `~/Documents` path at launch.

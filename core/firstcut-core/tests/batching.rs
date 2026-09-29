@@ -523,8 +523,43 @@ fn boundary_f1_matches_the_visual_ground_truth() {
         }
     }
 
-    assert!(checked > 0, "no game has a ground truth file yet");
+    // Only assert against what exists. `ground_truth_exists_for_every_game` below is the test that
+    // fails when the fixtures are missing, so the gap is loud and specific rather than a panic here
+    // about a file four directories up -- and so a game whose truth has been verified is still
+    // scored even while the other three are outstanding.
     assert!(failures.is_empty(), "{}", failures.join("; "));
+    if checked == 0 {
+        eprintln!(
+            "no ground truth scored yet -- see ground_truth_exists_for_every_game, \
+             which is the test that tracks the outstanding work"
+        );
+    }
+}
+
+/// The ground truth is **not** written by the agent that is scored against it (REV-55): it is
+/// produced by a human looking at the photographs, which is the only way to know whether two
+/// adjacent frames are one burst.
+///
+/// This test therefore does not measure anything -- it exists so the outstanding work is visible
+/// and cannot quietly disappear. It fails until every game has been verified by looking, and the
+/// message says exactly what to do. Once the four files land, this test is deleted in the same
+/// commit that removes the escape hatch, because at that point its only job is to be redundant.
+#[test]
+fn ground_truth_exists_for_every_game() {
+    let missing: Vec<String> = GAMES
+        .iter()
+        .filter(|g| !truth_path(g).exists())
+        .map(|g| (*g).to_string())
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no verified ground truth yet for: {}. Build it by LOOKING at the photographs: \
+         `firstcut contact-sheet <game>` renders the ambiguous-zone boundaries, a human marks the \
+         real burst boundaries, and the result is written to tests/fixtures/ground-truth/<game>.json \
+         as {{\"game\": \"...\", \"verified\": \"<date>\", \"notes\": \"why\", \"batches\": [[...]]}}. \
+         See docs/agents/worker.md deliverable 4 and task.md §5.4.",
+        missing.join(", ")
+    );
 }
 
 /// Golden batches. Regenerate with `FIRSTCUT_UPDATE_GOLDEN=1 cargo test golden_batches` after a
