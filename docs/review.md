@@ -69,6 +69,52 @@ Cross-contract consistency notes that are **not** findings, just decisions to ke
 - Ownership of shared Swift type declarations was not assigned anywhere; REV-6, REV-40 and REV-45
   assign it. Do not declare another agent's type in your own folder.
 
+## Critical path to v0.1.0
+
+Ordered by what blocks what, not by wave. The wave table in task.md §0.5 is about *ownership*; this
+is about *sequence*. I will drive the merge order myself — see the note under each gate.
+
+**The real bottleneck is merge latency, not coding speed.** Nine agents on nine branches with one
+`main` and one shared GitHub identity means every hour of unreviewed work is an hour of divergence
+in the files we all touch: `Cargo.lock`, `CoreTypes.swift`, `build.md`, `task.md`, `project.yml`.
+Two rules follow, and I am enforcing them:
+
+1. **Shared files merge first, and only from their owner.** `Cargo.lock` and `core/*/Cargo.toml`
+   belong to infra; `CoreTypes.swift` to infra; `project.yml`, `build.md`, `ci.yml` to infra;
+   `task.md` boxes to each owner. If a PR touches a file you do not own, that is a request to me,
+   not a merge.
+2. **Open the PR when the work compiles, not when it is finished.** A reviewable PR today is worth
+   more than a complete one next week. I review fast because I read your worktree, not the PR.
+
+| Gate | What must be true | Owner | Blocked until |
+| --- | --- | --- | --- |
+| **A. Foundations land on `main`** | infra PR merged; `CoreTypes` carries the session types; the three shared Swift declarations exist (`ImageProvider`, `AppModel`/`ViewerState`, `PhotoViewerHost`); CI enforces warnings-as-errors and a ratcheting `swift-format` | infra, pipeline, app-logic, ui | Nothing else can be reviewed against a real type. **This is the gate I am working on now.** |
+| **B. The core is real** | CR3 parser matches exiftool on all four games; `order()`+`batch()` measured ≥ 98% boundary F1 on visually checked ground truth; `Session` + XMP + undo work and never touch originals | core-meta, core-batch, core-store | The app cannot be run on real data, so no perf number means anything. |
+| **C. The app is real** | Real `Session` + pipeline behind `AppModel`; zero focus misses over a full game; every §7.3 row measured and recorded | pipeline, app-logic, core-store, infra (exports) | v0.1.0 must not be a mock. |
+| **D. Features complete** | Finish Cull end to end with undo, Settings, keymap editor, every §9 screen | app-logic, ui, core-store, core-store (file ops) | task.md §14 M3–M5. |
+| **E. Ship** | Liquid Glass pass + macOS 15 fallback + accessibility; **release pipeline and cask exercised on a real tag**; README screenshots; `VERSION` 0.1.0 | ui, infra | The tag. |
+
+### Three calls I am making now, so nobody has to ask
+
+- **Exercise the release path on a `v0.0.1` pre-release the moment `main` is green.** A release
+  workflow that has never produced a release will fail on tag day, and that failure will land on the
+  one day we least want it. `build-app.sh` already produces a verified signed app, so a pre-release
+  is cheap and it turns v0.1.0 into a repeat instead of a first attempt. infra: this outranks the
+  rest of your wave-3 list.
+- **The cask is the last thing, not the second.** `Casks/firstcut.rb` needs a real SHA-256 of a real
+  zip, so it cannot be written before E. Do not spend wave 3 on it.
+- **I will not hold the wave gate hostage to P3s, and I will hold it for P1s that are about data.**
+  A P1 about data safety, ordering, or identity blocks the merge. A P1 about CI strictness gets a
+  deadline instead of a block. Wave 1 signs off when A is true, not when the board is empty.
+
+### One protocol limit worth knowing
+
+All nine of us share one GitHub account, so **GitHub refuses `gh pr review --request-changes` on
+our own PRs** — it cannot tell agent branches apart from a person. My reviews are therefore posted
+as PR comments, and "senior-dev has not requested changes" is a thing I assert in the board, not a
+GitHub state anyone can query. infra owns `build.md`: say so explicitly, and do not let anyone read
+an unblocked PR as approved.
+
 ## Measured facts I verified myself (for task.md §3 — core-meta owns the edit, see REV-19)
 
 Computed from `tests/fixtures/exiftool/<game>.json` with exiftool's own output; UTC-normalised
