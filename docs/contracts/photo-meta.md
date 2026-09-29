@@ -1,0 +1,94 @@
+# Contract: PhotoMeta & scanning
+
+- **Owner:** core-meta
+- **Consumers:** core-batch, core-store, pipeline, app-logic, ui
+- **Version:** v0.1 (draft; frozen as v1.0 at the end of wave 1)
+
+## Types (Rust, exported to Swift through UniFFI)
+
+```rust
+/// Stable across runs: hash of the path relative to the session folder.
+pub struct PhotoId(pub u64);
+
+pub enum FileKind { Raw(RawFormat), Jpeg, Heif, Tiff, Png }
+pub enum RawFormat { Cr3, Cr2, Crw, Arw, Sr2, Srf, Nef, Nrw, Raf, Rw2, Orf, Pef, Dng, Rwl,
+                     ThreeFr, Fff, Iiq, Srw, Dcr, Kdc, Erf, Mef, Mos, Gpr, X3f }
+
+pub struct CaptureTime {
+    pub unix_ms: i64,              // DateTimeOriginal + SubSecTimeOriginal, converted to UTC using offset if present
+    pub subsec_resolution_ms: u16, // 10 for Canon R8; 1000 if no sub-seconds
+    pub offset_minutes: Option<i16>,
+    pub source: TimeSource,        // Exif | FileModified (fallback, must be flagged)
+}
+
+pub struct ByteRange { pub offset: u64, pub len: u64 }
+
+pub struct EmbeddedPreview { pub range: ByteRange, pub width: u32, pub height: u32 } // JPEG bytes inside the file
+
+pub struct AfPoint { pub x: f32, pub y: f32, pub w: f32, pub h: f32, pub in_focus: bool } // normalized 0..1, sensor orientation
+pub struct AfInfo { pub area_mode: String, pub points: Vec<AfPoint> }
+
+pub struct PhotoMeta {
+    pub id: PhotoId,
+    pub rel_path: String,           // primary file (RAW if a pair)
+    pub companions: Vec<String>,    // paired JPEG/HEIF with the same base name + existing .xmp
+    pub kind: FileKind,
+    pub file_size: u64,
+    pub capture_time: Option<CaptureTime>,
+    pub shutter_count: Option<u64>,
+    pub file_number: Option<u32>,
+    pub camera_make: Option<String>,
+    pub camera_model: Option<String>,
+    pub camera_serial: Option<String>,
+    pub lens_model: Option<String>,
+    pub focal_length_mm: Option<f32>,
+    pub exposure_time_s: Option<f32>,
+    pub f_number: Option<f32>,
+    pub iso: Option<u32>,
+    pub exposure_comp_ev: Option<f32>,
+    pub metering_mode: Option<String>,
+    pub drive_mode: Option<String>,
+    pub shutter_mode: Option<String>,
+    pub orientation: u8,            // EXIF 1..8
+    pub width: u32,
+    pub height: u32,                // sensor orientation, before applying orientation
+    pub af: Option<AfInfo>,
+    pub preview: Option<EmbeddedPreview>,
+    pub warnings: Vec<String>,      // non-fatal parse issues
+}
+
+pub struct Skipped { pub rel_path: String, pub reason: String }
+pub struct ScanResult { pub photos: Vec<PhotoMeta>, pub skipped: Vec<Skipped> }
+```
+
+## Functions
+
+```rust
+/// Parallel, reads headers only. Must never read whole files.
+pub fn scan_folder(folder: &Path) -> Result<ScanResult, ScanError>;
+
+/// Used by the pipeline when core-meta can't parse a file: Swift passes ImageIO's properties in.
+pub fn meta_from_imageio(rel_path: &str, props: ImageIoProps) -> PhotoMeta;
+```
+
+## Guarantees
+
+- `scan_folder` on 1,500 Canon R8 CR3 files takes < 3 s on an M1 Pro (internal SSD).
+- `photos` is **not** sorted in any meaningful order; ordering belongs to core-batch.
+- Pairing: files with the same base name form one `PhotoMeta`. RAW is primary; JPEG/HEIF go into
+  `companions`.
+- A file that can't be parsed shows up in `skipped` with a reason. It never panics and never aborts
+  the scan.
+
+## Fixtures for consumers (until the real parser lands)
+
+- `tests/fixtures/meta/<game>.json`: a `Vec<PhotoMeta>` in JSON, generated from exiftool by
+  core-batch's adapter (`firstcut dump-meta --from-exiftool`). Field names match this struct exactly.
+
+## Proposed changes
+
+(none)
+
+## Changelog
+
+- v0.1: initial draft.

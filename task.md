@@ -7,6 +7,24 @@
 **Status (2026-09-29): planning.** The plan is agreed; **no app code has been written yet, and coding
 does not start until the owner gives the go-ahead.** The next step is M0's remaining setup (§14).
 
+**Work is split across 8 parallel agents.** Roster, protocol, contracts, and live status are in
+[`docs/`](docs/README.md). Each agent ticks only the boxes in the sections it owns:
+
+| task.md section | Owning agent(s) |
+| --- | --- |
+| §3 Measured facts | core-meta, pipeline (add measurements) |
+| §5 Batching | core-batch |
+| §6 Rating modes | app-logic (rules), core-store (storage/XMP), ui (visuals) |
+| §7.1–7.3 Pipeline & performance | pipeline (qa measures §7.3) |
+| §7.4 Metadata scan, §8 Formats | core-meta |
+| §9.1–9.3, 9.5, 9.6, 9.8 UI | ui (zoom/overlays in §9.2: pipeline; settings model: app-logic) |
+| §9.4 Batch navigation, §10 Shortcuts | app-logic |
+| §9.7 Finish Cull | app-logic (flow), core-store (file ops), ui (sheet) |
+| §11 Session & persistence | core-store |
+| §12 Testing | qa (each agent writes unit tests for its own code) |
+| §13 Build, CI & distribution | infra |
+| §14 Milestones | whoever owns the item; infra for M0/M8 |
+
 ---
 
 ## 1. What Firstcut is

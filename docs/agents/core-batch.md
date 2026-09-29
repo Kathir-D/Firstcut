@@ -1,0 +1,104 @@
+# Agent: core-batch
+
+> **Charter.** Fixed; edit only with the owner's approval. The **Live status** section at the bottom is
+> yours to update. Protocol: [docs/README.md](../README.md#protocol-every-agent-follows-this).
+
+## Mission
+
+Turn a shoot into correct bursts. This is the heart of the app: a wrong merge hides photos, a wrong split slows culling.
+
+## End goal (definition of done for this agent)
+
+`order()` and `batch()` reach ≥ 98% boundary F1 and zero merges of clearly different plays against visually verified ground truth for all four test games; deterministic; < 2 s for 1,500 files; unvisited batches refine with visual signatures.
+
+**Done means:** `firstcut eval` ≥ 98% F1 on all four games in CI (from the committed dumps); qa signed off on the ground truth; timing recorded.
+
+## Owns (only you edit these)
+
+`core/firstcut-core/src/order/`, `src/batch/`, `core/firstcut-cli/` (the CLI crate), `tests/fixtures/meta/`, `tests/fixtures/ground-truth/`
+
+## Does NOT own
+
+Metadata parsing (core-meta), computing VisualSig from pixels in the app (pipeline), persistence of batches (core-store).
+
+## task.md sections to read
+
+§3 Measured facts, §5 Batching (all), §11 rollover fixture, §12 ground-truth testing
+
+## Contracts
+
+- **Owns:** [batching.md](../contracts/batching.md)
+- **Consumes:** photo-meta.md (use your exiftool adapter until core-meta's parser lands, so you're never blocked)
+- **Provides to others:** `order()`, `batch()`, `visual_sig()` reference implementation, the `firstcut` CLI (`dump-meta`, `batch`, `contact-sheet`, `eval`), meta JSON fixtures for everyone's mocks
+
+## Who the other agents are
+
+| Agent | What they do | Talk to them about |
+| --- | --- | --- |
+| infra | Build, UniFFI bridge, CI, releases, Homebrew, README | Exporting your types, build breaks, CI |
+| core-meta | Metadata parsing for every format | `PhotoMeta` fields |
+| core-batch | Ordering, batching, ground truth, CLI | `Batch`, `VisualSig`, fixtures |
+| core-store | Session DB, XMP, undo, finish file ops | `Session` API |
+| pipeline | Decode, cache, prefetch, viewer layer, zoom | `ImageProvider`, performance |
+| app-logic | State model, commands, keymap, rules | `AppModel`, `Command` |
+| ui | Every screen, Liquid Glass, Finder look | Layout, visuals |
+| qa | Tests, perf baselines, bugs, sign-off | Test hooks, bug reports |
+
+## Deliverables
+
+- [ ] **Wave 1**: freeze batching.md at v1.0 (confirm VisualSig with pipeline, Batch with core-store/app-logic).
+- [ ] **Wave 1**: `firstcut dump-meta --from-exiftool <folder>` → `tests/fixtures/meta/<game>.json` for all four games (**other agents' mocks depend on this, so do it first**).
+- [ ] **Wave 1**: `order()`, handling missing sub-seconds, shutter-count ties, multiple bodies, and file-name rollover (synthetic fixture `IMG_9998 → IMG_0002`).
+- [ ] **Wave 1**: metadata-only `batch()` per task.md §5.3; `firstcut batch <folder>` prints batches.
+- [ ] **Wave 2**: `firstcut contact-sheet <folder> --out <dir>`: one image per batch plus boundary pairs in the ambiguous zone, for **visual** review.
+- [ ] **Wave 2**: ground truth for all four games in `tests/fixtures/ground-truth/<game>.json`, built by actually looking at the contact sheets (with extra care on `IMG_6117–6164` in Game1JENKS). qa independently spot-checks it.
+- [ ] **Wave 2**: `firstcut eval`: precision/recall/F1, wrong merges, wrong splits; a CI test on the committed meta dumps.
+- [ ] **Wave 3**: `visual_sig()` reference + two-phase refinement with frozen (visited) batches; F1 ≥ 98% with sigs; decide single-frame grouping (task.md §15) from the data and record why.
+- [ ] **Wave 4**: tuning; record final thresholds and scores in task.md §5.
+
+## Kickoff prompt
+
+Paste this to start a session for this agent:
+
+```
+You are the "core-batch" agent for Firstcut (~/Documents/projects/Firstcut).
+Read, in order: docs/README.md, docs/agents/core-batch.md (your charter + status), docs/contracts/build.md,
+the contracts listed under "Contracts" in your file, the task.md sections listed in your file, and the
+"Requests to others" sections of every other file in docs/agents/.
+Work only in your own worktree (../Firstcut-wt/core-batch, branch agent/core-batch) and only on the paths you own.
+Pick the next unchecked deliverable, do it, then update your Live status, tick task.md boxes you own,
+commit, and push. Ask other agents for anything you need through requests, never by editing their files.
+```
+
+---
+
+## Live status
+
+_Last updated: — (not started)_
+
+### Current focus
+
+Not started. Waiting for the owner's go-ahead.
+
+### Done log
+
+| Date | What | Commit |
+| --- | --- | --- |
+
+### Blockers
+
+None.
+
+### Requests to others
+
+| ID | To | Need | Why | Status |
+| --- | --- | --- | --- | --- |
+
+### Incoming requests
+
+| ID | From | Response | Status |
+| --- | --- | --- | --- |
+
+### Notes for other agents
+
+(Anything others should know: gotchas, measurements, decisions made inside your area.)
