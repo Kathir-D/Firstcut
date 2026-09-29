@@ -91,10 +91,10 @@ both are the last thing standing between the contracts and an assertable end-goa
 | Date | What | Commit |
 | --- | --- | --- |
 | 2026-09-29 | Wave-1 harness: `FirstcutTestSupport.swift` (env + games + fixtures + skip helpers), `FixtureHarnessTests`, `PerformanceHarnessTests`. 11 tests green. Deleted the two placeholder tests. | `qa: wave-1 test harness, fixture loader and perf baseline format` |
-| 2026-09-29 | `docs/qa/perf-baselines.md` — §7.3 metric set, 10% regression rule, empty-baseline tables, machine + quiet-run rules | same |
-| 2026-09-29 | `docs/qa/qa-checklist.md` — 13 sections covering §9, §12 and §9.7 safety | same |
-| 2026-09-29 | `docs/qa/bugs.md` — severity model, BUG-1 (`AFPointsInFocus`), BUG-2 (test build config) | same |
-| 2026-09-29 | Contract testability pass over all six contracts → REQ-qa-1 … REQ-qa-6 | same |
+| 2026-09-29 | `docs/qa/perf-baselines.md` — §7.3 metric set, 10% regression rule, empty-baseline tables, machine + quiet-run rules | `401a54b` |
+| 2026-09-29 | `docs/qa/qa-checklist.md` — 13 sections covering §9, §12 and §9.7 safety | `401a54b` |
+| 2026-09-29 | `docs/qa/bugs.md` — severity model, BUG-1 (`AFPointsInFocus`), BUG-2 (test build config) | `401a54b` |
+| 2026-09-29 | Contract testability pass over all six contracts → REQ-qa-1 … REQ-qa-6 | `401a54b` |
 
 ### Measurements taken this session
 
