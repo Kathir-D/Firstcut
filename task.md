@@ -7,11 +7,122 @@
 **Status (2026-09-29): planning.** The plan is agreed; **no app code has been written yet, and coding
 does not start until the owner gives the go-ahead.** The next step is M0's remaining setup (§14).
 
-**Work is split across 8 parallel agents.** Roster, protocol, contracts, and live status are in
-[`docs/`](docs/README.md). Each agent ticks only the boxes in the sections it owns:
+**Work is split across 9 parallel agents.** How they're organized, the rules they follow, and the
+schedule are in [§0](#0-team-protocol--schedule) below. Their charters, live status, contracts, and the
+senior dev's review board live in [`docs/`](docs/).
+
+---
+
+## 0. Team, protocol & schedule
+
+> Every agent reads this section at the start of every work session.
+
+### 0.1 Roster
+
+| Agent | Mission | End goal (done when…) | Owns | Charter + status |
+| --- | --- | --- | --- | --- |
+| **senior-dev** | Technical lead and reviewer for everything | Every merged change has been reviewed; no open P0/P1 findings at any wave gate; contracts are consistent; v0.1.0 signed off | `docs/review.md`, `docs/agents/senior-dev.md` | [docs/agents/senior-dev.md](docs/agents/senior-dev.md) |
+| **infra** | Build system, Rust↔Swift bridge, CI, releases, Homebrew, README | `scripts/build-app.sh` produces a signed `dist/Firstcut.app` with the Rust core; CI green; a `v*` tag publishes the zip and updates the Homebrew cask | `core/Cargo.toml`, `core/firstcut-core/src/lib.rs` + `ffi.rs`, `project.yml`, `scripts/`, `.github/`, `Casks/`, `VERSION`, `README.md`, `LICENSE`, dotfiles | [docs/agents/infra.md](docs/agents/infra.md) |
+| **core-meta** | Read every file's metadata fast and correctly | `scan_folder()` returns a complete `PhotoMeta` for all four test games in < 3 s, matching exiftool on every field; every §8 format handled | `core/firstcut-core/src/{scan,meta,formats}/`, `tests/fixtures/headers/` | [docs/agents/core-meta.md](docs/agents/core-meta.md) |
+| **core-batch** | Turn photos into correct bursts | ≥ 98% boundary F1 against visually verified ground truth for all four games; deterministic; < 2 s for 1,500 files | `core/firstcut-core/src/{order,batch}/`, `core/firstcut-cli/`, `tests/fixtures/{meta,ground-truth}/` | [docs/agents/core-batch.md](docs/agents/core-batch.md) |
+| **core-store** | Persist everything safely | Session DB, XMP sidecars, undo/redo, resume, and Finish Cull file ops all work, survive crashes, never touch originals | `core/firstcut-core/src/{store,xmp,fileops}/`, `src/session.rs` | [docs/agents/core-store.md](docs/agents/core-store.md) |
+| **pipeline** | Zero-wait decoding and display | Holding → through a whole game never misses the cache in the previous/current/next batch; every §7.3 target met and measured | `App/Sources/{Pipeline,Render}/` | [docs/agents/pipeline.md](docs/agents/pipeline.md) |
+| **app-logic** | State, commands, keymap, rating rules | Every command works end to end through `AppModel` with undo, both rating modes, auto-advance, remappable keys, all unit-tested | `App/Sources/{Session,Input,Settings/Model}/`, `App/Resources/DefaultKeymap.json` | [docs/agents/app-logic.md](docs/agents/app-logic.md) |
+| **ui** | Finder look with Liquid Glass | Every §9 screen exists, driven by `AppModel`, and passes a side-by-side check with Finder on macOS 26 and 15 | `App/Sources/{App,Views,Settings/Views}/`, `App/Resources/Assets.xcassets`, `docs/ui/` | [docs/agents/ui.md](docs/agents/ui.md) |
+| **qa** | Independent proof it works | Integration, performance, and stress suites pass for all four games in both modes; baselines recorded; no open P0/P1 bugs | `App/Tests/{Integration,Performance}/`, `docs/qa/` | [docs/agents/qa.md](docs/agents/qa.md) |
+
+### 0.2 How the agents fit together
+
+```
+              core-meta ──PhotoMeta──▶ core-batch ──Batch──┐
+                  │                                        ▼
+                  └──────PhotoMeta──────────────────▶ core-store (Session API)
+                                                           │  UniFFI (built by infra)
+                                                           ▼
+ pipeline ◀──focus / viewport── app-logic ◀──────── Session API
+    │  VisualSig (thumbnail hashes) ──▶ core-batch (through the Session API)
+    └──images──▶ ui ◀──state + commands── app-logic
+
+ qa: tests everyone.   infra: builds and ships everyone.   senior-dev: reviews everyone.
+```
+
+### 0.3 Contracts
+
+A contract is the agreed interface between agents. Each has **one owner**, the only agent allowed to
+edit it. Consumers build against it with a mock until the real implementation lands, so nobody waits.
+
+| Contract | Owner | Consumers |
+| --- | --- | --- |
+| [build.md](docs/contracts/build.md): repo layout, names, build/test commands, git workflow | infra | everyone |
+| [photo-meta.md](docs/contracts/photo-meta.md): `PhotoMeta`, `scan_folder()` | core-meta | core-batch, core-store, pipeline, app-logic, ui |
+| [batching.md](docs/contracts/batching.md): `order()`, `batch()`, `Batch`, `VisualSig` | core-batch | core-store, pipeline, app-logic |
+| [session-api.md](docs/contracts/session-api.md): the Swift-visible `Session` | core-store | app-logic, qa |
+| [pipeline-api.md](docs/contracts/pipeline-api.md): `ImageProvider`, viewer layer, stats | pipeline | app-logic, ui, qa |
+| [app-model.md](docs/contracts/app-model.md): `AppModel`, `Command`, keymap | app-logic | ui, qa |
+
+senior-dev approves every contract before it's frozen at v1.0 and reviews every breaking change.
+
+### 0.4 Protocol
+
+**Start of every work session**
+1. Read this §0, your own `docs/agents/<you>.md`, and [build.md](docs/contracts/build.md).
+2. Read **[`docs/review.md`](docs/review.md)**, the senior dev's review board. Fix every open item
+   addressed to you or to "All agents" before starting new work, highest severity first.
+3. Read the **Requests to others** section of every file in `docs/agents/` for anything addressed to you.
+4. Check the changelog of each contract you consume.
+
+**What you may edit**
+- ✅ The **Live status** section of your own `docs/agents/<you>.md`. The charter above it changes only
+  with the owner's approval.
+- ✅ Contracts you own, and code/test paths you own (roster **Owns** column).
+- ✅ `task.md`: only to tick boxes for work you own (see §0.6).
+- ❌ Everything else, including `docs/review.md` (senior-dev only). If you need a change elsewhere,
+  make a request.
+
+**Requests between agents**
+- Add a row under **Requests to others** in *your own* file: `REQ-<you>-<n>` · to · need · why · `open`.
+- The receiver copies the ID into its **Incoming requests** with a response (`accepted` /
+  `done in <commit>` / `declined: reason`); the requester marks it `closed`.
+- Blocked? Note it under **Blockers** with the ID and work on something else against a mock.
+
+**Review findings from senior-dev**
+- Findings live in `docs/review.md` as `REV-<n>` with a severity:
+  **P0** blocker (stop and fix now; blocks merges in that area) · **P1** must fix before the wave gate ·
+  **P2** should fix · **P3** nit/suggestion.
+- To respond, add the `REV-<n>` to your **Incoming requests** with `fixed in <commit>` or
+  `disputed: reason`. senior-dev verifies and closes it in `review.md`.
+- If you disagree, say why; don't silently skip it. Unresolved disputes go to the owner, who decides.
+
+**Contract changes**
+- Additive: the owner edits the contract, adds a changelog line, ships.
+- Breaking: the owner proposes it under **Proposed changes**; every consumer and senior-dev acknowledge
+  it; then it ships with a changelog entry. Versions are `vMAJOR.MINOR`.
+
+**End of every work session**
+- Update your Live status (focus, done log with commit hashes, blockers, requests, REV responses).
+- Tick your boxes in `task.md`; commit and push (git workflow in [build.md](docs/contracts/build.md)).
+
+**Definition of done for any task**
+- Code + tests merged to `main`, CI green, measurements recorded where asked, status updated, contract
+  updated if its surface changed, and **reviewed by senior-dev with no open P0/P1 on it**.
+
+### 0.5 Schedule
+
+Every agent has real work from day one, using mocks where needed. **A wave ends only when senior-dev
+signs it off in `docs/review.md`** (no open P0/P1 findings).
+
+| Wave | Goal | infra | core-meta | core-batch | core-store | pipeline | app-logic | ui | qa | senior-dev |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **1. Foundations** | Everything compiles; contracts frozen at v1.0 | Workspace, UniFFI "hello", XcodeGen, scripts, CI | CR3 parser + `scan_folder` | exiftool-JSON dumps, `order()`, first `batch()` | DB schema, XMP read/write | ImageIO decode + cache spike, benchmarks | `AppModel` + commands on mock data | Window, toolbar, viewer, filmstrip on mock data | Harness, fixture loader, baseline format | Review every contract draft; approve v1.0 freezes; review skeletons |
+| **2. Real data** | CLI and minimal app run on the test games | Link the real core | Canon fields match exiftool | Ground truth, F1 ≥ 98% | Session API, undo, resume | Scheduler, memory budget, IOSurface renderer | Wire real Session + pipeline | Rating visuals, rings, HUD, batch nav | Stress test, first perf run | Review integration seams, perf numbers, data safety |
+| **3. Features** | Feature complete | Release pipeline, Homebrew cask | Sony, then all formats | Visual-hash refinement | Finish planner/executor/undo | Pinch/click zoom, zoom lock, overlays | Finish flow, settings, keymap editor | Info panel, grid, compare, Finish sheet, Settings, welcome | Full-cull integration tests | Review features against task.md; UX consistency |
+| **4. Polish & ship** | v0.1.0 | Screenshots, release | Fuzzing | Tuning | Crash tests | Perf tuning | Edge cases | Liquid Glass pass, macOS 15, accessibility, icon | Final sign-off | Final architecture + release review |
+
+### 0.6 Which agent ticks which task.md section
 
 | task.md section | Owning agent(s) |
 | --- | --- |
+| §0 Team, protocol & schedule | owner only (senior-dev may propose changes) |
 | §3 Measured facts | core-meta, pipeline (add measurements) |
 | §5 Batching | core-batch |
 | §6 Rating modes | app-logic (rules), core-store (storage/XMP), ui (visuals) |
@@ -23,7 +134,18 @@ does not start until the owner gives the go-ahead.** The next step is M0's remai
 | §11 Session & persistence | core-store |
 | §12 Testing | qa (each agent writes unit tests for its own code) |
 | §13 Build, CI & distribution | infra |
-| §14 Milestones | whoever owns the item; infra for M0/M8 |
+| §14 Milestones | whoever owns the item; infra for M0/M8; senior-dev signs off each milestone |
+
+### 0.7 docs/ layout
+
+```
+docs/
+├── review.md           ← senior-dev's review board: findings per agent (every agent reads it)
+├── agents/<agent>.md   ← charter (fixed) + live status (each agent's own log)
+├── contracts/*.md      ← interfaces between agents, one owner each
+├── qa/                 ← qa: perf baselines, QA checklist, bug list
+└── ui/                 ← ui: Finder reference screenshots, visual-check notes
+```
 
 ---
 

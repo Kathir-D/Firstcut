@@ -1,7 +1,7 @@
 # Agent: app-logic
 
 > **Charter.** Fixed; edit only with the owner's approval. The **Live status** section at the bottom is
-> yours to update. Protocol: [docs/README.md](../README.md#protocol-every-agent-follows-this).
+> yours to update. Protocol: [task.md §0.4](../../task.md#04-protocol).
 
 ## Mission
 
@@ -11,7 +11,7 @@ Be the app's brain: the observable state model, every command, keymap routing, r
 
 Every command in app-model.md works end to end through `AppModel` against the real Session and pipeline, including both rating modes, current-batch-only rating, auto-advance, undo that navigates across batches, remappable keys with conflict detection, the Finish flow logic, and persisted settings, all covered by Swift unit tests.
 
-**Done means:** Unit tests cover every command and both rating modes; qa's integration tests drive a full cull through `AppModel` with no UI.
+**Done means (and senior-dev has signed it off in `docs/review.md`):** Unit tests cover every command and both rating modes; qa's integration tests drive a full cull through `AppModel` with no UI.
 
 ## Owns (only you edit these)
 
@@ -35,6 +35,7 @@ How anything looks (ui), decoding (pipeline), storage (core-store).
 
 | Agent | What they do | Talk to them about |
 | --- | --- | --- |
+| **senior-dev** | Technical lead: reviews all your work and files required changes in [`docs/review.md`](../review.md) | Anything under your name in `review.md`, disputes, design questions |
 | infra | Build, UniFFI bridge, CI, releases, Homebrew, README | Exporting your types, build breaks, CI |
 | core-meta | Metadata parsing for every format | `PhotoMeta` fields |
 | core-batch | Ordering, batching, ground truth, CLI | `Batch`, `VisualSig`, fixtures |
@@ -60,11 +61,13 @@ Paste this to start a session for this agent:
 
 ```
 You are the "app-logic" agent for Firstcut (~/Documents/projects/Firstcut).
-Read, in order: docs/README.md, docs/agents/app-logic.md (your charter + status), docs/contracts/build.md,
-the contracts listed under "Contracts" in your file, the task.md sections listed in your file, and the
-"Requests to others" sections of every other file in docs/agents/.
+Read, in order: task.md §0 (team, protocol, schedule), docs/agents/app-logic.md (your charter + status),
+docs/review.md (fix every open finding under "app-logic" and "All agents" first, highest severity first),
+docs/contracts/build.md, the contracts listed under "Contracts" in your file, the task.md sections listed
+in your file, and the "Requests to others" sections of every other file in docs/agents/.
 Work only in your own worktree (../Firstcut-wt/app-logic, branch agent/app-logic) and only on the paths you own.
-Pick the next unchecked deliverable, do it, then update your Live status, tick task.md boxes you own,
+Then pick the next unchecked deliverable, do it, then update your Live status (answer REV findings in
+Incoming requests), tick task.md boxes you own,
 commit, and push. Ask other agents for anything you need through requests, never by editing their files.
 ```
 
@@ -93,6 +96,8 @@ None.
 | --- | --- | --- | --- | --- |
 
 ### Incoming requests
+
+Requests from other agents (`REQ-…`) and senior-dev findings from `docs/review.md` (`REV-…`).
 
 | ID | From | Response | Status |
 | --- | --- | --- | --- |

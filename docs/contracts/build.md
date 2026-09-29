@@ -37,7 +37,7 @@ Firstcut/
 ├── tests/fixtures/           # core-batch (ground truth, metadata dumps); core-meta (header byte fixtures in fixtures/headers/)
 ├── Casks/  .github/  project.yml  VERSION  README.md  LICENSE   # infra
 ├── task.md                   # everyone may tick their own boxes
-└── docs/                     # see docs/README.md
+└── docs/                     # see task.md §0.7
 ```
 
 ## Names
@@ -76,7 +76,7 @@ Firstcut/
 - **Stay current**: `git merge origin/main` into your branch. Don't rebase shared branches.
   **Never force-push.**
 - **Landing work**: open a PR from `agent/<agent>` to `main` (`gh pr create`) and merge it once CI is
-  green. Ownership is disjoint, so conflicts should be rare. If you hit one in a file you don't own,
+  green and senior-dev hasn't requested changes (a P0 finding in your area blocks merging). Ownership is disjoint, so conflicts should be rare. If you hit one in a file you don't own,
   stop and file a request rather than resolving it yourself.
 - Commit messages: `<agent>: <what>` (for example `core-batch: adaptive frame interval`).
 
