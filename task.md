@@ -761,15 +761,16 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 - [x] On PR/push: Rust fmt/clippy/test, Swift build + unit tests, batching regression on metadata dumps
       (the regression tests are core-batch's; CI just runs `cargo test`, so they are included the
       moment they land).
-- [ ] On tag `v*`: `scripts/build-app.sh` builds Release, stamps `VERSION` + an increasing build number,
-      **ad-hoc signs** (`codesign --force --deep -s -`), zips `Firstcut-<version>.zip`, attaches it to a
-      GitHub Release with its SHA-256.
+- [x] On tag `v*`: `scripts/build-app.sh` builds Release, stamps `VERSION` + an increasing build number,
+      **ad-hoc signs** (`codesign --force --sign - --timestamp=none`), zips `Firstcut-<version>.zip`
+      (`ditto -c -k --keepParent`, so the executable bit and the bundle signature survive), attaches it
+      to a GitHub Release with its SHA-256. Rehearsed on a test tag; see `docs/agents/infra.md`.
 
 ### Distribution
 
 Same setup as [Sonar](https://github.com/Kathir-D/Sonar#install): three install paths in the README.
 
-- [ ] **Homebrew (recommended)**: add cask `Casks/firstcut.rb` to the existing tap
+- [x] **Homebrew (recommended)**: add cask `Casks/firstcut.rb` to the existing tap
       [`Kathir-D/homebrew-tap`](https://github.com/Kathir-D/homebrew-tap) (it already holds `sonar.rb`;
       reuse that cask's structure):
       `brew tap Kathir-D/tap && brew trust Kathir-D/tap && brew install --cask firstcut`.
@@ -780,12 +781,16 @@ Same setup as [Sonar](https://github.com/Kathir-D/Sonar#install): three install 
     the SHA-256), so the app opens with no Gatekeeper prompt. Homebrew's `--no-quarantine` flag was
     removed in 7.x.
   - Release workflow bumps the cask version + sha256 automatically; `brew upgrade --cask firstcut`
-    updates it.
-- [ ] **Direct download (curl)**: `curl -fLO …/Firstcut-<version>.zip`, unzip, move to
+    updates it. The cask lives in this repo with a `REPLACE_WITH_RELEASE_SHA256` placeholder and the
+    release stamps it, so the tap is never out of sync with an artifact.
+  - Pushing the cask into the tap needs a `HOMEBREW_TAP_TOKEN` secret (the workflow's own
+    `GITHUB_TOKEN` cannot write to another repository). Until that secret exists the release warns
+    and attaches the cask to the release instead; the owner has to add the secret (REQ-infra-5).
+- [x] **Direct download (curl)**: `curl -fLO …/Firstcut-<version>.zip`, unzip, move to
       `/Applications`. curl doesn't set quarantine so it usually opens without a prompt; a browser
       download does, and needs one **System Settings → Privacy & Security → Open Anyway**.
-- [ ] **Build from source**: `git clone`, `scripts/build-app.sh`, `open dist/Firstcut.app`; or open the
-      generated Xcode project and run the `Firstcut` scheme.
+- [x] **Build from source**: `git clone`, `scripts/build-app.sh`, `open dist/Firstcut.app`; or open the
+      generated Xcode project and run the `Firstcut` scheme. Verified from a clean clone.
 - [ ] Optional later: in-app updates via **Sparkle** (EdDSA-signed appcast works without an Apple
       Developer account).
 - [ ] Keep the app non-sandboxed; store folder bookmarks anyway in case of a future sandboxed build.
@@ -872,6 +877,8 @@ Each milestone ends with something runnable and measured.
 ### M8 — Release
 
 - [ ] CI release pipeline, zip release, `firstcut.rb` in the Homebrew tap, README screenshots, v0.1.0.
+      (Pipeline, zip and cask done and rehearsed on a test tag; left open for the tap secret, the
+      README screenshots from ui, and the v0.1.0 tag itself.)
 
 ---
 
