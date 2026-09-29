@@ -1,7 +1,13 @@
 // Owner: ui.
 //
 // Finder gallery layout (task.md §9): large viewer, filmstrip of the current batch underneath,
-// floating HUD, right-hand info inspector. The window chrome lives in App/ToolbarController.swift.
+// floating HUD, right-hand info inspector. The window chrome lives in App/Toolbar.
+//
+// REV-75: the phases are mutually exclusive *by construction*. The culling chrome used to be a
+// ZStack with the welcome panel as a `.background()`, so the filmstrip, HUD and info panel stayed
+// in the hierarchy while the welcome panel was also on screen and four cells were unreachable. The
+// switch below is exhaustive on `phase`, so adding a case to `CullPhase` is a compile error until
+// this view decides where that phase renders.
 
 import SwiftUI
 
@@ -9,6 +15,23 @@ struct RootView: View {
   let state: any CullViewState
 
   var body: some View {
+    Group {
+      switch state.phase {
+      case .welcome:
+        WelcomeScreen(state: state)
+      case .loading(let progress):
+        LoadingScreen(progress: progress)
+      case .culling, .finishing:
+        cullingLayout
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Appearance.windowBackground)
+  }
+
+  /// Only reachable in `.culling` and `.finishing`, so nothing here can composite over the welcome
+  /// panel: the two hierarchies are separate branches of the switch above.
+  private var cullingLayout: some View {
     HStack(spacing: 0) {
       ZStack(alignment: .bottom) {
         ViewerArea(state: state)
@@ -31,7 +54,6 @@ struct RootView: View {
           .transition(.move(edge: .trailing).combined(with: .opacity))
       }
     }
-    .background(Appearance.windowBackground)
     .animation(.easeInOut(duration: 0.18), value: state.isInfoPanelVisible)
   }
 

@@ -31,6 +31,10 @@ protocol CullViewState: AnyObject {
   func send(_ action: CullAction)
 }
 
+/// A photo as the views consume it. REV-53 and REV-69: `tier` and `isKeep` are **values the model
+/// supplies**, never derived here. The rating-mode mapping is core-store's single pure function
+/// (session-api.md, REV-69) and app-logic's job to call; a view that recomputed it from
+/// `stars`/`keep` would disagree with the finish summary the moment a mode mapping changed.
 struct CullPhoto: Identifiable, Equatable {
   var id: PhotoID
   var fileName: String
@@ -38,15 +42,6 @@ struct CullPhoto: Identifiable, Equatable {
   var rating: Rating
   var tier: CullTier
   var isKeep: Bool
-
-  init(meta: PhotoMeta, rating: Rating = Rating()) {
-    id = meta.id
-    fileName = (meta.relPath as NSString).lastPathComponent
-    self.meta = meta
-    self.rating = rating
-    tier = CullTier(rating: rating)
-    isKeep = rating.keep || rating.stars >= 4
-  }
 }
 
 struct CullBatch: Identifiable, Equatable {
@@ -57,26 +52,13 @@ struct CullBatch: Identifiable, Equatable {
   var isProvisional: Bool
 }
 
+/// The tier a photo is in, in the current rating mode. The **model** produces this; see `CullPhoto`.
 enum CullTier: String, CaseIterable, Sendable {
   case keep
   case good
   case maybe
   case unrated
   case rejected
-
-  init(rating: Rating) {
-    if rating.flag == .reject {
-      self = .rejected
-    } else if rating.keep || rating.stars >= 4 {
-      self = .keep
-    } else if rating.stars == 3 {
-      self = .good
-    } else if rating.stars >= 1 {
-      self = .maybe
-    } else {
-      self = .unrated
-    }
-  }
 
   var displayName: String {
     switch self {

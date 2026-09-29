@@ -59,22 +59,30 @@ struct PhotoFormatterTests {
 struct CullTierTests {
   @Test("Stars map to the tiers in task.md §6.1")
   func stars() {
-    #expect(CullTier(rating: Rating(stars: 5)) == .keep)
-    #expect(CullTier(rating: Rating(stars: 4)) == .keep)
-    #expect(CullTier(rating: Rating(stars: 3)) == .good)
-    #expect(CullTier(rating: Rating(stars: 2)) == .maybe)
-    #expect(CullTier(rating: Rating(stars: 1)) == .maybe)
-    #expect(CullTier(rating: Rating()) == .unrated)
+    #expect(RatingTiers.tier(for: Rating(stars: 5), mode: .stars) == .keep)
+    #expect(RatingTiers.tier(for: Rating(stars: 4), mode: .stars) == .keep)
+    #expect(RatingTiers.tier(for: Rating(stars: 3), mode: .stars) == .good)
+    #expect(RatingTiers.tier(for: Rating(stars: 2), mode: .stars) == .maybe)
+    #expect(RatingTiers.tier(for: Rating(stars: 1), mode: .stars) == .maybe)
+    #expect(RatingTiers.tier(for: Rating(), mode: .stars) == .unrated)
   }
 
   @Test("A reject flag wins over the star count")
   func reject() {
-    #expect(CullTier(rating: Rating(stars: 5, flag: .reject)) == .rejected)
+    #expect(RatingTiers.tier(for: Rating(stars: 5, flag: .reject), mode: .stars) == .rejected)
   }
 
-  @Test("Keep mode: keep and not keep only")
+  @Test("Keep mode: keep and unrated only, no stars tiers")
   func keepMode() {
-    #expect(CullTier(rating: Rating(keep: true)) == .keep)
-    #expect(CullTier(rating: Rating()) == .unrated)
+    #expect(RatingTiers.tier(for: Rating(keep: true), mode: .keep) == .keep)
+    #expect(RatingTiers.tier(for: Rating(), mode: .keep) == .unrated)
+    #expect(RatingTiers.tier(for: Rating(stars: 3), mode: .keep) == .unrated)
+  }
+
+  @Test("isKeep follows the stored keep flag or a full star rating")
+  func isKeep() {
+    #expect(RatingTiers.isKeep(Rating(keep: true)) == true)
+    #expect(RatingTiers.isKeep(Rating(stars: 4)) == true)
+    #expect(RatingTiers.isKeep(Rating(stars: 3)) == false)
   }
 }

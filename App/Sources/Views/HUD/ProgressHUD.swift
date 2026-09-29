@@ -50,33 +50,3 @@ struct ProgressHUD: View {
     .fixedSize()
   }
 }
-
-struct PhaseOverlay: View {
-  let phase: CullPhase
-
-  var body: some View {
-    switch phase {
-    case .culling, .finishing:
-      Color.clear
-    case .loading(let progress):
-      ZStack {
-        Appearance.viewerBackground(darkness: 0.13)
-        VStack(spacing: 12) {
-          ProgressView(value: progress)
-            .progressViewStyle(.linear)
-            .frame(width: 260)
-          Text("Reading \(Int(progress * 100))%")
-            .font(.system(size: 12))
-            .foregroundStyle(Appearance.secondaryLabel)
-        }
-      }
-      .accessibilityElement(children: .combine)
-      .accessibilityLabel("Loading \(Int(progress * 100)) percent")
-    case .welcome:
-      ZStack {
-        Appearance.viewerBackground(darkness: 0.13)
-        WelcomeView()
-      }
-    }
-  }
-}

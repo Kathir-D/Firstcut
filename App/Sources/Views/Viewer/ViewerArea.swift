@@ -6,20 +6,30 @@ import SwiftUI
 struct ViewerArea: View {
   let state: any CullViewState
 
+  private var aspectRatio: Double {
+    guard let meta = state.currentPhoto?.meta, meta.width > 0, meta.height > 0 else { return 1.5 }
+    let turned = meta.orientation >= 5 && meta.orientation <= 8
+    let width = Double(turned ? meta.height : meta.width)
+    let height = Double(turned ? meta.width : meta.height)
+    return max(0.2, min(5, width / height))
+  }
+
   var body: some View {
     ZStack {
       Appearance.viewerBackground(darkness: state.viewerBackgroundDarkness)
-      if PhotoViewerHostView.layerViewFactory == nil {
+      if !PhotoViewerHostView.isRegistered {
         ViewerPlaceholder(photo: state.currentPhoto)
       }
-      PhotoViewerHost(photoID: state.currentPhoto?.id)
+      PhotoViewerHostLayer(photoID: state.currentPhoto?.id, aspectRatio: aspectRatio)
         .opacity(state.currentPhoto == nil ? 0 : 1)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(PhaseOverlay(phase: state.phase))
   }
 }
 
+/// REV-77: every string here is at least `secondaryLabel` on the near-black viewer background.
+/// The pipeline note is a temporary line, but it is the first text a reviewer reads, and dim greys
+/// are exactly what survives to release.
 struct ViewerPlaceholder: View {
   let photo: CullPhoto?
 
@@ -28,78 +38,37 @@ struct ViewerPlaceholder: View {
       if let photo {
         Text(photo.fileName)
           .font(.system(size: 15, weight: .medium))
-          .foregroundStyle(Appearance.secondaryLabel)
+          .foregroundStyle(Appearance.primaryLabel)
         Text(
           "\(photo.meta.width) × \(photo.meta.height) · \(photo.meta.cameraModel ?? "Unknown camera")"
         )
         .font(.system(size: 11))
-        .foregroundStyle(Appearance.tertiaryLabel)
+        .foregroundStyle(Appearance.secondaryLabel)
       }
       Text("Viewer layer pending from the pipeline agent")
         .font(.system(size: 11))
-        .foregroundStyle(Appearance.tertiaryLabel)
+        .foregroundStyle(Appearance.secondaryLabel)
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(photo.map { "Viewer placeholder for \($0.fileName)" } ?? "Viewer")
   }
 }
 
-struct PhotoViewerHost: NSViewRepresentable {
+/// SwiftUI wrapper around the AppKit host. Named `…Layer` so it does not collide with the
+/// `PhotoViewerHostView` class it wraps.
+struct PhotoViewerHostLayer: NSViewRepresentable {
   let photoID: PhotoID?
+  let aspectRatio: Double
 
   func makeNSView(context: Context) -> PhotoViewerHostView {
-    let view = PhotoViewerHostView()
+    let view = PhotoViewerHostView(frame: .zero)
+    view.aspectRatio = aspectRatio
     view.photoID = photoID
     return view
   }
 
   func updateNSView(_ view: PhotoViewerHostView, context: Context) {
+    view.aspectRatio = aspectRatio
     view.photoID = photoID
-  }
-}
-
-/// Hosts pipeline's `PhotoViewerLayerView` without a compile-time dependency on it. pipeline
-/// registers a factory (REQ-ui-2); until then the host stays empty and `ViewerArea` draws the
-/// placeholder.
-@MainActor
-final class PhotoViewerHostView: NSView {
-  typealias LayerViewFactory = @MainActor (PhotoID) -> NSView
-
-  nonisolated(unsafe) private static var storedFactory: LayerViewFactory?
-
-  static var layerViewFactory: LayerViewFactory? {
-    get { storedFactory }
-    set { storedFactory = newValue }
-  }
-
-  var photoID: PhotoID? {
-    didSet {
-      guard photoID != oldValue else { return }
-      rebuild()
-    }
-  }
-
-  private var current: NSView?
-
-  override init(frame frameRect: NSRect) {
-    super.init(frame: frameRect)
-    wantsLayer = true
-  }
-
-  @available(*, unavailable)
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) is not used")
-  }
-
-  private func rebuild() {
-    current?.removeFromSuperview()
-    current = nil
-    guard let id = photoID, let factory = Self.layerViewFactory else { return }
-    let view = factory(id)
-    view.frame = bounds
-    view.autoresizingMask = [.width, .height]
-    addSubview(view)
-    current = view
-    setAccessibilityLabel("Photo viewer")
   }
 }

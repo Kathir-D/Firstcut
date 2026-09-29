@@ -182,10 +182,12 @@ struct RatingSummary: View {
     HStack(spacing: 8) {
       if mode == .stars {
         HStack(spacing: 1) {
-          ForEach(0..<5, id: \.self) { index in
-            Image(systemName: index < Int(rating.stars) ? "star.fill" : "star")
+          // REV-76: exactly `stars` filled stars, no empty outlines, so the row reads as the
+          // rating rather than as a ratio. Unrated draws nothing.
+          ForEach(0..<RatingVisuals.starCount(for: rating), id: \.self) { _ in
+            Image(systemName: "star.fill")
               .font(.system(size: 10))
-              .foregroundStyle(index < Int(rating.stars) ? Color.yellow : Appearance.tertiaryLabel)
+              .foregroundStyle(Color.yellow)
           }
         }
       } else {

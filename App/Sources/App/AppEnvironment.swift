@@ -17,7 +17,13 @@ final class AppEnvironment {
   private(set) var pendingFolderURL: URL?
 
   private init() {
-    state = PreviewCullViewState()
+    let overrides = LaunchOptions.overrides
+    state = PreviewCullViewState(
+      batchCount: overrides.batchCount ?? 148,
+      seed: overrides.seed ?? 0x5eed_f1c5,
+      ratingMode: overrides.ratingMode ?? .stars,
+      startPhase: overrides.phase ?? .culling
+    )
   }
 
   func use(_ newState: any CullViewState) {

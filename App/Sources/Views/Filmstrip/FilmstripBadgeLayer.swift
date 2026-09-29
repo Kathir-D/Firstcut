@@ -12,7 +12,13 @@ enum RatingVisuals {
   }
 
   static func showsStars(_ rating: Rating) -> Bool {
-    rating.stars > 0
+    starCount(for: rating) > 0
+  }
+
+  /// REV-76: the number of stars drawn for a rating. Exactly `stars`, never padded to five, so a
+  /// 3-star photo shows three stars and reads as 3 rather than as 3-out-of-4.
+  static func starCount(for rating: Rating) -> Int {
+    min(max(Int(rating.stars), 0), 5)
   }
 
   static func showsFlag(_ rating: Rating) -> Bool {
@@ -61,14 +67,19 @@ final class FilmstripBadgeLayer: CALayer {
 
   // MARK: - Stars mode
 
+  /// REV-76: exactly `stars` filled stars, no empty outlines. Drawing five slots with the tail
+  /// outlined reads as "3 out of 4", which is the one reading that is wrong; Finder's gallery view
+  /// shows filled stars only. Rating 0 draws nothing at all.
   private func drawStars(in context: CGContext, size: CGSize) {
+    let count = RatingVisuals.starCount(for: rating)
+    guard count > 0 else { return }
+
     let inset: CGFloat = 4
     let starSize = max(5, min(9, size.height * 0.11))
     let gap = starSize * 0.3
     let originY = size.height - inset - starSize
-    let filled = Int(rating.stars)
 
-    for index in 0..<5 {
+    for index in 0..<count {
       let rect = CGRect(
         x: inset + CGFloat(index) * (starSize + gap),
         y: originY,
@@ -77,18 +88,12 @@ final class FilmstripBadgeLayer: CALayer {
       )
       let path = Self.starPath(in: rect)
       context.addPath(path)
-      if index < filled {
-        context.setFillColor(NSColor.systemYellow.cgColor)
-        context.fillPath()
-        context.addPath(path)
-        context.setStrokeColor(NSColor.black.withAlphaComponent(0.4).cgColor)
-        context.setLineWidth(0.75)
-        context.strokePath()
-      } else {
-        context.setStrokeColor(NSColor.white.withAlphaComponent(0.5).cgColor)
-        context.setLineWidth(0.75)
-        context.strokePath()
-      }
+      context.setFillColor(NSColor.systemYellow.cgColor)
+      context.fillPath()
+      context.addPath(path)
+      context.setStrokeColor(NSColor.black.withAlphaComponent(0.4).cgColor)
+      context.setLineWidth(0.75)
+      context.strokePath()
     }
   }
 

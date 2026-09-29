@@ -18,7 +18,14 @@ final class PreviewCullViewState: CullViewState {
   private(set) var currentPhotoIndex: Int = 0
   private(set) var photosInCurrentBatch: [CullPhoto] = []
   private(set) var currentPhoto: CullPhoto?
-  var ratingMode: RatingMode = .stars
+  var ratingMode: RatingMode = .stars {
+    // Switching modes re-derives every photo's tier through the same mapping the finish summary
+    // uses (REV-69), so the filmstrip, info panel and HUD cannot disagree with it.
+    didSet {
+      guard oldValue != ratingMode else { return }
+      rederiveTiers()
+    }
+  }
   var viewMode: CullViewMode = .loupe
   var isInfoPanelVisible = false
   var isHUDVisible = true
@@ -34,9 +41,15 @@ final class PreviewCullViewState: CullViewState {
   private var visited: Set<BatchID> = []
   private let startedAt = Date()
 
-  init(batchCount: Int = 148, seed: UInt64 = 0x5eed_f1c5, ratingMode: RatingMode = .stars) {
+  init(
+    batchCount: Int = 148,
+    seed: UInt64 = 0x5eed_f1c5,
+    ratingMode: RatingMode = .stars,
+    startPhase: CullPhase = .culling
+  ) {
     self.folderName = "Game1JENKS"
     self.ratingMode = ratingMode
+    phase = startPhase
     images = PreviewImageSource(seed: seed &* 31)
     build(batchCount: batchCount, seed: seed)
   }
@@ -146,7 +159,7 @@ final class PreviewCullViewState: CullViewState {
           preview: EmbeddedPreview(range: ByteRange(offset: 0, len: 0), width: 6000, height: 4000),
           warnings: []
         )
-        let photo = CullPhoto(meta: meta)
+        let photo = makePhoto(meta, rating: Rating())
         allPhotos[meta.id] = photo
         ratings[meta.id] = Rating()
         ids.append(meta.id)
@@ -171,6 +184,35 @@ final class PreviewCullViewState: CullViewState {
     go(toBatch: min(11, built.count - 1), atEnd: false)
   }
 
+  private func rederiveTiers() {
+    for (id, photo) in allPhotos {
+      var updated = photo
+      let rating = ratings[id] ?? Rating()
+      updated.rating = rating
+      updated.tier = RatingTiers.tier(for: rating, mode: ratingMode)
+      updated.isKeep = RatingTiers.isKeep(rating)
+      allPhotos[id] = updated
+    }
+    photosInCurrentBatch = batches.indices.contains(currentBatchIndex)
+      ? batches[currentBatchIndex].photoIDs.compactMap { allPhotos[$0] }
+      : []
+    currentPhoto = photosInCurrentBatch.indices.contains(currentPhotoIndex)
+      ? photosInCurrentBatch[currentPhotoIndex]
+      : nil
+    recomputeProgress()
+  }
+
+  private func makePhoto(_ meta: PhotoMeta, rating: Rating) -> CullPhoto {
+    CullPhoto(
+      id: meta.id,
+      fileName: (meta.relPath as NSString).lastPathComponent,
+      meta: meta,
+      rating: rating,
+      tier: RatingTiers.tier(for: rating, mode: ratingMode),
+      isKeep: RatingTiers.isKeep(rating)
+    )
+  }
+
   private func select(_ index: Int) {
     guard photosInCurrentBatch.indices.contains(index) else { return }
     currentPhotoIndex = index
@@ -184,8 +226,8 @@ final class PreviewCullViewState: CullViewState {
     ratings[photo.id] = rating
     var updated = photo
     updated.rating = rating
-    updated.tier = CullTier(rating: rating)
-    updated.isKeep = rating.keep || rating.stars >= 4
+    updated.tier = RatingTiers.tier(for: rating, mode: ratingMode)
+    updated.isKeep = RatingTiers.isKeep(rating)
     allPhotos[photo.id] = updated
     photosInCurrentBatch[currentPhotoIndex] = updated
     currentPhoto = updated
@@ -212,7 +254,7 @@ final class PreviewCullViewState: CullViewState {
     var maybe = 0
     var remaining = 0
     for (id, rating) in ratings {
-      switch CullTier(rating: rating) {
+      switch RatingTiers.tier(for: rating, mode: ratingMode) {
       case .keep: keeps += 1
       case .good: good += 1
       case .maybe: maybe += 1
