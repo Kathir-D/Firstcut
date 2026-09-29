@@ -40,8 +40,40 @@ public enum TestEnvironment {
         return nil
     }()
 
+    /// Set to `1` to run the tests that read the 42 GB of real RAW files.
+    ///
+    /// **They are opt-in, and the reason is that they otherwise hang the whole suite.** The test
+    /// bundle is hosted by `Firstcut.app`, a GUI app. `~/Documents/testing` is inside a
+    /// TCC-protected folder, so enumerating it from a GUI app triggers a consent prompt. The host
+    /// is ad-hoc signed and therefore a *new code identity on every rebuild*, so the prompt
+    /// reappears on every run and -- with nobody there to click Allow -- the test host blocks in
+    /// `mach_msg` indefinitely. `xcodebuild test` then dies on a timeout with no diagnostic at
+    /// all, which is exactly how this cost an hour: it presents as a slow test, not a hang.
+    ///
+    /// So anything that touches the real photos asks for this first and skips by default. Those
+    /// assertions are still real and still run -- deliberately, by a human who has granted the
+    /// folder once:
+    ///
+    ///     FIRSTCUT_TEST_PHOTOS=~/Documents/testing FIRSTCUT_ALLOW_PHOTO_TESTS=1 \
+    ///       xcodebuild ... test
+    ///
+    /// Committed fixtures are unaffected: they are read from inside the test bundle, which is not
+    /// subject to TCC. See `fixtureURL(_:)`.
+    public static let allowPhotoTestsEnvVar = "FIRSTCUT_ALLOW_PHOTO_TESTS"
+
+    /// True only when the caller has explicitly opted in to reading the real photos.
+    public static var photoTestsAllowed: Bool {
+        let raw = ProcessInfo.processInfo.environment[allowPhotoTestsEnvVar] ?? ""
+        return raw == "1" || raw.lowercased() == "true" || raw.lowercased() == "yes"
+    }
+
     /// The test photos, or nil when this machine has none. Never creates anything.
-    public static let testPhotos: URL? = {
+    ///
+    /// Nil when photo access has not been granted, deliberately: it routes the photo-dependent
+    /// tests through their normal "no photos on this machine" path instead of blocking.
+    /// See `photoTestsAllowed`.
+    public static var testPhotos: URL? {
+        guard photoTestsAllowed else { return nil }
         let raw =
             ProcessInfo.processInfo.environment[photosEnvVar]
             ?? (NSString(string: defaultPhotosFolder).expandingTildeInPath)
@@ -53,11 +85,45 @@ public enum TestEnvironment {
             isDirectory.boolValue
         else { return nil }
         return url
-    }()
+    }
 
-    /// Absolute URL of a committed fixture, or nil when the repo root could not be located.
+    /// Absolute URL of a committed fixture, or nil when neither the test bundle nor the repo root
+    /// has it.
+    ///
+    /// **The test bundle is checked first, and the reason is a hang, not tidiness.** These tests are
+    /// hosted by `Firstcut.app`, which is built inside the repository — and the repository lives in
+    /// `~/Documents`, a TCC-protected folder. A GUI app reading a file from there triggers a
+    /// consent prompt; an ad-hoc-signed rebuild is a new code identity, so it re-prompts on every
+    /// run, and with nobody there to click Allow the test host sits in `mach_msg` forever and
+    /// `xcodebuild test` times out with no diagnostic at all.
+    ///
+    /// A copy of `tests/fixtures/exiftool` is built into each test bundle's resources (see
+    /// project.yml) and is not subject to TCC, so the fixtures are read from there. The repository
+    /// path stays as a fallback for fixtures that are not bundled, and for a checkout outside a
+    /// protected folder.
     public static func fixtureURL(_ relativePath: String) -> URL? {
-        repositoryRoot?.appendingPathComponent(relativePath)
+        // "tests/fixtures/exiftool/Game1JENKS.json" -> bundle resource "exiftool/Game1JENKS.json".
+        // project.yml copies in the *contents* of tests/fixtures/<kind>, so the leading
+        // "tests/fixtures/" does not appear inside the bundle.
+        let parts = relativePath.split(separator: "/").map(String.init)
+        guard let last = parts.last else { return nil }
+        let directories = Array(parts.dropLast())
+        let inBundle = directories.count > 2
+            ? directories.dropFirst(2).joined(separator: "/")
+            : directories.joined(separator: "/")
+        if let bundle = Bundle.allBundles.first(where: { $0.bundlePath.hasSuffix(".xctest") }),
+            let resourceURL = bundle.resourceURL
+        {
+            let candidate = URL(fileURLWithPath: inBundle, relativeTo: resourceURL)
+                .appendingPathComponent(last)
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            if let flat = bundle.url(forResource: last, withExtension: "json"),
+                FileManager.default.fileExists(atPath: flat.path)
+            {
+                return flat
+            }
+        }
+        return repositoryRoot?.appendingPathComponent(relativePath)
     }
 
     /// Folders in `~/Documents/testing` that look like a game, i.e. contain at least one file with a

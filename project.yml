@@ -94,20 +94,39 @@ targets:
       - path: tests/fixtures/exiftool
         type: folder
         buildPhase: resources
+      - path: tests/fixtures/meta
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Firstcut
       - target: FirstcutCore
   FirstcutIntegrationTests:
     type: bundle.unit-test
     platform: macOS
-    sources: [App/Tests/Integration]
+    sources:
+      - path: App/Tests/Integration
+      # Same reason as FirstcutUnitTests: the hosted app lives under `~/Documents` and blocks on a
+      # TCC prompt if it reads from there. See the note in FixturePhotos.fixtureURL.
+      - path: tests/fixtures/exiftool
+        type: folder
+        buildPhase: resources
+      - path: tests/fixtures/meta
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Firstcut
       - target: FirstcutCore
   FirstcutPerformanceTests:
     type: bundle.unit-test
     platform: macOS
-    sources: [App/Tests/Performance]
+    sources:
+      - path: App/Tests/Performance
+      - path: tests/fixtures/exiftool
+        type: folder
+        buildPhase: resources
+      - path: tests/fixtures/meta
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Firstcut
       - target: FirstcutCore
