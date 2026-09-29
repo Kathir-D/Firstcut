@@ -8,3 +8,4 @@
 - Performance claims need a measurement (see task.md §7.3), not an estimate.
 - Duplicate implementations from the merge are in `parked/` and `core/firstcut-core/tests/parked/`; see task.md §0.3 before deleting or reviving them.
 - Old per-agent charters and the review board are in git history only: `git show 4d4e43d:docs/review.md`, `git show 4d4e43d:docs/agents/`.
+- App icon: source is `logo/firstcut-icon.svg` (and `firstcut-icon-small.svg` for 16/32 px). Regenerate the PNGs with `rsvg-convert` (Homebrew `librsvg`) into `App/Resources/Assets.xcassets/AppIcon.appiconset/` and `logo/icon-{512,1024}.png`; keep the transparent margin (Apple grid, 824 px body on a 1024 canvas).

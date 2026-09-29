@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="logo/icon-512.png" alt="Firstcut app icon" width="128" height="128">
+
 # Firstcut
 
 **A hyper-fast, burst-aware photo culler for macOS.**
@@ -128,8 +130,9 @@ RAW + JPEG/HEIF pairs are treated as a single photo.
 ## Installation
 
 > [!IMPORTANT]
-> Requires a Mac with Apple Silicon running macOS 15 Sequoia or later. Liquid Glass styling needs
-> macOS 26 Tahoe or later; macOS 15 gets the closest native equivalent.
+> Requires a Mac with Apple Silicon running macOS 15 Sequoia or later. Intel Macs are not supported.
+> Liquid Glass styling needs macOS 26 Tahoe or later; macOS 15 gets the closest native equivalent.
+> Firstcut is only tested on macOS 26 and later; macOS 15 support is best effort.
 >
 > These instructions are for the first release (v0.1.0), which isn't out yet.
 

@@ -75,7 +75,7 @@ against the code before trusting it — several were fixed on one side of the me
   built by *looking at the photographs*, especially `Game1JENKS IMG_6117–6164`. Do not synthesise it.
 - REV-64 `visual_sig` must call the Rust reference, never a Swift reimplementation; it skipped the
   256 px stage in the contract.
-- REV-65 ordering key: §5.1 says camera serial first, §2 says time + subsec + shutter count. Decide.
+- REV-65 ordering key: **decided** — time first, serial only breaks ties (§2, §5.1). Check `order()` matches.
 - REV-68 per-photo rename reconciliation (a rename changes `PhotoId` and orphans its rating).
 - REV-12 / REV-59 CI: `SWIFT_TREAT_WARNINGS_AS_ERRORS` and a `swift-format` step are missing; CI uses
   Xcode 16.2 while local builds use Xcode 27 (REV-58).
@@ -194,7 +194,7 @@ has been seen, Firstcut asks what to do with everything you didn't keep.
 | --- | --- |
 | Name | **Firstcut** (GitHub: `Kathir-D/Firstcut`, public) |
 | Platform | macOS, Apple Silicon only (arm64) |
-| Minimum OS | **macOS 15 Sequoia**. Real Liquid Glass (`glassEffect`) on macOS 26+, closest material fallback (`NSVisualEffectView` / `.ultraThinMaterial`) on 15 |
+| Minimum OS | **macOS 15 Sequoia**, best effort. Real Liquid Glass (`glassEffect`) on macOS 26+, closest material fallback (`NSVisualEffectView` / `.ultraThinMaterial`) on 15. **Only macOS 26+ is tested** (no macOS 15 machine or VM); the README says so. Keep the fallback code paths working as well as possible without a test machine. Apple Silicon only, never Intel |
 | UI | Swift 6, SwiftUI for chrome/settings + AppKit where needed for performance and exact native behavior (window, toolbar, key handling, filmstrip) |
 | Image pipeline | Swift: ImageIO (embedded previews + thumbnails), Core Image `CIRAWFilter` (true RAW decode), Metal / IOSurface-backed layers for display |
 | Core logic | **Rust** static library (`firstcut-core`) exposed to Swift via **UniFFI**: scanning, metadata parsing, ordering, batching, SQLite session DB, XMP read/write, file operations, undo log |
@@ -202,7 +202,11 @@ has been seen, Firstcut asks what to do with everything you didn't keep.
 | Rating modes | Two modes, chosen in Settings: **Stars** and **Keep / Not keep** (see §6) |
 | Rating scope | You can only rate photos in the batch you are currently in; to change another batch's photo, navigate to that batch |
 | Batching | Fully automatic, no manual split/merge UI |
-| Ordering | By capture time + sub-second + shutter count, **never by file name** (Canon `IMG_9999` → `IMG_0001` rollover) |
+| Ordering | By capture time + sub-second + shutter count, **never by file name** (Canon `IMG_9999` → `IMG_0001` rollover). Across several bodies, shots interleave in true time order; camera serial only breaks exact ties and forces a batch split (decided 2026-09-29, REV-65) |
+| Arrow at a batch end | **Setting, default: roll into the next batch** (the arrow on the last photo moves to the first photo of the next batch; with the setting off it stops). Decided 2026-09-29 |
+| Single frames a few seconds apart | **Grouped into one batch**, not 1-photo batches. Exact window to be tuned against ground truth. Decided 2026-09-29 |
+| App icon | Burst of five frames fading from outline (back) to a photo (front), on a cyan-to-pink gradient matching Sonar. Source: `logo/firstcut-icon.svg` (+ `firstcut-icon-small.svg` for 16/32 px); PNGs in `App/Resources/Assets.xcassets/AppIcon.appiconset/`. Decided 2026-09-29 |
+| CI toolchain | CI keeps Xcode 16.2 as the minimum-toolchain check; local Xcode 27 covers the shipping toolchain (REV-58, decided 2026-09-29) |
 | Storage of ratings | XMP sidecars **and** app DB (DB = instant resume; XMP = interoperability) |
 | Shortcuts | Lightroom Classic defaults, all remappable. Batch navigation: ⌘← / ⌘→ + toolbar ‹ › buttons; arrow keys are for photos only |
 | Distribution | Personal Homebrew tap + GitHub Releases (ad-hoc signed `.zip`, curl install) + build from source, same setup as [Sonar](https://github.com/Kathir-D/Sonar#install). **No paid Apple Developer account** → no notarization (see §13) |
@@ -293,6 +297,7 @@ Firstcut/
 │   ├── firstcut-cli/         # dev CLI: scan/batch/benchmark a folder, dump JSON
 │   └── Cargo.toml
 ├── scripts/                  # build-core.sh (→ XCFramework), build-app.sh (→ dist/Firstcut.app), bench scripts
+├── logo/                     # app icon source SVGs + 512/1024 PNGs (README uses icon-512.png)
 ├── Casks/                    # firstcut.rb, mirrored into Kathir-D/homebrew-tap
 ├── VERSION
 ├── tests/fixtures/           # ground-truth batch files (filenames only — no images)
@@ -311,7 +316,9 @@ Batches are computed once when a folder is opened (and cached in the session DB)
 
 ### 5.1 Ordering
 
-- [ ] Sort key: `(camera serial, DateTimeOriginal + SubSecTimeOriginal + OffsetTime, ShutterCount, FileNumber, file name)`.
+- [ ] Sort key: `(DateTimeOriginal + SubSecTimeOriginal + OffsetTime, ShutterCount, camera serial, FileNumber, file name)`.
+      Time first: several bodies interleave in true time order (decided 2026-09-29, REV-65; the old key put
+      camera serial first).
 - [ ] Never rely on file names; handle `IMG_9999 → IMG_0001` rollover and renamed files.
 - [ ] If sub-seconds are missing, use `ShutterCount` (Canon), `ImageCount`/`SequenceNumber` (Sony),
       `ShutterCount` (Nikon) to order ties within the same second.
@@ -630,7 +637,7 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 
 ### 9.8 Settings window (native Settings scene, tabbed)
 
-- [ ] **General**: rating mode, auto-advance, arrow behavior at batch ends, entering-batch
+- [ ] **General**: rating mode, auto-advance, arrow behavior at batch ends (default: roll into the next batch), entering-batch
       behavior, default finish actions, confirmations.
 - [ ] **Keyboard**: full shortcut editor — every command listed, record a new key, conflict
       detection, reset to Lightroom defaults, import/export keymap JSON.
@@ -849,7 +856,7 @@ Each milestone ends with something runnable and measured.
 ### M7 — Polish
 
 - [ ] Liquid Glass fidelity pass vs Finder, macOS 15 fallback, accessibility (VoiceOver labels,
-      Reduce Transparency / Reduce Motion), app icon.
+      Reduce Transparency / Reduce Motion). App icon done 2026-09-29 (`logo/`).
 
 ### M8 — Release
 
@@ -865,28 +872,26 @@ Each milestone ends with something runnable and measured.
 > ask rather than guess. Part B is work only a human can do. Part C is context that is not obvious from
 > the code. Tick or strike items as they are settled, and record the answer in §2 (Decisions).
 
-### A. Decisions still to make
+### A. Decisions
 
-- [ ] **Arrow at the end of a batch:** stop, or roll into the next batch? (Planned: a setting, default
-      stop.)
-- [ ] **Single frames a few seconds apart:** group into one batch, or keep as 1-photo batches? Decide
-      from the ground truth on the test games (§5.4).
+Answered by the owner on 2026-09-29 and recorded in §2 unless noted.
+
+- [x] **Arrow at the end of a batch:** a setting, **default roll into the next batch** (off = stop).
+- [x] **Single frames a few seconds apart:** **group them into one batch.** Tune the window from ground truth.
+- [x] **Ordering key (REV-65):** time + sub-second + shutter count first; camera serial only breaks ties.
+- [x] **Duplicate implementations (§0.3):** keep the consolidated tree. Diff `parked/` and
+      `core/firstcut-core/tests/parked/` for anything worth porting, then **delete them**. Not done yet.
+- [x] **App icon:** chosen and in the app (§2, `logo/`).
+- [x] **CI toolchain (REV-58):** keep Xcode 16.2 in CI as the minimum-toolchain check.
+- [x] **macOS support:** minimum macOS 15, best effort; **only macOS 26+ is tested** and the README says so.
+      Apple Silicon only, no Intel.
+- [x] **Old branches:** the `agent/*` branches and `integrate/consolidate` were deleted, local and remote,
+      on 2026-09-29 (everything was already in `main`).
 - [ ] **The high-speed pauses at the end of Game1JENKS** (`IMG_6117`–`IMG_6164`, ~11 fps with 0.2–0.8 s
-      re-press pauses): one play (one batch) or several? Only a person looking at the photos can say.
-- [ ] **Ordering key (REV-65):** §5.1 puts camera serial first in the sort key, §2 (locked) says
-      capture time + sub-second + shutter count. Which is right for a two-body shoot?
-- [ ] **Which duplicate implementation survives (§0.3):** `meta/cr3.rs` (consolidated) or the worker's
-      `parked/worker-scan-cr3.rs`; the consolidated `AppEnvironment` wiring or the worker's
-      `LiveCullViewState`/`PreviewPipeline`. Default: keep the consolidated ones and delete `parked/`
-      once nothing useful is left in it.
-- [ ] **App icon:** design, or ship v0.1.0 with a placeholder?
-- [ ] **CI toolchain (REV-58):** CI builds with Xcode 16.2, local builds use Xcode 27. Pin CI to a newer
-      Xcode when a runner image has one, or keep 16.2 as the "minimum toolchain" check?
-- [ ] **Minimum macOS 15 support:** is a macOS 15 machine or VM available to test on? The dev machine
-      is macOS 27, so the macOS 15 fallback (§9.1, §13) cannot be verified without one. If not, ship
-      "macOS 26+ tested, 15 best-effort" and say so in the README.
-- [ ] **Delete the old `agent/*` branches** on GitHub (all contained in `main`)? Not done: it is
-      irreversible on the remote, so it waits for a yes.
+      re-press pauses): one play or several? **Build it as an eye test:** add a batching option for "one
+      batch" versus "split at each re-press pause" (and other candidate thresholds), then show the owner
+      the variants side by side on these photos, one pair at a time, narrowing until they pick the best.
+      Keep the losing variants out of the shipped app once one is chosen.
 - [x] ~~40 fps test shoot~~ → Game1JENKS covers high-speed bursts (~11 fps recorded, see §3).
 - [x] ~~Sony samples~~ → not available; only Canon is tested (see §8).
 
@@ -902,7 +907,7 @@ Each milestone ends with something runnable and measured.
       of pushing it to the tap.
 - [ ] **Confirm Lightroom / Capture One read the XMP sidecars** (ratings survive) on a copy of a few
       photos; this needs the apps, which the agent does not have.
-- [ ] **Visual sign-off** of each §9 screen against Finder's gallery view, on macOS 26+ and 15.
+- [ ] **Visual sign-off** of each §9 screen against Finder's gallery view, on macOS 26+ (15 is untested).
 - [ ] **The `v0.1.0` tag** and the README screenshots/GIF, once the UI is right.
 
 ### C. Things to know
