@@ -227,6 +227,8 @@ name = "firstcut-cli"
 version = "0.0.0"
 dependencies = [
  "firstcut-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -235,6 +237,8 @@ version = "0.0.0"
 dependencies = [
  "libc",
  "rusqlite",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "uniffi",

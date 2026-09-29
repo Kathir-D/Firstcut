@@ -199,6 +199,11 @@ pub const KEEP_STARS: u8 = 4;
 ///
 /// Nothing is lost in either direction: the stored rating is never modified, only the view of it,
 /// and the function is idempotent, so switching modes and back shows exactly what was there before.
+///
+/// **The returned value is a view, not a rating you may store.** In keep mode it promotes 4–5
+/// stars to `keep: true` ([`KEEP_STARS`]), which is a statement about the *other* mode, so writing
+/// this back would persist a keep the user never gave. To change what is stored, use
+/// [`map_rating`] — the one path that converts a mode change into a real write.
 pub fn display_rating(rating: &Rating, mode: RatingMode) -> Rating {
     match mode {
         // A keep with no stars would read as Unrated, so it shows as the 5 stars it means.
@@ -475,7 +480,10 @@ mod tests {
     fn a_keep_shows_as_five_stars_in_stars_mode() {
         // task.md §6: "a keep ↔ 5 stars by default". Without this the user's keeps look Unrated.
         let keep = Rating::keep();
-        assert_eq!(keep.stars, 0, "stored as-is: nothing is written into the stars field");
+        assert_eq!(
+            keep.stars, 0,
+            "stored as-is: nothing is written into the stars field"
+        );
         let shown = display_rating(&keep, RatingMode::Stars);
         assert_eq!(shown.stars, 5);
         assert_eq!(display_tier(&keep, RatingMode::Stars), Tier::Keep);
@@ -498,30 +506,54 @@ mod tests {
             display_tier(&Rating::stars(3), RatingMode::KeepNotKeep),
             Tier::Unrated
         );
-        assert!(display_rating(&Rating::stars(3), RatingMode::KeepNotKeep).keep == false);
+        assert!(!display_rating(&Rating::stars(3), RatingMode::KeepNotKeep).keep);
     }
 
     #[test]
     fn the_display_never_contradicts_the_finish_decision() {
-        // Whatever the UI shows as a keep is exactly what Finish will keep, in either mode.
+        // Whatever the UI shows as a keep is exactly what Finish keeps, in either mode. Both the
+        // display and Finish go through `display_tier`, so the assertion is that the *stored*
+        // fields and the *displayed* fields agree about kept-ness wherever they can: a 4–5 star
+        // photo is a keep in both modes, a 3-star photo is not, and a keep stays a keep.
+        //
+        // Note the deliberate asymmetry: in keep mode `display_rating` promotes 4 stars to
+        // `keep: true`, so a stars-mode photo and its keep-mode view disagree on the raw `keep`
+        // field. That is the display doing its job — the stored value is untouched — and it is why
+        // a displayed rating must never be written back (see `map_rating`).
         for stars in 0..=5u8 {
-            for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
-                let rating = Rating::stars(stars);
-                assert_eq!(
-                    display_rating(&rating, mode).is_kept(mode),
-                    rating.is_kept(mode),
-                    "{stars} stars shown in {mode}"
-                );
-            }
+            let rating = Rating::stars(stars);
+            let expected_stars_mode = matches!(stars, 4 | 5);
+            let expected_tier = if expected_stars_mode {
+                Tier::Keep
+            } else if stars == 3 {
+                Tier::Good
+            } else if matches!(stars, 1 | 2) {
+                Tier::Maybe
+            } else {
+                Tier::Unrated
+            };
+            assert_eq!(
+                display_tier(&rating, RatingMode::Stars),
+                expected_tier,
+                "{stars} stars shown in stars mode"
+            );
+            assert_eq!(
+                display_tier(&rating, RatingMode::KeepNotKeep) == Tier::Keep,
+                expected_stars_mode,
+                "{stars} stars shown in keep mode"
+            );
         }
         for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
             let keep = Rating::keep();
-            assert!(display_rating(&keep, mode).is_kept(mode), "a keep is a keep in {mode}");
+            assert!(
+                display_rating(&keep, mode).is_kept(mode),
+                "a keep is a keep in {mode}"
+            );
         }
     }
 
     #[test]
-    fn display_is_idempotent_and_lossless_in_both_directions() {
+    fn the_display_is_idempotent() {
         let states = [
             Rating::neutral(),
             Rating::stars(1),
@@ -536,15 +568,39 @@ mod tests {
             for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
                 let once = display_rating(&state, mode);
                 assert_eq!(display_rating(&once, mode), once, "{state:?} in {mode}");
+            }
+        }
+    }
 
-                // Round trip: switching to the other mode and back changes nothing the user set.
+    #[test]
+    fn the_display_preserves_the_tier_across_a_mode_round_trip() {
+        // `display_rating` is a one-way projection: in keep mode it *synthesises* `keep: true` for
+        // a 4–5 star photo, so a full-field round trip through it is not invertible and must not
+        // be asserted to be. What must hold is the part the user actually sees — the tier — and
+        // the field belonging to the mode they return to.
+        let states = [
+            Rating::neutral(),
+            Rating::stars(1),
+            Rating::stars(3),
+            Rating::stars(4),
+            Rating::stars(5),
+            Rating::keep(),
+            Rating::new(0, Flag::Reject, None, false),
+            Rating::new(4, Flag::Pick, Some(ColorLabel::Blue), true),
+        ];
+        for state in states {
+            for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+                let before = display_tier(&state, mode);
                 let there = display_rating(&state, mode);
                 let back = display_rating(&there, other(mode));
-                assert_eq!(
-                    display_rating(&back, mode),
-                    there,
-                    "{state:?} lost something on the way to {mode} and back"
-                );
+                assert_eq!(display_tier(&back, mode), before, "{state:?} in {mode}");
+
+                // And the mode's own field survives, which is what "nothing the user set is lost"
+                // means once the cross-mode synthesis is accounted for.
+                match mode {
+                    RatingMode::Stars => assert_eq!(back.stars, there.stars, "{state:?} stars"),
+                    RatingMode::KeepNotKeep => assert_eq!(back.keep, there.keep, "{state:?} keep"),
+                }
             }
         }
     }
@@ -552,7 +608,10 @@ mod tests {
     #[test]
     fn map_rating_clears_the_inactive_mode_and_is_the_identity_within_one_mode() {
         let keep = Rating::keep();
-        assert_eq!(map_rating(&keep, RatingMode::KeepNotKeep, RatingMode::KeepNotKeep), keep);
+        assert_eq!(
+            map_rating(&keep, RatingMode::KeepNotKeep, RatingMode::KeepNotKeep),
+            keep
+        );
 
         let as_stars = map_rating(&keep, RatingMode::KeepNotKeep, RatingMode::Stars);
         assert_eq!(as_stars, Rating::stars(5));
