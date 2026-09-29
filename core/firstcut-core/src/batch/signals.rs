@@ -38,9 +38,22 @@ pub struct Thresholds {
 /// Every signal task.md §5.2 lists, for one consecutive pair.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PairSignals {
+    /// The **signed** gap in milliseconds. Negative means the two effective times run backwards.
+    ///
+    /// This used to be `(b - a).max(0)`, which silently turned a backwards clock into a 0 ms gap,
+    /// and 0 <= `join_ms`, so the pair was *hard-joined* -- two photos of different plays welded
+    /// into one burst with no warning anywhere. A wrong merge hides photos, which is the single
+    /// failure this project exists to prevent, and it was the cheapest one to trigger: sorting
+    /// falls back to file mtime, so on coarse or identical mtimes (exFAT's 2 s granularity, a
+    /// plain `cp`, a folder of files that never had EXIF) the gap goes negative. It is also
+    /// irreversible, because a hard decision is not revisitable by the visual pass.
     pub dt_ms: i64,
     /// False when either frame has no usable timestamp, so Δt carries no information.
     pub has_time: bool,
+    /// True when **either** frame's time came from the file's mtime rather than its EXIF capture
+    /// time. mtime is rewritten by every copy and every restore, so a pair involving one is not
+    /// evidence of anything and must never produce a *hard* decision.
+    pub time_is_fallback: bool,
     pub serial_changed: bool,
     pub orientation_changed: bool,
     /// `cur.shutter_count - prev.shutter_count`, when both bodies reported one.
@@ -58,8 +71,10 @@ impl PairSignals {
             crate::batch::view::effective_time_ms(prev),
             crate::batch::view::effective_time_ms(cur),
         );
+        // Signed, deliberately. See the field docs: clamping here is what made a backwards clock
+        // a hard join.
         let dt_ms = match (ta, tb) {
-            (Some(a), Some(b)) => (b - a).max(0),
+            (Some(a), Some(b)) => b - a,
             _ => 0,
         };
         let shutter_count_gap = match (prev.shutter_count(), cur.shutter_count()) {
@@ -69,6 +84,8 @@ impl PairSignals {
         Self {
             dt_ms,
             has_time: ta.is_some() && tb.is_some(),
+            time_is_fallback: crate::batch::view::time_is_fallback(prev)
+                || crate::batch::view::time_is_fallback(cur),
             serial_changed: prev.camera_serial() != cur.camera_serial(),
             orientation_changed: prev.orientation() != cur.orientation(),
             shutter_count_gap,
@@ -79,8 +96,16 @@ impl PairSignals {
 
     /// Hard joins and hard splits, in task.md §5.3 order. `Ambiguous` means timing can't decide.
     ///
-    /// Without a timestamp on either frame there is no hard join to fall back on, so the pair goes
-    /// straight to the score rather than being silently welded together.
+    /// Three rules keep a hard decision from ever being wrong in the way that matters:
+    ///
+    /// 1. **A backwards Δt is always a split.** Not ambiguous -- split. The clock disagrees with
+    ///    itself, so nothing about this pair is trustworthy, and defaulting to the score would let
+    ///    a bad timestamp silently become a join.
+    /// 2. **Either side's time being a fallback (mtime) forbids a hard *join*.** The pair goes to
+    ///    `Ambiguous` so the score decides and the batch stays `provisional`. A split is still
+    ///    allowed: refusing to merge two photos that look completely different is the safe
+    ///    direction, whereas joining them hides them.
+    /// 3. **No timestamp on either frame is never a hard join** (unchanged).
     #[must_use]
     pub fn decide(&self, t: Thresholds) -> Decision {
         if self.serial_changed {
@@ -92,10 +117,15 @@ impl PairSignals {
         if !self.has_time {
             return Decision::Ambiguous;
         }
+        // Rule 1. A negative gap means the effective times run backwards.
+        if self.dt_ms < 0 {
+            return Decision::Split;
+        }
         if self.dt_ms > t.split_ms {
             return Decision::Split;
         }
-        if self.dt_ms <= t.join_ms {
+        // Rule 2. mtime is not evidence, so it may not produce a hard join.
+        if !self.time_is_fallback && self.dt_ms <= t.join_ms {
             return Decision::Join;
         }
         Decision::Ambiguous
@@ -237,6 +267,151 @@ mod tests {
 
         let fi = FrameIntervals::new(vec![0, 5_000, 100, 5_000], 100);
         assert_eq!(fi.at(1), 100, "one short gap in the run: global median");
+    }
+
+    /// REV-63, rule 1. A backwards gap used to be clamped to 0 by `(b - a).max(0)`, and 0 is
+    /// `<= join_ms`, so `decide()` returned `Join`: two photos of *different* plays silently welded
+    /// into one burst, with nothing in the report and no warning. Reachable because sorting falls
+    /// back to file mtime, so a `cp` or an exFAT card with 2 s granularity produces one.
+    #[test]
+    fn a_backwards_time_gap_is_never_a_join() {
+        use crate::batch::view::mock::MockPhoto;
+
+        // A later capture time followed by an *earlier* one: the clock disagrees with itself.
+        let prev = MockPhoto::frame(1, 10_000);
+        let cur = MockPhoto::frame(2, 9_000);
+        let signals = PairSignals::compute(&prev, &cur);
+
+        assert_eq!(signals.dt_ms, -1_000, "the signed gap is kept, not clamped");
+        assert!(
+            signals.has_time,
+            "both frames have real capture times, so this is not the no-time case"
+        );
+        assert_eq!(
+            signals.decide(Thresholds {
+                frame_interval_ms: 90,
+                join_ms: 200,
+                split_ms: 2_000,
+            }),
+            Decision::Split,
+            "a backwards clock must split, never join"
+        );
+    }
+
+    /// The score must agree with `decide()`. A negative gap clamped to 0.0 by `score_pair` read as
+    /// "identical time, therefore the same burst" -- the same wrong merge, one layer down.
+    #[test]
+    fn a_backwards_gap_scores_as_maximally_different() {
+        use crate::batch::view::mock::MockPhoto;
+
+        let prev = MockPhoto::frame(1, 10_000);
+        let cur = MockPhoto::frame(2, 9_000);
+        let signals = PairSignals::compute(&prev, &cur);
+        let thresholds = Thresholds {
+            frame_interval_ms: 90,
+            join_ms: 200,
+            split_ms: 2_000,
+        };
+        let params = crate::batch::BatchParams::default();
+
+        let backwards = crate::batch::score_pair(&signals, &thresholds, None, &params);
+        let identical = {
+            let same = PairSignals {
+                dt_ms: 0,
+                ..signals
+            };
+            crate::batch::score_pair(&same, &thresholds, None, &params)
+        };
+        assert!(
+            backwards > identical,
+            "a backwards gap ({backwards}) must score higher than a zero gap ({identical})"
+        );
+        assert!(
+            backwards > 0.9,
+            "a backwards gap is the strongest timing evidence there is, got {backwards}"
+        );
+    }
+
+    /// REV-63, rule 2. Two photos with no EXIF sharing an mtime -- the case a plain `cp` or an
+    /// exFAT card produces. The gap looks like a perfect 0 ms burst interval, and used to be a
+    /// *hard* join. It may not be: mtime is not evidence, so the score decides and the batch stays
+    /// provisional.
+    #[test]
+    fn a_fallback_timestamp_never_produces_a_hard_join() {
+        use crate::batch::view::mock::MockPhoto;
+
+        // Two frames with identical mtimes and no EXIF at all. Their "gap" is 0 ms, which is well
+        // inside any join threshold.
+        let a = MockPhoto::frame(1, 0)
+            .without_capture_time()
+            .with_mtime(50_000);
+        let b = MockPhoto::frame(2, 0)
+            .without_capture_time()
+            .with_mtime(50_000);
+        let signals = PairSignals::compute(&a, &b);
+
+        assert_eq!(signals.dt_ms, 0, "identical mtimes: a 0 ms gap");
+        assert!(signals.has_time, "mtime counts as a usable time");
+        assert!(
+            signals.time_is_fallback,
+            "but it is a fallback, and that must be visible to decide()"
+        );
+        assert_eq!(
+            signals.decide(Thresholds {
+                frame_interval_ms: 90,
+                join_ms: 200,
+                split_ms: 2_000,
+            }),
+            Decision::Ambiguous,
+            "an mtime-only pair goes to the score, never to a hard join"
+        );
+    }
+
+    /// …and the converse, so the rule is a real boundary and not just "mtime never joins": a
+    /// fallback pair whose gap is *enormous* may still be split, because refusing to merge two
+    /// obviously different photos is the safe direction. Only the join is forbidden.
+    #[test]
+    fn a_fallback_pair_may_still_be_split() {
+        use crate::batch::view::mock::MockPhoto;
+
+        let a = MockPhoto::frame(1, 0).without_capture_time().with_mtime(0);
+        let b = MockPhoto::frame(2, 0)
+            .without_capture_time()
+            .with_mtime(90_000);
+        let signals = PairSignals::compute(&a, &b);
+
+        assert!(signals.time_is_fallback);
+        assert_eq!(
+            signals.decide(Thresholds {
+                frame_interval_ms: 90,
+                join_ms: 200,
+                split_ms: 2_000,
+            }),
+            Decision::Split,
+            "a 90 s gap splits even on mtimes"
+        );
+    }
+
+    /// A pair with real EXIF times on both sides must still hard-join, or rule 2 has over-corrected
+    /// and every burst would become provisional.
+    #[test]
+    fn a_real_fast_gap_still_hard_joins() {
+        use crate::batch::view::mock::MockPhoto;
+
+        let prev = MockPhoto::frame(1, 10_000);
+        let cur = MockPhoto::frame(2, 10_090);
+        let signals = PairSignals::compute(&prev, &cur);
+
+        assert_eq!(signals.dt_ms, 90);
+        assert!(!signals.time_is_fallback);
+        assert_eq!(
+            signals.decide(Thresholds {
+                frame_interval_ms: 90,
+                join_ms: 200,
+                split_ms: 2_000,
+            }),
+            Decision::Join
+        );
     }
 
     #[test]

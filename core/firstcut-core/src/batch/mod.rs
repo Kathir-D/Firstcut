@@ -306,11 +306,21 @@ pub fn score_pair(
 
     // Δt normalized in *frame intervals*, not milliseconds: the same wall-clock gap means something
     // completely different at 6 fps and at 11 fps.
+    //
+    // A negative gap normalises to 1.0, the far end ("as different as timing can say"), not to the
+    // 0.0 the `.clamp(0.0, 1.0)` would give it. A backwards clock is the *strongest* possible
+    // timing evidence that these two frames do not belong together, and clamping it to 0 would
+    // have read as "identical time, therefore the same burst" -- the same silent wrong merge
+    // `PairSignals::decide` used to produce, one layer down.
     let dt_n = if signals.has_time {
-        let f = thresholds.frame_interval_ms.max(1) as f32;
-        let join_intervals = thresholds.join_ms as f32 / f;
-        let span = (DT_FULL_INTERVALS - join_intervals).max(0.5);
-        ((signals.dt_ms as f32 / f - join_intervals) / span).clamp(0.0, 1.0)
+        if signals.dt_ms < 0 {
+            1.0
+        } else {
+            let f = thresholds.frame_interval_ms.max(1) as f32;
+            let join_intervals = thresholds.join_ms as f32 / f;
+            let span = (DT_FULL_INTERVALS - join_intervals).max(0.5);
+            ((signals.dt_ms as f32 / f - join_intervals) / span).clamp(0.0, 1.0)
+        }
     } else {
         // No timing evidence at all: the middle of the zone, so the other signals decide.
         0.5
@@ -849,5 +859,58 @@ mod tests {
         let mut rotated = photos.clone();
         rotated.rotate_left(33);
         assert_eq!(batch(&rotated, &no_sigs(), &frozen), expected);
+    }
+
+    /// REV-63, end to end. A no-EXIF pair sharing an mtime must not be welded into one burst: it
+    /// goes to `Ambiguous`, the score decides, and both touching batches come back `provisional` so
+    /// the visual pass can still revisit the boundary.
+    #[test]
+    fn an_mtime_only_pair_never_becomes_a_hard_batch_boundary() {
+        // Four frames, no EXIF anywhere, every mtime identical: the "gaps" are all 0 ms, which
+        // under the old rule was four hard joins and one single giant batch.
+        let photos: Vec<M> = (0..4)
+            .map(|i| M::frame(i, 0).without_capture_time().with_mtime(50_000))
+            .collect();
+
+        let out = batch_with(&photos, &no_sigs(), &[], BatchParams::default());
+        let joined = out.batches.iter().all(|b| b.photo_ids.len() > 1);
+        assert!(
+            !joined || out.batches.iter().all(|b| b.provisional),
+            "if identical mtimes still group, every such batch must be provisional so the \
+             signatures can take them apart"
+        );
+
+        // Whichever way it grouped, no boundary may be a *hard* join: each one is either ambiguous
+        // (provisional) or a split.
+        for v in &out.verdicts {
+            assert_ne!(
+                v.decision,
+                Decision::Join,
+                "boundary {} was a hard join on mtimes alone",
+                v.index
+            );
+        }
+        assert!(
+            out.batches.iter().all(|b| b.provisional),
+            "with no signature available, every batch from mtime-only evidence stays provisional"
+        );
+    }
+
+    /// A real EXIF burst at 90 ms is unaffected: it must still be one batch, and one that is not
+    /// provisional, or rule 2 has made every burst in the app provisional and the tool useless.
+    #[test]
+    fn a_real_exif_burst_is_still_one_settled_batch() {
+        let photos = burst(8, 1_000_000, 90);
+        let out = batch_with(&photos, &no_sigs(), &[], BatchParams::default());
+        assert_eq!(out.batches.len(), 1, "8 frames 90 ms apart are one burst");
+        assert_eq!(out.batches[0].photo_ids.len(), 8);
+        assert!(
+            !out.batches[0].provisional,
+            "a burst of real EXIF times needs no signature to settle it"
+        );
+        assert!(
+            out.verdicts.iter().all(|v| v.decision == Decision::Join),
+            "every interior boundary is a hard join"
+        );
     }
 }
