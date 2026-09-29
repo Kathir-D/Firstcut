@@ -184,17 +184,21 @@ struct RatingSummary: View {
         HStack(spacing: 1) {
           // REV-76: exactly `stars` filled stars, no empty outlines, so the row reads as the
           // rating rather than as a ratio. Unrated draws nothing.
-          ForEach(0..<RatingVisuals.starCount(for: rating), id: \.self) { _ in
+          ForEach(0..<RatingVisuals.starCount(for: rating, mode: mode), id: \.self) { _ in
             Image(systemName: "star.fill")
               .font(.system(size: 10))
               .foregroundStyle(Color.yellow)
           }
         }
       } else {
+        // Through the one rating-mode implementation, not the raw field: a 4-star photo is a keep
+        // in keep mode even though its stored `keep` is false, and a hard-coded read here showed
+        // "Not keep" on a photo the filmstrip had just ringed green.
+        let isKeep = RatingVisuals.isKeep(rating, mode: mode)
         Circle()
-          .fill(rating.keep ? Appearance.keepGreen : Appearance.rejectRed)
+          .fill(isKeep ? Appearance.keepGreen : Appearance.rejectRed)
           .frame(width: 8, height: 8)
-        Text(rating.keep ? "Keep" : "Not keep")
+        Text(isKeep ? "Keep" : "Not keep")
           .font(.system(size: 10))
       }
       if let label = rating.label {

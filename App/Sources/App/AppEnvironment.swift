@@ -69,14 +69,42 @@ final class AppEnvironment {
     let dependencies = Dependencies.live()
     let model = AppModel(dependencies)
     self.model = model
-    self.images = ImageProvider(memoryBudgetBytes: dependencies.settings.memoryBudgetBytes)
+    // The *same* provider the model holds, not a second one. Two providers means two caches, two
+    // decode queues, and two `focusMisses` counters, and only the one `AppModel.open` primes ever
+    // gets a folder — so the viewer's copy returns nil for every photo while the model's works. One
+    // instance, read from the model, is the only arrangement where the viewer and the filmstrip see
+    // the same pixels.
+    // `live()` always builds a real `ImageProvider`, so this is non-nil in the app. The fallback
+    // exists only so a future `live()` that does not would fail visibly rather than silently.
+    guard let provider = model.imageProvider else {
+      preconditionFailure("Dependencies.live() must supply a real ImageProvider")
+    }
+    self.images = provider
     self.state = ModelCullViewState(model: model, images: self.images)
     // The one registration call in the app (REQ-ui-2, REV-52). Until this ran, the viewer stayed
     // empty and drew "Viewer layer pending from the pipeline agent" over every photo. It is
     // unconditional: a test that wants a different host registers its own, and `register` is
     // last-wins.
     PhotoViewerHostView.register { [images] _, _ in CGImageViewerHost(images: images) }
-    Self.installLaunchOverrides()
+
+    // Launch flags, applied to *this* instance rather than through `AppEnvironment.shared`.
+    //
+    // The obvious spelling — a static helper that reaches back for `AppEnvironment.shared` — traps
+    // with EXC_BREAKPOINT in `_dispatch_once_wait`: `shared` is a `static let`, so asking for it
+    // from inside its own initialisation re-enters the `dispatch_once` that is still running. The
+    // app died on launch, every time, with a crash report that took a while to read because the
+    // frame that matters is `unsafeMutableAddressor`. `self` is already the singleton here, so the
+    // indirection was never needed.
+    if LaunchOptions.usesMockShoot {
+      let mock = AppModel.preview(game: nil, photoLimit: nil)
+      mock.open(mock.backend, folderName: "Preview")
+      use(
+        ModelCullViewState(
+          model: mock, images: PreviewImageSource(seed: 0x5eed_f1c5) as any CullImageSource))
+    }
+    if let folder = LaunchOptions.folder {
+      open(folder: folder)
+    }
   }
 
   /// True when this process is an XCTest host rather than the app the user launched.
@@ -87,23 +115,6 @@ final class AppEnvironment {
   private static var isRunningUnderXCTest: Bool {
     ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
-  }
-
-  /// Apply `-FirstcutFolder` / `-FirstcutMockShoot`. A test host has already been driven by whatever
-  /// suite is running, so it must not also open a folder.
-  private static func installLaunchOverrides() {
-    guard let environment = MainActor.assumeIsolated({ AppEnvironment.shared }) as AppEnvironment?
-    else { return }
-    if LaunchOptions.usesMockShoot {
-      let mock = AppModel.preview(game: nil, photoLimit: nil)
-      mock.open(mock.backend, folderName: "Preview")
-      environment.use(
-        ModelCullViewState(
-          model: mock, images: PreviewImageSource(seed: 0x5eed_f1c5) as any CullImageSource))
-    }
-    if let folder = LaunchOptions.folder {
-      environment.open(folder: folder)
-    }
   }
 
   /// The documented swap point (REV-74). ui reached this through a one-line `use(_:)`; that is kept

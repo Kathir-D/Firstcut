@@ -39,20 +39,29 @@ struct RatingRulesTests {
         #expect(RatingRules.tier(of: Rating(flag: .pick), mode: .keep) == .unrated)
     }
 
-    @Test("Stars mode keeps `keep` in step with the stars")
-    func starsDriveKeep() {
+    @Test("Stars mode writes stars and leaves `keep` alone")
+    func starsDoNotTouchKeep() {
+        // These two used to assert the opposite — that stars mode drives `keep` — which is the bug
+        // that wrote a 4-star photo's sidecar as `xmp:Rating="0"`. Storing the derived field made
+        // `Session::set_rating` map a *mode the user is not in* to XMP, so the rating disappeared on
+        // export to Lightroom. The derived answer is computed on the way out by `isKeep` / `tier`.
         let rated = RatingRules.applying(to: Rating(), mode: .stars) { $0.stars = 4 }
         #expect(rated.stars == 4)
-        #expect(rated.keep)
-        let cleared = RatingRules.applying(to: Rating(), mode: .stars) { $0.stars = 0 }
-        #expect(cleared.keep == false)
+        #expect(rated.keep == false, "the stored keep field belongs to keep mode only")
+        // And the *displayed* answer is still a keep, which is what the user sees.
+        #expect(RatingRules.isKeep(rated, mode: .keep, keepThreshold: 4))
+        #expect(RatingRules.tier(of: rated, mode: .keep, keepThreshold: 4) == .keep)
     }
 
-    @Test("A keep in keep mode is recorded as 5 stars, the §6 mapping")
-    func keepBecomesFiveStars() {
+    @Test("A keep in keep mode is stored as `keep`, not as 5 stars")
+    func keepIsStoredAsKeep() {
+        // Also the reverse of the old rule. `stars` is the stars-mode field; writing 5 into it from a
+        // keep-mode keystroke made a keep-mode photo show 5 stars when the user switched back.
         let kept = RatingRules.applying(to: Rating(), mode: .keep) { $0.keep = true }
-        #expect(kept.stars == RatingRules.keepStars)
         #expect(kept.keep)
+        #expect(kept.stars == 0, "the stars field belongs to stars mode only")
+        // Displayed in stars mode, a keep is the 5 stars it means (task.md §6).
+        #expect(RatingRules.displayStars(kept, mode: .stars) == 5)
     }
 
     @Test("Toggling keep leaves existing stars alone")
@@ -426,7 +435,12 @@ struct AppModelRatingTests {
         model.perform(.toggleKeep)
         #expect(model.currentPhoto?.rating.keep == true)
         #expect(model.currentPhoto?.tier == .keep)
-        #expect(model.currentPhoto?.rating.stars == 5)  // the §6 keep ↔ 5 stars mapping
+        // The §6 "keep ↔ 5 stars" mapping is a *display* rule. It used to be asserted against
+        // `rating.stars`, i.e. the stored value — and storing it is what made `Session::set_rating`
+        // write a keep-mode photo as 5 stars into XMP and a stars-mode photo as 0. Assert the
+        // display, which is what the user sees, and assert the stored stars are untouched.
+        #expect(RatingRules.displayStars(model.currentPhoto!.rating, mode: .stars) == 5)
+        #expect(model.currentPhoto?.rating.stars == 0)
         model.perform(.toggleKeep)
         #expect(model.currentPhoto?.rating.keep == false)
         #expect(model.currentPhoto?.tier == .unrated)

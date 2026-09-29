@@ -76,11 +76,16 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
 
     public func setListener(_ listener: any CoreSessionListener) {
         // The listener is fixed at construction, because UniFFI takes it as a `Box<dyn
-        // SessionListener>` on `Session::open`. It stays in the protocol because the seam is the
-        // contract; here it can only confirm that it was handed back the one it already holds.
-        precondition(
-            (listener as AnyObject) === bridge,
-            "UniFFI passes the listener to Session.open; it cannot be swapped afterwards")
+        // SessionListener>` on `Session::open` and cannot swap it afterwards. It stays in the
+        // protocol because the seam is the contract.
+        //
+        // This used to be a `precondition`, which trapped with EXC_BREAKPOINT and killed the app on
+        // launch: `AppModel.init` does `backend.listener = self`, and the bridge it hands in is a
+        // different object from the one held here, so the check failed on a correct program. A
+        // documented no-op is the honest behaviour — the model always gets the bridge back, because
+        // the bridge is what forwards to whatever the model registered — and a trap here can only
+        // ever be a false alarm about code that is working as designed.
+        _ = listener
     }
 
     public func snapshot() -> SessionData {

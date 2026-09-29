@@ -21,10 +21,15 @@ struct RatingVisualsTests {
 
   @Test("Keep rings are green for keeps and red for not-keeps (task.md §6.2)")
   func keepRings() {
-    #expect(RatingVisuals.keepRingColor(Rating(keep: true)) == NSColor.systemGreen)
-    #expect(RatingVisuals.keepRingColor(Rating()) == NSColor.systemRed)
-    #expect(RatingVisuals.keepRingColor(Rating(stars: 4)) == NSColor.systemGreen)
-    #expect(RatingVisuals.isKeep(Rating(stars: 3)) == false)
+    #expect(RatingVisuals.keepRingColor(Rating(keep: true), mode: .keep) == NSColor.systemGreen)
+    #expect(RatingVisuals.keepRingColor(Rating(), mode: .keep) == NSColor.systemRed)
+    #expect(RatingVisuals.keepRingColor(Rating(stars: 4), mode: .keep) == NSColor.systemGreen)
+    #expect(RatingVisuals.isKeep(Rating(stars: 3), mode: .keep) == false)
+    // 3 stars is a "Good", not a keep: the ring rule is mode-aware and threshold-driven, and the
+    // old version here ignored both. A 3-star photo in keep mode must not claim to be a keep, or
+    // the Finish step keeps a photo the user only thought was well exposed.
+    #expect(RatingVisuals.isKeep(Rating(stars: 3), mode: .stars) == false)
+    #expect(RatingVisuals.isKeep(Rating(stars: 5), mode: .stars) == true)
   }
 
   @Test("A star path is a closed ten-point polygon")

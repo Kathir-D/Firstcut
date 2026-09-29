@@ -33,7 +33,10 @@ public enum RatingRules {
     public static func isKeep(_ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold) -> Bool {
         switch mode {
         case .stars: rating.stars >= UInt8(keepThreshold)
-        case .keep: rating.keep
+        // A 4–5 star photo is a keep in *both* modes, so switching to keep mode must not make the
+        // user's keeps vanish. That promotion is a **display** rule: the stored `keep` stays false
+        // and the stored `stars` stay four. See `synchronized` for why the write-back is the bug.
+        case .keep: rating.keep || Int(rating.stars) >= keepThreshold
         }
     }
 
@@ -43,7 +46,7 @@ public enum RatingRules {
         if rating.flag == .reject { return .rejected }
         switch mode {
         case .keep:
-            return rating.keep ? .keep : .unrated
+            return isKeep(rating, mode: mode, keepThreshold: keepThreshold) ? .keep : .unrated
         case .stars:
             // §6.1: 5 or 4 is a full keep, and the boundary is the setting, not a constant, so a
             // photographer who wants only 5-star keeps can ask for it.
@@ -73,20 +76,41 @@ public enum RatingRules {
         return synchronized(rating, mode: mode, keepThreshold: keepThreshold)
     }
 
-    /// Restores the invariant after a mutation: in stars mode `keep` follows `stars`; in keep mode a
-    /// keep with no stars is recorded as 5 so the two never contradict (the §6 "keep ↔ 5 stars"
-    /// mapping).
+    /// Restores the invariant after a mutation.
+    ///
+    /// **Only one direction, and it is the one the storage model uses.** In *stars* mode a rating
+    /// change writes `stars` and leaves `keep` alone; in *keep* mode a keep is stored as `keep` and
+    /// `stars` stays 0.
+    ///
+    /// The earlier version ran the rule the other way as well — in stars mode it set
+    /// `keep = stars >= keepThreshold`. That looks harmless and is not: the display already
+    /// promotes 4–5 stars to a keep in keep mode (`display_rating`, one implementation of which lives
+    /// in Rust as `store::rating::display_rating`), so writing `keep` back from `stars` stored a mode
+    /// the user was not in, and then `Session::set_rating` mapped *that* to XMP. The visible symptom
+    /// was a 4-star photo whose sidecar said `xmp:Rating="0"` — Lightroom reads that as unrated, so
+    /// the rating vanished on export. It is the write-back hazard REV-31 and REV-69 are about, and it
+    /// was reachable from a keystroke.
+    ///
+    /// The tier a photo is *displayed* in is computed from the rating on the way out
+    /// (`tier(of:mode:keepThreshold:)`); nothing needs a second field kept in step.
     public static func synchronized(
         _ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold
     ) -> Rating {
-        var result = rating
+        rating
+    }
+
+    /// The star count to **display** for a rating, in the given mode.
+    ///
+    /// A keep stored with `stars == 0` would read as Unrated in stars mode, so it shows as the 5
+    /// stars it means (task.md §6: "a keep ↔ 5 stars"). This is the display half of that rule;
+    /// `synchronized` is deliberately the *storage* half, and it does not write it back.
+    public static func displayStars(
+        _ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold
+    ) -> UInt8 {
         switch mode {
-        case .stars:
-            result.keep = Int(result.stars) >= keepThreshold
-        case .keep:
-            if result.keep, result.stars == 0 { result.stars = 5 }
+        case .stars: rating.stars == 0 && rating.keep ? keepStars : rating.stars
+        case .keep: rating.stars
         }
-        return result
     }
 
     /// Star count for a keep, used when a keep is created from the flag key in keep mode.

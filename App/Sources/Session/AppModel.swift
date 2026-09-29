@@ -46,6 +46,11 @@ public final class AppModel: SessionListener, KeyRouterSource {
     public private(set) var keymap: Keymap
     public let images: any ImageProviding
 
+    /// The concrete provider, for the composition root. `images` is existential because the tests
+    /// and previews pass a mock; this is the real one, and the viewer has to share it rather than
+    /// build a second — see `AppEnvironment.init`.
+    public var imageProvider: ImageProvider? { images as? ImageProvider }
+
     /// ui owns these two; the model asks, it doesn't do.
     public var onRequestOpenFolder: (() -> Void)?
     public var onRequestToggleFullScreen: ((Bool) -> Void)?
@@ -199,6 +204,18 @@ public final class AppModel: SessionListener, KeyRouterSource {
         reindexPhotos()
         rebuildBatches(from: data.batches, visited: data.visited)
         recomputeCounts()
+
+        // Hand the pipeline the folder and the photo list *before* anything asks it for an image.
+        //
+        // This was missing, and the app looked broken in a way nothing pointed at: the window came
+        // up, the toolbar said "Batch 1 of 1 — IMG_6117.CR3", the HUD counted 10 photos, and both
+        // the viewer and every filmstrip cell were black. The provider had no file table, so
+        // `thumbnail` and `displayImage` both returned nil for every id and the app reported no
+        // error at all. `setFocus` alone is not enough — it says *which* photos to keep ready, and
+        // not *where they are*.
+        if let provider = images as? ImageProvider {
+            provider.open(folder: URL(fileURLWithPath: data.folder), photos: data.photos)
+        }
 
         // Resume where the user left off, else the first photo of the first batch (§9.4, §11).
         if let cursor = data.cursor, let batch = batchIndexByID[cursor.batch],

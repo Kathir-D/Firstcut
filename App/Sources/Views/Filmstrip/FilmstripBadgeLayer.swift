@@ -7,26 +7,33 @@ import AppKit
 import QuartzCore
 
 enum RatingVisuals {
-  static func isKeep(_ rating: Rating) -> Bool {
-    rating.keep || rating.stars >= 4
+  /// Keep, for the mode the user is working in. This used to be `rating.keep || rating.stars >= 4`
+  /// with the threshold hard-coded and the mode ignored — a fourth copy of the rating-mode rule
+  /// (REV-31, REV-69). It disagreed with `RatingRules` for a photo rated 3 stars in keep mode, which
+  /// is a "Good" in stars mode and correctly *not* a keep. Read the one implementation instead.
+  static func isKeep(_ rating: Rating, mode: RatingMode) -> Bool {
+    RatingRules.isKeep(rating, mode: mode)
   }
 
-  static func showsStars(_ rating: Rating) -> Bool {
-    starCount(for: rating) > 0
+  static func showsStars(_ rating: Rating, mode: RatingMode = .stars) -> Bool {
+    starCount(for: rating, mode: mode) > 0
   }
 
   /// REV-76: the number of stars drawn for a rating. Exactly `stars`, never padded to five, so a
   /// 3-star photo shows three stars and reads as 3 rather than as 3-out-of-4.
-  static func starCount(for rating: Rating) -> Int {
-    min(max(Int(rating.stars), 0), 5)
+  ///
+  /// In stars mode a keep shows the 5 stars it means (task.md §6) — the display half of the mapping,
+  /// via `RatingRules.displayStars`. Reading `rating.stars` directly showed a keep as Unrated.
+  static func starCount(for rating: Rating, mode: RatingMode = .stars) -> Int {
+    min(max(Int(RatingRules.displayStars(rating, mode: mode)), 0), 5)
   }
 
   static func showsFlag(_ rating: Rating) -> Bool {
     rating.flag != .none
   }
 
-  static func keepRingColor(_ rating: Rating) -> NSColor {
-    isKeep(rating) ? .systemGreen : .systemRed
+  static func keepRingColor(_ rating: Rating, mode: RatingMode) -> NSColor {
+    isKeep(rating, mode: mode) ? .systemGreen : .systemRed
   }
 }
 
@@ -58,7 +65,7 @@ final class FilmstripBadgeLayer: CALayer {
     }
     switch mode {
     case .stars:
-      if RatingVisuals.showsStars(rating) { drawStars(in: context, size: size) }
+      if RatingVisuals.showsStars(rating, mode: mode) { drawStars(in: context, size: size) }
       if RatingVisuals.showsFlag(rating) { drawFlag(in: context, size: size) }
     case .keep:
       drawKeepRing(in: context, bounds: bounds)
@@ -71,7 +78,7 @@ final class FilmstripBadgeLayer: CALayer {
   /// outlined reads as "3 out of 4", which is the one reading that is wrong; Finder's gallery view
   /// shows filled stars only. Rating 0 draws nothing at all.
   private func drawStars(in context: CGContext, size: CGSize) {
-    let count = RatingVisuals.starCount(for: rating)
+    let count = RatingVisuals.starCount(for: rating, mode: mode)
     guard count > 0 else { return }
 
     let inset: CGFloat = 4
@@ -133,7 +140,7 @@ final class FilmstripBadgeLayer: CALayer {
   private func drawKeepRing(in context: CGContext, bounds: CGRect) {
     let lineWidth: CGFloat = 2
     let rect = bounds.insetBy(dx: lineWidth / 2 + 1, dy: lineWidth / 2 + 1)
-    context.setStrokeColor(RatingVisuals.keepRingColor(rating).cgColor)
+    context.setStrokeColor(RatingVisuals.keepRingColor(rating, mode: mode).cgColor)
     context.setLineWidth(lineWidth)
     context.addPath(
       CGPath(

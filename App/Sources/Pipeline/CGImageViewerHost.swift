@@ -104,7 +104,15 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     let scale = zoom.isFinite && zoom > 0 ? zoom : 1
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    // Scale about the zoom anchor so a click-to-100% lands on the pixel under the cursor.
+    // Centre, then scale about the zoom anchor.
+    //
+    // Setting `position` after `anchorPoint` matters: `anchorPoint` is in unit coordinates of the
+    // layer's *own* bounds, and the image is drawn with `resizeAspect` inside `bounds`. Pinning the
+    // position to `bounds.midX/midY` with a non-centred anchor put the photograph in the top-right
+    // corner at 1:1 — which looked like a decoding failure rather than a layout mistake, and cost a
+    // while to tell apart from "the viewer is black".
+    imageLayer.contentsGravity = .resizeAspect
+    imageLayer.frame = CGRect(origin: .zero, size: bounds.size)
     imageLayer.anchorPoint = CGPoint(x: anchor.x, y: anchor.y)
     imageLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
     imageLayer.transform = CATransform3DMakeScale(scale, scale, 1)
