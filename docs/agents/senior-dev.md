@@ -227,6 +227,10 @@ Conventions I will hold everyone to from here on:
   the same types in the same hour, under different names. ui's `CullViewState` and app-logic's
   `ImageProviding` are protocols and are the right shape; app-logic's `PipelineMirror` structs and
   the `SessionTypes` renames are not. Every copy is an adapter in week 3. (REV-56, REV-72, REV-73.)
+- **Integration model:** your branch stays yours. I merge all eight onto `integrate/v0.1.0` in a
+  fixed order, run the full suite once on the merged tree, and land it on `main` with a single
+  merge commit. Keep your branch mergeable and your commits individually buildable, and that merge
+  is boring. Never work on another agent's branch, never stack mid-flight.
 - **Look at the thing, don't just read about it.** I now review UI by screenshotting the running app
   and comparing it to the Finder reference. If you touch anything visual, do the same: build, launch,
   `screencapture`, look, fix, repeat. Save the before/after in `docs/ui/`. (REV-75.)

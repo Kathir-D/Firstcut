@@ -22,12 +22,37 @@ that same PR for the rest of the project. Do not open a second PR, do not close 
 yourself, do not force-push, do not rebase `main`. `git merge origin/main` into your branch often —
 that is the only way to stay mergeable with eight other people.
 
-**I own every merge, in a fixed order, as a stack.** When the work is done I will merge the branches
-bottom-up in this order, so the shared files never conflict:
+**Development stays isolated; integration happens once, at the end, on my branch.** Do **not** work
+on anyone else's branch and do **not** stack onto each other mid-flight — eight agents rebasing each
+other is slower and far more fragile than disjoint branches, and a branch can only be checked out
+in one worktree anyway. Your isolation while you work is exactly what makes the final integration
+boring.
 
-`infra → core-meta → core-batch → core-store → pipeline → app-logic → ui → qa`
+When the project is functionally complete I will:
 
-infra goes first because it owns `Cargo.lock`, `core/*/Cargo.toml`, `project.yml`, `build.md` and
+```sh
+git switch -c integrate/v0.1.0 main
+git merge --no-ff agent/infra         # fixed order, below
+git merge --no-ff agent/core-meta
+git merge --no-ff agent/core-batch
+git merge --no-ff agent/core-store
+git merge --no-ff agent/pipeline
+git merge --no-ff agent/app-logic
+git merge --no-ff agent/ui
+git merge --no-ff agent/qa
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+scripts/build-core.sh && xcodegen && xcodebuild … test      # the whole tree, once
+git merge --no-ff integrate/v0.1.0 main                      # ← ONE merge, all eight agents
+```
+
+I resolve the conflicts, because every one of them is in a file with exactly one owner. **Your job is
+to make that merge boring:** commit and push often so integration never meets a week of unpushed
+work; keep your branch mergeable with a regular `git merge origin/main`; touch only files you own;
+never leave a commit that does not build on its own branch; and when I ask you to rebase or re-run
+the suite during integration, do it immediately, because you are on the critical path to the release
+at that point.
+
+infra merges first because it owns `Cargo.lock`, `core/*/Cargo.toml`, `project.yml`, `build.md` and
 `ci.yml` — the files every other branch will conflict on. **Concretely: when you merge `origin/main`
 after infra lands, `core/Cargo.lock` will conflict, and "take main's version" (the current rule in
 `build.md`) will silently delete your dependency.** The resolution is three commands:
