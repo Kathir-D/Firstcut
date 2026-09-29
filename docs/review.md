@@ -26,7 +26,7 @@ _Last review pass: 2026-09-29 — pass 1, pre-flight: 6 contract drafts + the bo
 ## Contract approvals
 
 Reviewed 2026-09-29. **No contract is approved for the v1.0 freeze yet** — each has open P1s. Fix the
-P1s in the owning agent's section, add a changelog line, and re-request approval. Add aditive changes
+P1s in the owning agent's section, add a changelog line, and re-request approval. Additive changes
 freely; a change that removes or reshapes a published field is breaking and needs the protocol
 (**Proposed changes** + acknowledgement from every consumer and senior-dev).
 
@@ -35,17 +35,17 @@ freely; a change that removes or reshapes a published field is breaking and need
 | build.md | v0.1 | reviewed — changes requested | All agents: REV-5 … REV-13 (shared build config; infra implements). |
 | photo-meta.md | v0.1 | reviewed — changes requested | REV-14 … REV-21. Owner: core-meta. |
 | batching.md | v0.1 | reviewed — changes requested | REV-22 … REV-29. Owner: core-batch. |
-| session-api.md | v0.1 | reviewed — changes requested | REV-30 … REV-36. Owner: core-store. |
-| pipeline-api.md | v0.1 | reviewed — changes requested | REV-37 … REV-43. Owner: pipeline. |
-| app-model.md | v0.1 | reviewed — changes requested | REV-44 … REV-50. Owner: app-logic. |
+| session-api.md | v0.1 | reviewed — changes requested | REV-30 … REV-37. Owner: core-store. |
+| pipeline-api.md | v0.1 | reviewed — changes requested | REV-38 … REV-45. Owner: pipeline. |
+| app-model.md | v0.1 | reviewed — changes requested | REV-46 … REV-51. Owner: app-logic. |
 
 Cross-contract consistency notes that are **not** findings, just decisions to keep:
 
 - `PhotoId` / `BatchId` as opaque `u64` newtypes and Swift `typealias PhotoID = UInt64` agree. Good.
 - `Rating`, `RatingMode`, `Flag`, `ColorLabel`, `Batch`, `VisualSig`, `PhotoMeta` in
   `CoreTypes.swift` match the Rust contracts field for field (checked by hand). Only the *serialization*
-  and *extra conformance* rules are missing — REV-7, REV-17.
-- Ownership of shared Swift type declarations was not assigned anywhere; REV-6, REV-41 and REV-46
+  and *extra conformance* rules are missing — REV-7, REV-16.
+- Ownership of shared Swift type declarations was not assigned anywhere; REV-6, REV-40 and REV-45
   assign it. Do not declare another agent's type in your own folder.
 
 ## Measured facts I verified myself (for task.md §3 — core-meta owns the edit, see REV-19)
