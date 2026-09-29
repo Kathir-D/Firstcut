@@ -1,0 +1,139 @@
+name: CI
+
+# Owner: infra. Every push and PR: Rust fmt/clippy/tests, then the Swift build and tests.
+# The release build itself is in release.yml (tags only).
+#
+# The exact local equivalent, from a clean worktree:
+#   source ~/.cargo/env
+#   cargo fmt  --manifest-path core/Cargo.toml --all --check
+#   cargo clippy --manifest-path core/Cargo.toml --all-targets --all-features -- -D warnings
+#   cargo test --manifest-path core/Cargo.toml --all-features
+#   ./scripts/build-core.sh && xcodegen
+#   xcodebuild -project Firstcut.xcodeproj -scheme Firstcut \
+#     -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd test
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DERIVED_DATA: build/dd
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    # macos-15 is the arm64 (M1) image for public repos; macos-15-intel would be the wrong one,
+    # Firstcut is Apple Silicon only (task.md §2).
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          rustc --version
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: ${{ runner.os }}-rust-${{ hashFiles('core/Cargo.lock') }}
+
+      - name: rustfmt
+        run: cargo fmt --manifest-path core/Cargo.toml --all --check
+
+      - name: clippy
+        run: cargo clippy --manifest-path core/Cargo.toml --all-targets --all-features -- -D warnings
+
+      - name: test
+        run: cargo test --manifest-path core/Cargo.toml --all-features
+
+      - name: release build (arm64 static library)
+        run: cargo build --manifest-path core/Cargo.toml --package firstcut-core --release --target aarch64-apple-darwin
+
+  swift:
+    name: Swift (build, tests)
+    runs-on: macos-15
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        # 16.4 is the newest Xcode on the macos-15 image and the last one whose SDK is macOS 15,
+        # which is our deployment target. If the image moves on, the default is fine too.
+        run: |
+          if [ -d /Applications/Xcode_16.4.app ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app
+          fi
+          xcodebuild -version
+          swift --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: ${{ runner.os }}-rust-${{ hashFiles('core/Cargo.lock') }}
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DERIVED_DATA }}
+          key: ${{ runner.os }}-dd-${{ hashFiles('project.yml', 'core/firstcut-core/src/**', 'App/**') }}
+          restore-keys: ${{ runner.os }}-dd-
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Build the Rust core and generate the Swift bindings
+        run: ./scripts/build-core.sh
+
+      - name: Generate the Xcode project
+        run: xcodegen
+
+      - name: Build
+        run: |
+          set -o pipefail
+          XCBEAUTIFY=xcbeautify
+          command -v xcbeautify >/dev/null || XCBEAUTIFY=cat
+          xcodebuild build \
+            -project Firstcut.xcodeproj \
+            -scheme Firstcut \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$DERIVED_DATA" \
+            | "$XCBEAUTIFY"
+
+      - name: Test
+        run: |
+          set -o pipefail
+          XCBEAUTIFY=xcbeautify
+          command -v xcbeautify >/dev/null || XCBEAUTIFY=cat
+          xcodebuild test \
+            -project Firstcut.xcodeproj \
+            -scheme Firstcut \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$DERIVED_DATA" \
+            | "$XCBEAUTIFY"
+
+      - name: swift-format lint (advisory)
+        # Reported, not enforced: enforcing it now would block every agent whose files have not
+        # been formatted yet. Flip `continue-on-error` off once the tree is formatted.
+        continue-on-error: true
+        run: swift-format lint --strict --recursive App/Sources App/Tests
+
+      - name: Upload the log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firstcut-swift-log
+          path: ${{ env.DERIVED_DATA }}/Logs/Build
+          retention-days: 7
+          if-no-files-found: ignore

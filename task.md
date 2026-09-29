@@ -747,17 +747,20 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 
 ### Build
 
-- [ ] `scripts/build-core.sh`: `cargo build --release --target aarch64-apple-darwin`, generate UniFFI
+- [x] `scripts/build-core.sh`: `cargo build --release --target aarch64-apple-darwin`, generate UniFFI
       Swift bindings, package `FirstcutCore.xcframework`.
-- [ ] XcodeGen `project.yml` → `Firstcut.xcodeproj` (generated, git-ignored), pre-build phase runs
+- [x] XcodeGen `project.yml` → `Firstcut.xcodeproj` (generated, git-ignored), pre-build phase runs
       `build-core.sh` when Rust sources changed.
-- [ ] `scripts/build-app.sh`: build-core → xcodegen → `xcodebuild` Release → ad-hoc sign → `dist/Firstcut.app`.
+- [x] `scripts/build-app.sh`: build-core → xcodegen → `xcodebuild` Release → ad-hoc sign → `dist/Firstcut.app`.
 - [ ] Swift 6 strict concurrency, warnings as errors in CI; `cargo clippy -D warnings`, `rustfmt`,
-      `swift-format`.
+      `swift-format`. (strict concurrency + `clippy -D warnings` + `rustfmt` are enforced;
+      `swift-format` runs advisory until the tree is formatted, then it becomes an error)
 
 ### CI (GitHub Actions, `macos-latest` arm64 runners)
 
-- [ ] On PR/push: Rust fmt/clippy/test, Swift build + unit tests, batching regression on metadata dumps.
+- [x] On PR/push: Rust fmt/clippy/test, Swift build + unit tests, batching regression on metadata dumps
+      (the regression tests are core-batch's; CI just runs `cargo test`, so they are included the
+      moment they land).
 - [ ] On tag `v*`: `scripts/build-app.sh` builds Release, stamps `VERSION` + an increasing build number,
       **ad-hoc signs** (`codesign --force --deep -s -`), zips `Firstcut-<version>.zip`, attaches it to a
       GitHub Release with its SHA-256.
@@ -823,11 +826,13 @@ Each milestone ends with something runnable and measured.
 - [x] exiftool fixtures for all four games (`tests/fixtures/exiftool/`).
 - [x] One worktree + branch per agent.
 - [x] Shared Swift stand-in types (`App/Sources/Shared/CoreTypes.swift`).
-- [ ] UniFFI set up.
+- [x] UniFFI set up.
 - [x] `project.yml` + placeholder app and three test targets (builds, tests pass).
-- [ ] The app calls one Rust function through UniFFI ("hello").
-- [ ] `scripts/build-core.sh`, `scripts/build-app.sh`, `VERSION`.
-- [ ] CI skeleton (fmt, clippy, tests, app build).
+- [x] The app calls one Rust function through UniFFI ("hello") — `FirstcutCoreBridge.greeting`,
+      asserted by `App/Tests/Unit/Core/CoreBridgeTests.swift`; ui asked to show it in the
+      placeholder window (REQ-infra-1).
+- [x] `scripts/build-core.sh`, `scripts/build-app.sh`, `VERSION`.
+- [x] CI skeleton (fmt, clippy, tests, app build).
 
 ### M1 — Core scan + order + batch (CLI)
 
