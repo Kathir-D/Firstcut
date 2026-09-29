@@ -38,7 +38,7 @@ Firstcut/
 ├── tests/fixtures/           # core-batch (ground truth, metadata dumps); core-meta (header byte fixtures in fixtures/headers/)
 ├── Casks/  .github/  project.yml  VERSION  README.md  LICENSE   # infra
 ├── task.md                   # everyone may tick their own boxes
-└── docs/                     # see task.md §0.7
+└── docs/                     # see task.md §0.8
 ```
 
 ## Names
@@ -93,6 +93,12 @@ Firstcut/
 - **Landing work**: open a PR from `agent/<agent>` to `main` (`gh pr create`) and merge it once CI is
   green and senior-dev hasn't requested changes (a P0 finding in your area blocks merging). Ownership is disjoint, so conflicts should be rare. If you hit one in a file you don't own,
   stop and file a request rather than resolving it yourself.
+- **Until infra's CI workflow exists**, "CI green" means you ran the checks locally in your worktree
+  before merging: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` (in `core/`), then
+  `xcodegen` and the Swift test command above. Say so in the PR description.
+- **Keep `main` green**: after merging, pull `main` and re-run the checks. If `main` is broken and your
+  merge caused it, fix it or revert your merge (`git revert`, never a force-push) right away, and note
+  it in your status file. If it isn't yours, tell the owner through a request and tell senior-dev.
 - Commit messages: `<agent>: <what>` (for example `core-batch: adaptive frame interval`).
 
 ## Changelog

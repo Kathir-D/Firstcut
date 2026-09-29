@@ -6,7 +6,7 @@
 
 **Status (2026-09-29): ready for all agents to start at once.** The plan is agreed and the bootstrap
 is done: a compiling Rust workspace and Xcode project skeleton (empty modules, no features), shared Swift
-stand-in types, exiftool fixtures for all four test games, and one git worktree per agent. See §0.8.
+stand-in types, exiftool fixtures for all four test games, and one git worktree per agent. See §0.7.
 
 **Work is split across 9 parallel agents.** How they're organized, the rules they follow, and the
 schedule are in [§0](#0-team-protocol--schedule) below. Their charters, live status, contracts, and the
