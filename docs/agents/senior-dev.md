@@ -125,21 +125,98 @@ Commit and push review.md after every review pass; others read it live from your
 
 ## Live status
 
-_Last updated: — (not started)_
+_Last updated: 2026-09-29, pass 1_
 
 ### Current focus
 
-Not started. Ready to start (bootstrap done, see task.md §0.7).
+Pre-flight review of the six v0.1 contract drafts and the bootstrap skeleton, before anything is
+frozen or built on. 55 findings filed (0 P0 · 23 P1 · 29 P2 · 3 P3). No P0: nothing built yet
+violates anything, and inventing a P0 to look thorough would waste your time.
+
+Next: keep the board current as PRs appear, verify each `fixed in <commit>`, and re-approve each
+contract for the v1.0 freeze once its P1s are closed. No P0 has ever been filed in this project;
+if you think I have missed a real one, tell me.
 
 ### Review passes
 
 | Date | Scope reviewed | Findings filed | Commit |
 | --- | --- | --- | --- |
+| 2026-09-29 | Pre-flight: all 6 contract drafts, `task.md` §0.2–§0.8 + §3, the bootstrap skeleton (`core/` workspace, `project.yml`, `CoreTypes.swift`, exiftool fixtures), and a measured check of §3 against the fixtures | REV-1 … REV-55 | this commit |
+
+Verified myself, not taken on trust: `cargo test` + `cargo fmt --check` + `cargo clippy` clean;
+`xcodegen` → `xcodebuild test` → TEST SUCCEEDED; §3 recomputed from all 2,880 exiftool records
+(results are in `docs/review.md`, "Measured facts I verified myself").
+
+### Done log
+
+| Date | What | Commit |
+| --- | --- | --- |
+| 2026-09-29 | Contract pre-flight review, 55 findings, no contract approved for freeze | see branch `agent/senior-dev` |
 
 ### Blockers
 
-None.
+- Waiting on the owner for the task.md §0.4 wording change in REV-1 (I can propose, not apply).
+  Mitigated by the banner at the top of `review.md` and by asking each agent to put the live path
+  in their own Notes.
+- Nothing else. No contract freeze can happen until the P1s land; that is the plan, not a blocker.
+
+### Requests to others
+
+| ID | To | Need | Why | Status |
+| --- | --- | --- | --- | --- |
+| REQ-senior-dev-1 | infra | `.swift-format` config + a reformat of the 4 bootstrap files, before anyone else formats anything (REV-5) | 4 Swift agents, one repo, no config: everyone picks a different style and CI fails on all of them | open |
+| REQ-senior-dev-2 | pipeline, app-logic | the wave-1 shared-type declarations (`ImageProvider` + supporting types; `AppModel`, `Command`, `Phase`, `ViewerState`, `CullProgress`) landed in your own folders in wave 1, and a line in Notes when they exist (REV-40, REV-45) | the other three Swift agents are currently unable to compile against types that do not exist | open |
+| REQ-senior-dev-3 | core-batch | the CLI subcommand convention (`src/cmd/<name>.rs` + one registration line per request) published in your Notes this week (REV-8) | core-meta's `firstcut verify` is a wave-2 end-goal and is currently blocked on your crate | open |
+
+### Incoming requests
+
+Requests from other agents (`REQ-…`) and senior-dev findings from `docs/review.md` (`REV-…`).
+
+| ID | From | Response | Status |
+| --- | --- | --- | --- |
+| — | — | I file findings, I don't receive them. If an agent sends me a `REQ-senior-dev-n`, it goes in the table above. | — |
 
 ### Notes for other agents
 
-(Recurring patterns you're seeing, conventions you want everyone to follow.)
+**Read the review board here, not from your own checkout:**
+`~/Documents/projects/Firstcut-wt/senior-dev/docs/review.md` — your worktree's copy is from `main`
+and has none of the 55 findings in it. (REV-1.)
+
+Conventions I will hold everyone to from here on:
+
+- **Never write logic against the stand-in types in `CoreTypes.swift`.** They are scaffolding that
+  infra deletes when UniFFI lands. Treat them as the *shape* of the contract, not as a library:
+  no extensions, no added conformances, no reliance on the memberwise `Rating(stars: 0, …)` init.
+  (REV-6, REV-7.)
+- **Declare your shared Swift types in your own folder, in wave 1, and announce them in Notes.**
+  `ImageProvider` and friends are pipeline's; `AppModel`/`Command`/`ViewerState` are app-logic's.
+  Nobody hand-rolls a copy. This is the single biggest day-one unblocker. (REV-40, REV-45.)
+- **A claim without a measurement is not a done.** I will run the check myself if it matters
+  (`cargo test`, `firstcut eval`, the perf table in `docs/qa/perf-baselines.md`, a real
+  `xcodebuild test`). `session-api.md`'s "set_rating < 1 ms" is currently an estimate in a
+  contract; core-store, either measure it or change it. (REV-33.)
+- **Determinism is a feature, not an aspiration.** No `HashMap` iteration in any algorithm whose
+  output is persisted or compared. (REV-24.)
+- **Identity must survive a rename.** `PhotoId` as a path hash loses ratings when a file is
+  renamed; §11 requires graceful rename handling. Fix the contract, not the symptom. (REV-15.)
+- **I am not the owner of anything you are.** If I disagree with a finding, dispute it in your
+  status file with the reason and we go to the owner together. Do not quietly skip a finding, and
+  do not treat "senior-dev said so" as a substitute for understanding the change.
+- **Measured facts beat remembered facts.** task.md §3 had two wrong numbers (drive mode, the
+  "13 gaps"); I recomputed all of it from the fixtures and the corrected table is at the top of
+  `review.md`. When you record a measurement, record how you measured it, so the next agent can
+  re-derive it instead of trusting it.
+
+**Proposed text for task.md §0.4 (owner approval needed, REV-1).** Replace the review-board step
+with:
+
+> 2. Read **[`docs/review.md`](docs/review.md)** — the live copy is
+>    `~/Documents/projects/Firstcut-wt/senior-dev/docs/review.md`. The copy in your own checkout is
+>    from `main` and is stale. Fix every open item addressed to you or to "All agents" before
+>    starting new work, highest severity first.
+
+and add to the end of §0.4:
+
+> **Notification.** senior-dev learns about work by polling `git log --all` and the worktrees, not
+> by being told. Push at least once per work session, even if the work is incomplete — a pushed
+> branch is the signal that a review pass is wanted.
