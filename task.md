@@ -16,163 +16,184 @@ senior dev's review board live in [`docs/`](docs/).
 
 ## 0. Team, protocol & schedule
 
-> Every agent reads this section at the start of every work session.
+> Every session starts by reading this section.
 
 ### 0.1 Roster
 
+Two agents. One writes, one reviews and merges. This replaced a nine-agent parallel arrangement on
+2026-09-29; the reason and the consequences are in [§0.10](#010-why-two-agents).
+
 | Agent | Mission | End goal (done when…) | Owns | Charter + status |
 | --- | --- | --- | --- | --- |
-| **senior-dev** | Technical lead and reviewer for everything | Every merged change has been reviewed; no open P0/P1 findings at any wave gate; contracts are consistent; v0.1.0 signed off | `docs/review.md`, `docs/agents/senior-dev.md` | [docs/agents/senior-dev.md](docs/agents/senior-dev.md) |
-| **infra** | Build system, Rust↔Swift bridge, CI, releases, Homebrew, README | `scripts/build-app.sh` produces a signed `dist/Firstcut.app` with the Rust core; CI green; a `v*` tag publishes the zip and updates the Homebrew cask | `core/Cargo.toml`, `core/firstcut-core/src/lib.rs` + `ffi.rs`, `App/Sources/Shared/`, `project.yml`, `scripts/`, `.github/`, `Casks/`, `VERSION`, `README.md`, `LICENSE`, dotfiles | [docs/agents/infra.md](docs/agents/infra.md) |
-| **core-meta** | Read every file's metadata fast and correctly | `scan_folder()` returns a complete `PhotoMeta` for all four test games in < 3 s, matching exiftool on every field; every §8 format handled | `core/firstcut-core/src/{scan,meta,formats}/`, `tests/fixtures/headers/` | [docs/agents/core-meta.md](docs/agents/core-meta.md) |
-| **core-batch** | Turn photos into correct bursts | ≥ 98% boundary F1 against visually verified ground truth for all four games; deterministic; < 2 s for 1,500 files | `core/firstcut-core/src/{order,batch}/`, `core/firstcut-cli/`, `tests/fixtures/{meta,ground-truth}/` | [docs/agents/core-batch.md](docs/agents/core-batch.md) |
-| **core-store** | Persist everything safely | Session DB, XMP sidecars, undo/redo, resume, and Finish Cull file ops all work, survive crashes, never touch originals | `core/firstcut-core/src/{store,xmp,fileops}/`, `src/session.rs` | [docs/agents/core-store.md](docs/agents/core-store.md) |
-| **pipeline** | Zero-wait decoding and display | Holding → through a whole game never misses the cache in the previous/current/next batch; every §7.3 target met and measured | `App/Sources/{Pipeline,Render}/` | [docs/agents/pipeline.md](docs/agents/pipeline.md) |
-| **app-logic** | State, commands, keymap, rating rules | Every command works end to end through `AppModel` with undo, both rating modes, auto-advance, remappable keys, all unit-tested | `App/Sources/{Session,Input,Settings/Model}/`, `App/Resources/DefaultKeymap.json` | [docs/agents/app-logic.md](docs/agents/app-logic.md) |
-| **ui** | Finder look with Liquid Glass | Every §9 screen exists, driven by `AppModel`, and passes a side-by-side check with Finder on macOS 26 and 15 | `App/Sources/{App,Views,Settings/Views}/`, `App/Resources/Assets.xcassets`, `docs/ui/` | [docs/agents/ui.md](docs/agents/ui.md) |
-| **qa** | Independent proof it works | Integration, performance, and stress suites pass for all four games in both modes; baselines recorded; no open P0/P1 bugs | `App/Tests/{Integration,Performance}/`, `docs/qa/` | [docs/agents/qa.md](docs/agents/qa.md) |
+| **senior-dev** | Technical lead. Reviews every change, owns the contracts' consistency, runs the gates, merges to `main` | No open P0/P1 at any wave gate; v0.1.0 signed off; the tag is pushed | `docs/review.md`, `docs/agents/senior-dev.md`, `task.md` §0, merges to `main` | [docs/agents/senior-dev.md](docs/agents/senior-dev.md) |
+| **worker** | Writes everything else, in the order of the critical path | Every deliverable in §0.5 is ticked and signed off; `scripts/build-app.sh` produces a working signed app; a `v*` tag ships it | Everything except `docs/review.md` and `docs/agents/senior-dev.md` | [docs/agents/worker.md](docs/agents/worker.md) |
 
-### 0.2 How the agents fit together
+There is no second opinion on the code any more, so the review has to be the compensation: deep,
+measured, and adversarial. senior-dev does not write feature code, except in an emergency where a
+P0 must be fixed and the worker is mid-flight — in which case the fix is committed separately with a
+`senior-dev:` prefix and explained in `review.md`.
+
+### 0.2 How the two fit together
 
 ```
-              core-meta ──PhotoMeta──▶ core-batch ──Batch──┐
-                  │                                        ▼
-                  └──────PhotoMeta──────────────────▶ core-store (Session API)
-                                                           │  UniFFI (built by infra)
-                                                           ▼
- pipeline ◀──focus / viewport── app-logic ◀──────── Session API
-    │  VisualSig (thumbnail hashes) ──▶ core-batch (through the Session API)
-    └──images──▶ ui ◀──state + commands── app-logic
-
- qa: tests everyone.   infra: builds and ships everyone.   senior-dev: reviews everyone.
+                    ┌──────────── worker ────────────┐
+  task.md §0.5  →   │ core-meta → core-batch →        │  →  one branch
+  critical path     │ core-store → pipeline →          │     one PR
+                    │ app-logic → ui → qa              │     never merged
+                    └──────────────┬───────────────────┘     by the worker
+                                   │  push
+                    ┌──────────────▼───────────────────┐
+                    │ senior-dev: review, gate, merge  │  →  main
+                    └──────────────────────────────────┘
 ```
+
+Everything in one agent's head at once is the point: there is no handoff, so no duplicated type, no
+interface invented twice, and no waiting. The cost is that one context carries the whole project, so
+`docs/review.md` and this section are the shared memory — if the worker loses the thread, they are
+rebuilt from these two files, not from a summary.
 
 ### 0.3 Contracts
 
-A contract is the agreed interface between agents. Each has **one owner**, the only agent allowed to
-edit it. Consumers build against it with a mock until the real implementation lands, so nobody waits.
-
-| Contract | Owner | Consumers |
+| Contract | Owner | Approver |
 | --- | --- | --- |
-| [build.md](docs/contracts/build.md): repo layout, names, build/test commands, git workflow | infra | everyone |
-| [photo-meta.md](docs/contracts/photo-meta.md): `PhotoMeta`, `scan_folder()` | core-meta | core-batch, core-store, pipeline, app-logic, ui |
-| [batching.md](docs/contracts/batching.md): `order()`, `batch()`, `Batch`, `VisualSig` | core-batch | core-store, pipeline, app-logic |
-| [session-api.md](docs/contracts/session-api.md): the Swift-visible `Session` | core-store | app-logic, qa |
-| [pipeline-api.md](docs/contracts/pipeline-api.md): `ImageProvider`, viewer layer, stats | pipeline | app-logic, ui, qa |
-| [app-model.md](docs/contracts/app-model.md): `AppModel`, `Command`, keymap | app-logic | ui, qa |
+| [build.md](docs/contracts/build.md): repo layout, names, build/test commands, git workflow | worker | senior-dev |
+| [photo-meta.md](docs/contracts/photo-meta.md): `PhotoMeta`, `scan_folder()` | worker | senior-dev |
+| [batching.md](docs/contracts/batching.md): `order()`, `batch()`, `Batch`, `VisualSig` | worker | senior-dev |
+| [session-api.md](docs/contracts/session-api.md): the Swift-visible `Session` | worker | senior-dev |
+| [pipeline-api.md](docs/contracts/pipeline-api.md): `ImageProvider`, viewer layer, stats | worker | senior-dev |
+| [app-model.md](docs/contracts/app-model.md): `AppModel`, `Command`, keymap | worker | senior-dev |
 
-senior-dev approves every contract before it's frozen at v1.0 and reviews every breaking change.
+One owner for all six, so a breaking change is a conversation rather than a negotiation. senior-dev
+still approves every contract before its v1.0 freeze and reviews every breaking change.
 
 ### 0.4 Protocol
 
-**Always read other agents' files from their worktree, not from your own checkout.** Your checkout
-only has what's been merged to `main`. The live version of any file owned by agent X is at
-`~/Documents/projects/Firstcut-wt/X/<path>` (e.g. the review board is
-`~/Documents/projects/Firstcut-wt/senior-dev/docs/review.md`, and the photo-meta contract is
-`~/Documents/projects/Firstcut-wt/core-meta/docs/contracts/photo-meta.md`). Read them; never write there.
+**Reading other people's files is no longer a hazard** — there is only one worker, so there is one
+worktree that matters: `~/Documents/projects/Firstcut-wt/worker` on `agent/worker`. senior-dev reads
+from it and never writes to it.
 
 **Start of every work session**
-1. Read this §0, your own `docs/agents/<you>.md`, and [build.md](docs/contracts/build.md).
-2. Read **[`docs/review.md`](docs/review.md)** (live copy in the senior-dev worktree), the senior dev's review board. Fix every open item
-   addressed to you or to "All agents" before starting new work, highest severity first.
-3. Read the **Requests to others** section of every file in `docs/agents/` for anything addressed to you.
-4. Check the changelog of each contract you consume.
+1. Read this §0, then `docs/agents/worker.md` (or your own charter), then [build.md](docs/contracts/build.md).
+2. Read **[`docs/review.md`](docs/review.md)** — the live copy is
+   `~/Documents/projects/Firstcut-wt/senior-dev/docs/review.md`. The copy in your own checkout is
+   from `main` and is stale. Fix every open finding addressed to you or to "All agents" before
+   starting new work, highest severity first.
+3. Check the changelog of each contract you touch.
 
-**What you may edit**
-- ✅ The **Live status** section of your own `docs/agents/<you>.md`. The charter above it changes only
-  with the owner's approval.
-- ✅ Contracts you own, and code/test paths you own (roster **Owns** column).
-- ✅ `task.md`: only to tick boxes for work you own (see §0.6).
-- ❌ Everything else, including `docs/review.md` (senior-dev only). If you need a change elsewhere,
-  make a request.
+**What the worker may edit**
+- ✅ Every code path, every contract, its own `docs/agents/worker.md` Live status.
+- ✅ `task.md`: ticks boxes for its own deliverables and adds measurements to §3.
+- ❌ `docs/review.md` and `docs/agents/senior-dev.md` (senior-dev only). Requests, not edits.
 
-**Requests between agents**
-- Add a row under **Requests to others** in *your own* file: `REQ-<you>-<n>` · to · need · why · `open`.
-- The receiver copies the ID into its **Incoming requests** with a response (`accepted` /
-  `done in <commit>` / `declined: reason`); the requester marks it `closed`.
-- Blocked? Note it under **Blockers** with the ID and work on something else against a mock.
+**Responding to a finding.** Add a row to **Incoming requests** in your own status file:
+`REV-n` · `fixed in <sha>` or `disputed: <reason>`. senior-dev verifies against the diff and closes
+it in `review.md`. If you disagree, say why — an unresolved dispute goes to the owner, who decides.
+Never skip a finding silently.
 
-**Review findings from senior-dev**
-- Findings live in `docs/review.md` as `REV-<n>` with a severity:
-  **P0** blocker (stop and fix now; blocks merges in that area) · **P1** must fix before the wave gate ·
-  **P2** should fix · **P3** nit/suggestion.
-- To respond, add the `REV-<n>` to your **Incoming requests** with `fixed in <commit>` or
-  `disputed: reason`. senior-dev verifies and closes it in `review.md`.
-- If you disagree, say why; don't silently skip it. Unresolved disputes go to the owner, who decides.
-
-**Contract changes**
-- Additive: the owner edits the contract, adds a changelog line, ships.
-- Breaking: the owner proposes it under **Proposed changes**; every consumer and senior-dev acknowledge
-  it; then it ships with a changelog entry. Versions are `vMAJOR.MINOR`.
+**Contract changes.** Additive: edit, add a changelog line, ship. Breaking: propose it under
+**Proposed changes** in the contract, and do not merge until senior-dev has acknowledged it in
+`review.md`. Versions are `vMAJOR.MINOR`.
 
 **End of every work session**
-- Update your Live status (focus, done log with commit hashes, blockers, requests, REV responses).
-- Tick your boxes in `task.md`; commit and push (git workflow in [build.md](docs/contracts/build.md)).
+- Update your Live status (focus, done log with commit hashes, blockers, requests, finding
+  responses) **in the same commit as the work it describes**.
+- Tick your boxes in `task.md`; commit and push.
 
 **Definition of done for any task**
-- Code + tests merged to `main`, CI green, measurements recorded where asked, status updated, contract
-  updated if its surface changed, and **reviewed by senior-dev with no open P0/P1 on it**.
+- Code + tests, CI green, measurements recorded where asked, status updated, contract updated if its
+  surface changed, and **reviewed by senior-dev with no open P0/P1 on it**.
 
 ### 0.5 Schedule
 
-**All 9 agents start at the same time.** Every agent has real work from day one, using mocks where
-needed. **A wave ends only when senior-dev
-signs it off in `docs/review.md`** (no open P0/P1 findings).
+The waves are a priority order, not a calendar. Work the critical path in §0.9 top to bottom; the
+wave a task belongs to only says what to do when two things are both ready.
 
-| Wave | Goal | infra | core-meta | core-batch | core-store | pipeline | app-logic | ui | qa | senior-dev |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **1. Foundations** | Everything compiles; contracts frozen at v1.0 | Workspace, UniFFI "hello", XcodeGen, scripts, CI | CR3 parser + `scan_folder` | exiftool-JSON dumps, `order()`, first `batch()` | DB schema, XMP read/write | ImageIO decode + cache spike, benchmarks | `AppModel` + commands on mock data | Window, toolbar, viewer, filmstrip on mock data | Harness, fixture loader, baseline format | Review every contract draft; approve v1.0 freezes; review skeletons |
-| **2. Real data** | CLI and minimal app run on the test games | Link the real core | Canon fields match exiftool | Ground truth, F1 ≥ 98% | Session API, undo, resume | Scheduler, memory budget, IOSurface renderer | Wire real Session + pipeline | Rating visuals, rings, HUD, batch nav | Stress test, first perf run | Review integration seams, perf numbers, data safety |
-| **3. Features** | Feature complete | Release pipeline, Homebrew cask | Sony, then all formats | Visual-hash refinement | Finish planner/executor/undo | Pinch/click zoom, zoom lock, overlays | Finish flow, settings, keymap editor | Info panel, grid, compare, Finish sheet, Settings, welcome | Full-cull integration tests | Review features against task.md; UX consistency |
-| **4. Polish & ship** | v0.1.0 | Screenshots, release | Fuzzing | Tuning | Crash tests | Perf tuning | Edge cases | Liquid Glass pass, macOS 15, accessibility, icon | Final sign-off | Final architecture + release review |
+| Wave | Goal | What "done" means | Gate |
+| --- | --- | --- | --- |
+| **1. Foundations** | Everything compiles, every contract frozen at v1.0 | `cargo test` and `xcodebuild test` green on the merged tree; the six contracts approved; CI enforcing fmt, clippy, warnings-as-errors, swift-format | senior-dev signs off in `review.md` |
+| **2. Real data** | It runs on the test games | CR3 parser matches exiftool on all 2,880 files; `order()`+`batch()` measured ≥ 98% boundary F1 against visually checked ground truth; the app opens a real folder through the real `Session` | ground truth spot-checked by senior-dev, not self-certified |
+| **3. Features** | Feature complete | Finish Cull end to end with undo, both rating modes, Settings, keymap editor, every §9 screen | senior-dev checks each screen against task.md §9 and the Finder reference |
+| **4. Polish & ship** | v0.1.0 | Liquid Glass pass, macOS 15 fallback, accessibility, README screenshots, `v*` tag published, cask live | senior-dev signs off; the release exists |
 
-### 0.6 Which agent ticks which task.md section
+### 0.6 Which agent ticks what in task.md
 
-| task.md section | Owning agent(s) |
+| Section | Who |
 | --- | --- |
-| §0 Team, protocol & schedule | owner only (senior-dev may propose changes) |
-| §3 Measured facts | core-meta, pipeline (add measurements) |
-| §5 Batching | core-batch |
-| §6 Rating modes | app-logic (rules), core-store (storage/XMP), ui (visuals) |
-| §7.1–7.3 Pipeline & performance | pipeline (qa measures §7.3) |
-| §7.4 Metadata scan, §8 Formats | core-meta |
-| §9.1–9.3, 9.5, 9.6, 9.8 UI | ui (zoom/overlays in §9.2: pipeline; settings model: app-logic) |
-| §9.4 Batch navigation, §10 Shortcuts | app-logic |
-| §9.7 Finish Cull | app-logic (flow), core-store (file ops), ui (sheet) |
-| §11 Session & persistence | core-store |
-| §12 Testing | qa (each agent writes unit tests for its own code) |
-| §13 Build, CI & distribution | infra |
-| §14 Milestones | whoever owns the item; infra for M0/M8; senior-dev signs off each milestone |
+| §0 Team, protocol & schedule | senior-dev (owner-approved) |
+| §3 Measured facts | worker adds measurements, senior-dev verifies them |
+| §5 Batching · §6 Rating modes · §7 Pipeline & performance · §7.4 Scan · §8 Formats | worker |
+| §9 UI/UX · §10 Shortcuts · §9.7 Finish flow | worker |
+| §11 Session & persistence | worker |
+| §12 Testing | worker (own code), senior-dev (verifies coverage) |
+| §13 Build, CI & distribution | worker |
+| §14 Milestones | worker ticks items, senior-dev signs each milestone off |
 
-### 0.7 Starting all agents at once
+### 0.7 Git workflow
 
-Everything that would otherwise force agents to wait on each other already exists:
+- **One branch, one PR, never merged by the author.** The worker works on `agent/worker` and keeps one
+  PR open to `main` for the life of the project. senior-dev merges.
+- **Never force-push, never rebase `main`.** `git merge origin/main` into the branch to stay current.
+- **Integration.** To keep `main` releasable rather than stale for weeks, senior-dev periodically
+  merges the branch:
 
-| Would have blocked | Already done |
-| --- | --- |
-| Agents creating worktrees at the same time | 9 worktrees exist at `~/Documents/projects/Firstcut-wt/<agent>` on branches `agent/<agent>`, pushed |
-| Rust agents waiting for infra's workspace | `core/` workspace compiles; every agent's module (`scan`, `meta`, `formats`, `order`, `batch`, `store`, `xmp`, `fileops`, `session`, `ffi`) is already declared in `lib.rs`, so nobody edits `lib.rs` to add code |
-| Swift agents waiting for the Xcode project | `project.yml` builds the app + Unit/Integration/Performance test targets (`xcodegen && xcodebuild test` passes); every agent's folder exists; sources are picked up by folder, so adding files never touches `project.yml` |
-| Swift agents waiting for UniFFI types | `App/Sources/Shared/CoreTypes.swift`: Swift mirrors of `PhotoMeta`, `Batch`, `VisualSig`, `Rating`, etc. Build against these; infra swaps them for the generated types later with the same names |
-| Everyone waiting for core-batch's meta JSON | `tests/fixtures/exiftool/<game>.json`: exiftool dumps of all 2,880 test photos (time, shutter count, lens, exposure, orientation, drive/shutter mode, AF mode), sorted by capture time. Build mocks from these now |
-| Contracts not frozen yet | Build against the v0.1 drafts now. senior-dev reviews them in parallel; changes go through **Proposed changes** so nobody is surprised |
-| Rust dependencies need editing infra's `Cargo.toml` | Exception: any agent may add its own crates to `[dependencies]` in `core/firstcut-core/Cargo.toml` (one line each, alphabetical). On a `Cargo.lock` merge conflict, take `main`'s version and run `cargo build` |
+  ```sh
+  git switch -c integrate/checkpoint main
+  git merge --no-ff agent/worker
+  cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+  scripts/build-core.sh && xcodegen && xcodebuild … test
+  git merge --no-ff integrate/checkpoint main
+  ```
 
-Machine note: 9 agents compiling at once on a 16 GB M1 Pro is heavy. Prefer `cargo check` / `cargo test -p`
-for quick loops and a full `xcodebuild` only when needed.
+  Conflicts are expected in exactly six files — `core/Cargo.lock`, `core/*/Cargo.toml`,
+  `App/Sources/Shared/CoreTypes.swift`, `project.yml`, `docs/contracts/build.md`, `task.md` — and
+  senior-dev resolves them. A checkpoint merge is a full-suite run on the merged tree, which is the
+  only thing that proves the tree works as a whole.
+- **CI.** Infra's `ci.yml` lives on `main` now, so every push runs fmt/clippy/test and the Swift
+  build. If the Swift job reports "pending" for a long time it is macOS runner queueing, not failure.
 
-### 0.8 docs/ layout
+### 0.8 Testing
 
-```
-docs/
-├── review.md           ← senior-dev's review board: findings per agent (every agent reads it)
-├── agents/<agent>.md   ← charter (fixed) + live status (each agent's own log)
-├── contracts/*.md      ← interfaces between agents, one owner each
-├── qa/                 ← qa: perf baselines, QA checklist, bug list
-└── ui/                 ← ui: Finder reference screenshots, visual-check notes
-```
+Not a separate agent any more, so it is a discipline rather than a role: **a task is not done until
+something asserts it.** Each area carries its own unit tests; integration, performance and stress
+suites are written at the end of wave 2 when there is a real session and a real pipeline to drive.
+Ground truth for batching is checked by senior-dev against the photographs, because the person who
+produces a metric should not be the only person who validates it.
 
----
+### 0.9 The critical path
+
+Ordered by what blocks what. Start at the top every session; do not skip ahead.
+
+| # | Step | Blocked until it is done |
+| --- | --- | --- |
+| 1 | Fix the live P0/P1 findings in `review.md` | everything |
+| 2 | One `PhotoMeta`/`Batch`/`Session` type each — delete the stand-ins in `CoreTypes.swift` and `PipelineMirror.swift`, and the renamed `SessionTypes` (REV-56, REV-72, REV-73) | any Swift work compiling against another area |
+| 3 | A CR3 parser that matches exiftool on all 2,880 files | every real measurement |
+| 4 | `order()` + `batch()` with the negative-Δt fix (REV-63), then ground truth and F1 | the filmstrip meaning anything |
+| 5 | `Session`, XMP, undo, resume — and the rename reconciliation (REV-68) | ratings surviving a real session |
+| 6 | Thumbnails, `visual_sig` from the Rust reference, T2 decode, the priority scheduler | the zero-wait promise |
+| 7 | `AppModel` wired to the real `Session` and the real pipeline; the viewer layer replacing the placeholder | a usable app on real photos |
+| 8 | Every §7.3 target measured and written down | any performance claim |
+| 9 | Finish Cull, Settings, keymap editor, every screen | feature complete |
+| 10 | Liquid Glass, macOS 15, accessibility, then the release | v0.1.0 |
+
+### 0.10 Why two agents
+
+Nine parallel agents were the right call for a cold start and the wrong call for finishing. What
+actually went wrong, measured rather than guessed:
+
+- **Interface invention.** Four agents independently declared their own version of the same types in
+  the same hour, under different names (REV-56). With one agent that is impossible.
+- **Merge latency, not coding speed, was the bottleneck.** Seven branches open, zero merged, all
+  diverging in six shared files, for the entire first hour.
+- **The review board could not keep up.** 74 findings in two hours, most of them the same class of
+  problem wearing different hats. One worker with one reviewer gets a real review instead of a triage
+  queue.
+- **Nobody could see the whole thing.** No single agent held both "the app asks for Documents folder
+  access and something relaunches it" and "ad-hoc signatures invalidate TCC grants on every rebuild".
+
+What is lost: parallelism, and independent judgement on the code. Both are recoverable. What is not
+recoverable is another week of drift.
+
 
 ## 1. What Firstcut is
 

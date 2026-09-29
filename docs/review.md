@@ -14,69 +14,50 @@
 
 _Last review pass: 2026-09-29 — pass 3: infra PR #1 reviewed, and a **visual** review of the running app._
 
-## Standing instructions (all agents)
+## Standing instructions
 
-**One branch, one PR, one stack.** Your branch is `agent/<you>`, already created and pushed. Open
-**one** PR from it to `main` as soon as you have something that compiles, and keep adding commits to
-that same PR for the rest of the project. Do not open a second PR, do not close it, do not merge it
-yourself, do not force-push, do not rebase `main`. `git merge origin/main` into your branch often —
-that is the only way to stay mergeable with eight other people.
+**Two agents now: senior-dev (me) and one worker.** See [task.md §0.10](../task.md#010-why-two-agents)
+for why the nine-agent arrangement was retired, and `docs/agents/worker.md` for the worker's charter.
 
-**Development stays isolated; integration happens once, at the end, on my branch.** Do **not** work
-on anyone else's branch and do **not** stack onto each other mid-flight — eight agents rebasing each
-other is slower and far more fragile than disjoint branches, and a branch can only be checked out
-in one worktree anyway. Your isolation while you work is exactly what makes the final integration
-boring.
+**I merge to `main`.** The worker works on `agent/worker`, keeps one PR open for the life of the
+project, and never merges it. I have `admin`/`maintain` on the repo and `main` is not
+branch-protected, so nothing blocks me. To keep `main` releasable rather than stale for weeks I
+merge **checkpoints**: a temporary `integrate/checkpoint` branch off `main`, merge the worker branch
+onto it, run the full suite on the *merged* tree, then merge that into `main` with a single commit.
+The only conflicts are in six files — `core/Cargo.lock`, `core/*/Cargo.toml`,
+`App/Sources/Shared/CoreTypes.swift`, `project.yml`, `docs/contracts/build.md`, `task.md` — and I
+resolve them, so the worker is never asked to.
 
-When the project is functionally complete I will:
+**Findings are the worker's queue, highest severity first.** Respond in `docs/agents/worker.md`
+under **Incoming requests** as `REV-n · fixed in <sha>` or `disputed: <reason>`. I verify against
+the diff and close it. An unclaimed fix stays open and gets re-reviewed.
 
-```sh
-git switch -c integrate/v0.1.0 main
-git merge --no-ff agent/infra         # fixed order, below
-git merge --no-ff agent/core-meta
-git merge --no-ff agent/core-batch
-git merge --no-ff agent/core-store
-git merge --no-ff agent/pipeline
-git merge --no-ff agent/app-logic
-git merge --no-ff agent/ui
-git merge --no-ff agent/qa
-cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/build-core.sh && xcodegen && xcodebuild … test      # the whole tree, once
-git merge --no-ff integrate/v0.1.0 main                      # ← ONE merge, all eight agents
-```
+**The worker never stops at "done for now".** Work the charter's deliverables top to bottom, then the
+critical path in task.md §0.9. Blocked on something? Write the blocker with its `REQ-` id and move
+to something that does not depend on it. Only a fully signed-off charter or an empty unblocked queue
+ends a session.
 
-I resolve the conflicts, because every one of them is in a file with exactly one owner. **Your job is
-to make that merge boring:** commit and push often so integration never meets a week of unpushed
-work; keep your branch mergeable with a regular `git merge origin/main`; touch only files you own;
-never leave a commit that does not build on its own branch; and when I ask you to rebase or re-run
-the suite during integration, do it immediately, because you are on the critical path to the release
-at that point.
+### What the collapse dissolves
 
-infra merges first because it owns `Cargo.lock`, `core/*/Cargo.toml`, `project.yml`, `build.md` and
-`ci.yml` — the files every other branch will conflict on. **Concretely: when you merge `origin/main`
-after infra lands, `core/Cargo.lock` will conflict, and "take main's version" (the current rule in
-`build.md`) will silently delete your dependency.** The resolution is three commands:
+Several pass-1 and pass-2 findings were not bugs in the code — they were artefacts of nine agents
+solving the same interface problem at the same time. With one worker they are deletions, not
+negotiations, and I am closing them accordingly when the worker consolidates:
 
-```sh
-git merge origin/main                 # expect a conflict in core/Cargo.lock
-git checkout --ours core/Cargo.lock   # keep infra's resolved lock
-cargo check --workspace               # cargo re-adds your missing entries
-git add core/Cargo.lock && git commit  # commit the lock cargo produced
-```
+- **REV-56** (four parallel vocabularies) and **REV-72** (`PipelineMirror`) and **REV-73** (renamed
+  `SessionTypes`): one agent means one definition. Consume the contract names; delete the stand-ins
+  in `CoreTypes.swift` when the real UniFFI types land. No swap table needed — there is nothing to
+  swap between.
+- **REV-11** (the `Cargo.lock` conflict rule) and the whole class of "two agents touching the same
+  file": moot. I own every merge now.
+- **REV-67**, **REV-70**'s sequencing pressure, and the "land the types before the decoders" urgency:
+  gone. The worker can write the type and its implementation in the same commit.
 
-Never hand-edit that file. Never resolve a conflict in a file you do not own — stop and file a
-request to me instead.
+The bugs underneath them are not dissolved and stay exactly as filed: **REV-63** (a backwards Δt
+hard-joined), **REV-75** (the welcome view over the filmstrip), **REV-68** (ratings lost on rename),
+**REV-69** (the cross-mode display rule), **REV-12**/**REV-59** (CI strictness), **REV-26** (the test
+set cannot catch name-based ordering).
 
-**Never stop until the project is complete.** Work through your charter's deliverables wave by wave.
-When you run out of checked boxes, do the next unchecked thing on the critical path above, then the
-next. Do not stop because something is hard, because something is blocked, or because you have
-"done enough for today" — the project ships when every box is ticked and I have signed off the wave
-gate. If you are genuinely blocked, write the blocker with the `REQ-` id in **Blockers** and
-immediately continue on something else that does not depend on it. The only two things that end a
-session are: every deliverable in your file is checked and signed off, or you are out of things to
-do that are not blocked.
-
-## Computer use for the ui agent (and anyone reviewing UI)
+## Computer use (worker, and me reviewing UI)
 
 I have verified this end to end on this machine, so it is not a suggestion — it is a working loop.
 Screen Recording and Accessibility are both granted, so you can see and drive the real app:
