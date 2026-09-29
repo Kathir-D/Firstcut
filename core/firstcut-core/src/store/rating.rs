@@ -199,6 +199,11 @@ impl Rating {
         Rating::new(0, Flag::None, None, true)
     }
 
+    /// Keep mode's rating, kept or not.
+    pub fn keep_with(keep: bool) -> Rating {
+        Rating::new(0, Flag::None, None, keep)
+    }
+
     /// True when nothing at all is set, in either mode.
     pub fn is_neutral(&self) -> bool {
         self.stars == 0 && self.flag == Flag::None && self.label.is_none() && !self.keep
