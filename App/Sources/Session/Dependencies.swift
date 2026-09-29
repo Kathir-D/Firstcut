@@ -39,7 +39,12 @@ public struct Dependencies {
         self.sessionFactory = sessionFactory
     }
 
-    /// Everything on disk: real Application Support, the keymap shipped in the bundle.
+    /// Everything on disk: real Application Support, the keymap shipped in the bundle, and **the
+    /// real Rust session**.
+    ///
+    /// `sessionFactory` is the one line that makes the shipped app real: it opens the folder
+    /// through `CoreSessionBackend`, which is the Rust core over FFI. Before this it pointed at
+    /// `MockSession`, so the app could only ever show fixtures no matter what the user opened.
     public static func live() -> Dependencies {
         let settingsStore = SettingsStore()
         var keymapStore = KeymapStore()
@@ -50,7 +55,10 @@ public struct Dependencies {
             keymap: keymapStore.effective,
             settings: settingsStore.load(),
             settingsStore: settingsStore,
-            keymapStore: keymapStore)
+            keymapStore: keymapStore,
+            sessionFactory: { url in
+                try CoreSessionBackend(folder: url)
+            })
     }
 
     /// Fixtures (or a synthetic shoot) and a scratch directory, so a preview can't write over the
