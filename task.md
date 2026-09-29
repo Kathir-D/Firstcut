@@ -85,7 +85,7 @@ against the code before trusting it — several were fixed on one side of the me
   (`CGImageViewerHost`) uses a `CGImage`. Update `docs/contracts/pipeline-api.md` to match.
 - Homebrew tap (`Kathir-D/homebrew-tap`) needs `Casks/firstcut.rb` pushed and a tap secret for the
   release workflow; then the `v0.1.0` tag.
-- Open PRs #2 (ui), #3 (qa), #4 (core-store), #5 (consolidation) on GitHub are superseded by this merge.
+- GitHub PRs #1–#5 are all merged. The old `agent/*` branches on the remote are fully contained in `main` and can be deleted.
 
 ### 0.5 Working practices
 
