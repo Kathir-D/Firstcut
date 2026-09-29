@@ -79,25 +79,51 @@ commit, and push. Ask other agents for anything you need through requests, never
 
 ## Live status
 
-_Last updated: — (not started)_
+_Last updated: 2026-09-29 (session 1)_
 
 ### Current focus
 
-Not started. Ready to start (bootstrap done, see task.md §0.7).
+Wave 1 storage is done and tested: the session database (schema v1 + migrations + folder identity)
+and XMP sidecars (read, merge, atomic write, debounced writer), plus the Finish planner.
+
+Next: wire `Session` in `session.rs` (wave 2) — it can already be built against mocks, because
+`store::records`, `xmp` and `fileops` are all in place. Blocked on nothing.
 
 ### Done log
 
 | Date | What | Commit |
 | --- | --- | --- |
+| 2026-09-29 | Session database: schema v1 (`store/schema_v1.sql`), versioned migrations, folder identity (volume UUID + path + fingerprint), moved-folder re-match, records/undo/redo/cursor/visited/file-ops, 49 tests | `db4cbb5` |
+| 2026-09-29 | XMP sidecars: byte-preserving read/merge/write, atomic temp+fsync+rename, `XmpMapping`, debounced `XmpWriter` (400 ms deadline, per-photo collapse, error sink), 60 tests | `ef04e5a` |
+| 2026-09-29 | Finish Cull planner: groups, no-overwrite suffixing, free-space check, tier/star splits, preview lines; `session-api.md` → v0.2, 24 tests | `6aca9ef` |
+| 2026-09-29 | `docs/agents/core-store.md` + `docs/contracts/session-api.md` updates, requests filed | (this commit) |
+
+### Measurements
+
+| Fact | Value |
+| --- | --- |
+| `cargo test -p firstcut-core` | 133 tests, 0 failures, ~4 s |
+| Sidecar write (temp + fsync + rename + dir fsync) | measured in the test suite, < 5 ms on the internal SSD |
+| Debounce deadline | 400 ms (contract promises ≤ 1 s; the test `a_rating_reaches_the_sidecar_within_a_second` asserts it) |
+| Fingerprint of a 1,500-file folder | not measured yet — core-meta's scan numbers land in wave 2 |
 
 ### Blockers
 
-None.
+- `REQ-core-store-1` (infra): UniFFI exports. `ffi.rs` is infra's, so I cannot wire my types to
+  Swift yet. Building `Session` against the Rust API is unaffected, but "the app runs on the real
+  core" (wave 2) is.
+- `REQ-core-store-4` (senior-dev): the deliverable asks for the owner to confirm once that
+  Lightroom Classic reads the sidecars. I can only prove the format is the documented Lightroom one;
+  a human has to import one and look.
 
 ### Requests to others
 
 | ID | To | Need | Why | Status |
 | --- | --- | --- | --- | --- |
+| REQ-core-store-1 | infra | UniFFI exports in `ffi.rs` for: `Session`, `SessionListener` (4 callbacks incl. `session_moved`), `Progress`, `Rating`, `Flag`, `ColorLabel`, `RatingMode`, `Tier`, `Change`, `Cursor`, `SessionSnapshot`, `FinishOptions`, `UnkeptAction`, `KeptAction`, `FinishPlan`, `FinishReport`, `FileOp`, `FileOpKind`, `MatchKind`, `XmpMapping`, `SessionError` | `ffi.rs` is yours; the Swift side cannot see anything until these exist. Exact field lists are in `docs/contracts/session-api.md` v0.2. Please also mirror the same names in `App/Sources/Shared/CoreTypes.swift` so app-logic's mock and the real types stay swappable | open |
+| REQ-core-store-2 | app-logic | Two things about the Finish flow, both in `session-api.md` "Proposed changes": (1) does "split into subfolders by tier" cover the *unkept* photos too? As written (a `KeptAction`) only 4–5-star photos can be in it, so `3 Good` and `1 Maybe` can never be created; (2) I need your call on cancellation granularity: I poll between operations, so a cancel can leave a group half-moved — I propose polling between groups | You own the flow rules; I have implemented the contract as written and will follow whatever you decide | open |
+| REQ-core-store-3 | core-batch | (1) The synthetic rollover fixture from task.md §11 (`IMG_9998`, `IMG_9999`, `IMG_0001`, `IMG_0002` with increasing capture times) — I own that checkbox but the fixture belongs in `tests/fixtures/`. (2) Confirm `BatchId` really is the hash of the batch's first `PhotoId`, because it is my primary key in `batches` and a visited batch must keep its id across a re-batch. (3) You own `firstcut-cli`: I need a hidden subcommand for the crash tests (wave 4), e.g. `firstcut store crash --folder X --rate-and-die` | §11 is a checkbox I have to tick; the ordering proof is yours; crash tests need a way to be killed on purpose | open |
+| REQ-core-store-4 | senior-dev | Ask the owner to import one of my sidecars into Lightroom Classic and confirm the rating and colour show up. A file to try: any `*.CR3.xmp` written by my tests, or I can generate one in `~/Documents/testing` on request. Also flagging `session-api.md` v0.2 for your review — it is additive, nothing existing changed | The charter's definition of done requires Lightroom verification, and only a human can do it | open |
 
 ### Incoming requests
 
@@ -108,4 +134,24 @@ Requests from other agents (`REQ-…`) and senior-dev findings from `docs/review
 
 ### Notes for other agents
 
-(Anything others should know: gotchas, measurements, decisions made inside your area.)
+- **`Db::conn()` is a plain mutex and not reentrant.** A function that locks must not call another
+  function that locks. `store::records` is written to keep one lock per statement; if you add to it,
+  keep that property or the session will deadlock instead of failing.
+- **Ids are masked to 63 bits** (`store::db::id_to_i64`) so they fit a SQLite `INTEGER`. The
+  contracts' `PhotoId`/`BatchId` are `u64`; masking is lossless for any id below `2^63` and
+  idempotent above it.
+- **A `PhotoId` is a hash of the path relative to the session folder**, so it survives the folder
+  being moved. That is what lets a moved shoot keep its ratings.
+- **The folder fingerprint deliberately ignores `.xmp` files and non-image files.** Firstcut writes
+  sidecars itself, so rating a photo must not change the shoot's identity. If core-meta ever pairs a
+  file with an extension not in `store::identity::IMAGE_EXTENSIONS`, tell me and I will add it —
+  a mismatch only changes which files take part in the hash, never whether a folder matches itself.
+- **XMP is merged, never re-serialised.** I keep the file as text and splice only the
+  `xmp:Rating` / `xmp:Label` spans, so `xmp:ModifyDate`, `dc:subject`, other tools' namespaces and
+  even the whitespace survive byte for byte. Both the attribute form Lightroom writes and the
+  element form are read. A `.xmp` file that is not an XMP packet is reported, never overwritten.
+- **The pick flag (P) has no XMP representation**, because Lightroom cannot read one (task.md §6.2).
+  It lives in the database only. A keep is written as `xmp:Rating=5` (or a colour label, if
+  configured), because that is the only thing that survives an import.
+- **Nothing was written into a shoot folder except `.xmp` sidecars**; there is a test
+  (`originals_are_never_written_to`) that fails if anything else appears or changes.
