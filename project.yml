@@ -51,6 +51,14 @@ targets:
     platform: macOS
     sources:
       - path: App/Sources
+        excludes:
+          # The decode spike is a standalone benchmark, not app code. Its header says to run it
+          # with `swiftc -D SPIKE … -o /tmp/firstcut-spike`, and that only works as a single-file
+          # program: Swift parses the body of an inactive `#if` branch for *syntax*, and top-level
+          # expressions are a syntax error in any file that is not `main.swift`. So the `#if SPIKE`
+          # guard cannot make it inert inside the app target -- it has to be kept out of it.
+          # Verified with: swiftc -typecheck -D SPIKE -swift-version 6 <file>
+          - Pipeline/Spike/**
       - path: App/Resources
     dependencies:
       - target: FirstcutCore
@@ -76,7 +84,16 @@ targets:
   FirstcutUnitTests:
     type: bundle.unit-test
     platform: macOS
-    sources: [App/Tests/Unit]
+    sources:
+      - path: App/Tests/Unit
+      # The committed exiftool dumps, copied into the test bundle. See the long note in
+      # FixturePhotos.fixtureURL: the test host app is built inside the repo, which lives under
+      # `~/Documents`, and a GUI app reading from there blocks on a TCC consent prompt that no one
+      # is there to answer — so the test host hangs rather than failing. Reading from inside the
+      # bundle sidesteps TCC entirely.
+      - path: tests/fixtures/exiftool
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Firstcut
       - target: FirstcutCore

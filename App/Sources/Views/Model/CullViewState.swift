@@ -40,7 +40,7 @@ struct CullPhoto: Identifiable, Equatable {
   var fileName: String
   var meta: PhotoMeta
   var rating: Rating
-  var tier: CullTier
+  var tier: Tier
   var isKeep: Bool
 }
 
@@ -52,24 +52,10 @@ struct CullBatch: Identifiable, Equatable {
   var isProvisional: Bool
 }
 
-/// The tier a photo is in, in the current rating mode. The **model** produces this; see `CullPhoto`.
-enum CullTier: String, CaseIterable, Sendable {
-  case keep
-  case good
-  case maybe
-  case unrated
-  case rejected
-
-  var displayName: String {
-    switch self {
-    case .keep: "Keep"
-    case .good: "Good"
-    case .maybe: "Maybe"
-    case .unrated: "Unrated"
-    case .rejected: "Rejected"
-    }
-  }
-}
+// `Tier` is app-logic's (`SessionTypes.swift`), not redeclared here as `Tier`. It is the same
+// five cases with the same meanings, and the same reason as `CullProgress`: two definitions of one
+// concept is how a photo ends up reading as Keep in one layer and Unrated in another, which is a
+// data bug the user sees. See `RatingTiers.swift` for the view-side helpers.
 
 enum CullPhase: Equatable {
   case welcome
@@ -108,21 +94,12 @@ enum CullViewBackground: Equatable, Sendable {
   case compare
 }
 
-struct CullProgress: Equatable {
-  var batchIndex: Int
-  var batchCount: Int
-  var photosRemaining: Int
-  var keeps: Int
-  var good: Int
-  var maybe: Int
-  var unvisitedBatchCount: Int
-  var elapsed: TimeInterval
-
-  static let empty = CullProgress(
-    batchIndex: 0, batchCount: 0, photosRemaining: 0,
-    keeps: 0, good: 0, maybe: 0, unvisitedBatchCount: 0, elapsed: 0
-  )
-}
+// `CullProgress` is **not** declared here. It is app-logic's, in `App/Sources/Session/SessionTypes.swift`,
+// because `AppModel.progress` is what produces it and it is the same type the Finish summary and the
+// session report use. An earlier version declared a second, thinner `CullProgress` in this file, so
+// the two agents' types collided and every use site was ambiguous for type lookup (REV-56:
+// "every duplicate becomes a permanent adapter at the wave-3 integration; the adapters are where the
+// bugs live"). One definition, declared by whoever owns the model.
 
 @MainActor
 protocol CullImageSource: AnyObject {

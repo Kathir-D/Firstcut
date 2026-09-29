@@ -175,7 +175,7 @@ struct HistogramView: View {
 
 struct RatingSummary: View {
   let rating: Rating
-  let tier: CullTier
+  let tier: Tier
   let mode: RatingMode
 
   var body: some View {
@@ -203,13 +203,13 @@ struct RatingSummary: View {
           .frame(width: 8, height: 8)
       }
       Spacer(minLength: 0)
-      Text(tier.displayName)
+      Text(tier.title)
         .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(Appearance.secondaryLabel)
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 8)
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("Rating \(tier.displayName)")
+    .accessibilityLabel("Rating \(tier.title)")
   }
 }

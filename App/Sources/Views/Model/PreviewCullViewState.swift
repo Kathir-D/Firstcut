@@ -33,7 +33,7 @@ final class PreviewCullViewState: CullViewState {
   var showsClippingOverlay = false
   var autoAdvanceEnabled = false
   var viewerBackgroundDarkness: Double = 0.13
-  private(set) var progress: CullProgress = .empty
+  private(set) var progress: CullProgress = CullProgress()
   let images: CullImageSource
 
   private var allPhotos: [PhotoID: CullPhoto] = [:]
@@ -189,8 +189,8 @@ final class PreviewCullViewState: CullViewState {
       var updated = photo
       let rating = ratings[id] ?? Rating()
       updated.rating = rating
-      updated.tier = RatingTiers.tier(for: rating, mode: ratingMode)
-      updated.isKeep = RatingTiers.isKeep(rating)
+      updated.tier = RatingRules.tier(of: rating, mode: ratingMode)
+      updated.isKeep = RatingRules.isKeep(rating, mode: ratingMode)
       allPhotos[id] = updated
     }
     photosInCurrentBatch = batches.indices.contains(currentBatchIndex)
@@ -208,8 +208,8 @@ final class PreviewCullViewState: CullViewState {
       fileName: (meta.relPath as NSString).lastPathComponent,
       meta: meta,
       rating: rating,
-      tier: RatingTiers.tier(for: rating, mode: ratingMode),
-      isKeep: RatingTiers.isKeep(rating)
+      tier: RatingRules.tier(of: rating, mode: ratingMode),
+      isKeep: RatingRules.isKeep(rating, mode: ratingMode)
     )
   }
 
@@ -226,8 +226,8 @@ final class PreviewCullViewState: CullViewState {
     ratings[photo.id] = rating
     var updated = photo
     updated.rating = rating
-    updated.tier = RatingTiers.tier(for: rating, mode: ratingMode)
-    updated.isKeep = RatingTiers.isKeep(rating)
+    updated.tier = RatingRules.tier(of: rating, mode: ratingMode)
+    updated.isKeep = RatingRules.isKeep(rating, mode: ratingMode)
     allPhotos[photo.id] = updated
     photosInCurrentBatch[currentPhotoIndex] = updated
     currentPhoto = updated
@@ -254,7 +254,7 @@ final class PreviewCullViewState: CullViewState {
     var maybe = 0
     var remaining = 0
     for (id, rating) in ratings {
-      switch RatingTiers.tier(for: rating, mode: ratingMode) {
+      switch RatingRules.tier(of: rating, mode: ratingMode) {
       case .keep: keeps += 1
       case .good: good += 1
       case .maybe: maybe += 1
@@ -262,14 +262,17 @@ final class PreviewCullViewState: CullViewState {
       }
       if allPhotos[id]?.tier == .unrated { remaining += 1 }
     }
+    // The model's `CullProgress`, not a view-shaped one: the HUD reads the same value the
+    // Finish summary does, so they cannot disagree (REV-53).
     progress = CullProgress(
-      batchIndex: currentBatchIndex,
+      batchNumber: currentBatchIndex + 1,
       batchCount: batches.count,
-      photosRemaining: remaining,
-      keeps: keeps,
-      good: good,
-      maybe: maybe,
-      unvisitedBatchCount: batches.filter { !$0.isVisited }.count,
+      photoCount: batches.indices.contains(currentBatchIndex) ? batches[currentBatchIndex].photoIDs.count : 0,
+      photosLeftInBatch: remaining,
+      unvisitedBatches: batches.filter { !$0.isVisited }.count,
+      counts: [.keep: keeps, .good: good, .maybe: maybe],
+      totalPhotos: allPhotos.count,
+      ratedPhotos: allPhotos.count - remaining,
       elapsed: Date().timeIntervalSince(startedAt)
     )
   }

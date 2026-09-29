@@ -412,11 +412,15 @@ public struct CullProgress: Hashable, Sendable {
     public var counts: [Tier: Int]
     public var totalPhotos: Int
     public var ratedPhotos: Int
+    /// Wall-clock time spent culling, for the HUD's "elapsed" metric. Set by the model, which owns
+    /// the session clock; derived here would need a start date the value does not carry.
+    public var elapsed: TimeInterval
 
     public init(
         batchNumber: Int = 0, batchCount: Int = 0, photoNumber: Int = 0, photoCount: Int = 0,
         photosLeftInBatch: Int = 0, batchesLeft: Int = 0, unvisitedBatches: Int = 0,
-        counts: [Tier: Int] = [:], totalPhotos: Int = 0, ratedPhotos: Int = 0
+        counts: [Tier: Int] = [:], totalPhotos: Int = 0, ratedPhotos: Int = 0,
+        elapsed: TimeInterval = 0
     ) {
         self.batchNumber = batchNumber
         self.batchCount = batchCount
@@ -428,6 +432,7 @@ public struct CullProgress: Hashable, Sendable {
         self.counts = counts
         self.totalPhotos = totalPhotos
         self.ratedPhotos = ratedPhotos
+        self.elapsed = elapsed
     }
 
     public subscript(tier: Tier) -> Int { counts[tier] ?? 0 }
@@ -437,4 +442,18 @@ public struct CullProgress: Hashable, Sendable {
         guard totalPhotos > 0 else { return 0 }
         return Double(ratedPhotos) / Double(totalPhotos)
     }
+
+    // Derived conveniences, so the HUD reads the model rather than recomputing (REV-53: a view
+    // that recomputes a count from `batches` disagrees with the finish summary the moment the
+    // two are derived differently).
+    public var keeps: Int { self[.keep] }
+    public var good: Int { self[.good] }
+    public var maybe: Int { self[.maybe] }
+
+    /// Photos in the **whole shoot** the user has not rated yet. This is the HUD's "unrated left".
+    ///
+    /// Shoot-wide, not per-batch, because `ratedPhotos` and `totalPhotos` are both shoot-wide:
+    /// deriving it as `photoCount - ratedPhotos` mixed a per-batch count with a shoot-wide one and
+    /// produced a nonsense number on every batch after the first.
+    public var unratedPhotos: Int { max(0, totalPhotos - ratedPhotos) }
 }

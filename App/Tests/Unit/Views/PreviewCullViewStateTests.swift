@@ -123,6 +123,8 @@ struct PreviewCullViewStateTests {
     let state = PreviewCullViewState(batchCount: 4, seed: 7)
     let total = state.batches.reduce(0) { $0 + $1.photoIDs.count }
     #expect(state.progress.batchCount == 4)
-    #expect(state.progress.photosRemaining == total)
+    // Shoot-wide unrated, matching `totalPhotos`/`ratedPhotos` (the HUD's "unrated left").
+    #expect(state.progress.unratedPhotos == total)
+    #expect(state.progress.totalPhotos == total)
   }
 }
