@@ -94,6 +94,12 @@ public final class ImageProvider: ImageProviding, CullImageSource {
     /// file system itself: core-meta owns identity, this owns pixels.
     private(set) var files: [PhotoID: URL] = [:]
 
+    /// EXIF orientation per photo, for the loupe's full read. 26 of Game1JENKS's 708 frames are
+    /// orientation 8, and `CGImageSourceCreateImageAtIndex` does not apply the tag — only the
+    /// thumbnail path does. Without this the same photograph appeared upright in the filmstrip and
+    /// upside down in the viewer.
+    private(set) var orientations: [PhotoID: UInt8] = [:]
+
     /// Bumped every time a decode lands. `thumbnail(for:size:)` and `histogram(for:)` read it, so
     /// a SwiftUI body that got a `nil` is asked again when the pixels arrive.
     public private(set) var generation: Int = 0
@@ -144,12 +150,16 @@ public final class ImageProvider: ImageProviding, CullImageSource {
         files = Dictionary(
             photos.map { ($0.id, folder.appendingPathComponent($0.relPath)) },
             uniquingKeysWith: { first, _ in first })
+        orientations = Dictionary(
+            photos.map { ($0.id, $0.orientation) },
+            uniquingKeysWith: { first, _ in first })
         generation &+= 1
     }
 
     public func close() {
         engine.reset()
         files = [:]
+        orientations = [:]
         generation &+= 1
     }
 
@@ -194,7 +204,7 @@ public final class ImageProvider: ImageProviding, CullImageSource {
 
     func displayImage(for id: PhotoID) -> CGImage? {
         _ = generation
-        return engine.display(id, url: files[id])
+        return engine.display(id, url: files[id], orientation: orientations[id] ?? 1)
     }
 
     func histogram(for id: PhotoID) -> CullHistogram? {
@@ -233,6 +243,10 @@ final class DecodeEngine: @unchecked Sendable {
         var kind: Kind
         var maxPixel: Int
         var priority: Int
+        /// EXIF orientation, applied on the full read only. Part of the key: the same photo at the
+        /// same size is a different job if the orientation changed, which happens when a file is
+        /// replaced under a resumed session.
+        var orientation: UInt8 = 1
     }
 
     private struct Key: Hashable {
@@ -363,9 +377,10 @@ final class DecodeEngine: @unchecked Sendable {
     }
 
     @MainActor
-    func display(_ id: PhotoID, url: URL?, priority: Int = 0, countsAsFocusMiss: Bool = true)
-        -> CGImage?
-    {
+    func display(
+        _ id: PhotoID, url: URL?, orientation: UInt8 = 1, priority: Int = 0,
+        countsAsFocusMiss: Bool = true
+    ) -> CGImage? {
         lock.lock()
         clock &+= 1
         if var entry = displays[id] {
@@ -376,8 +391,11 @@ final class DecodeEngine: @unchecked Sendable {
             return entry.image
         }
         if countsAsFocusMiss, focus.contains(id) { counters.focusMisses += 1 }
-        let queued = url.map { enqueueLocked(Job(id: id, url: $0, kind: .display, maxPixel: 0,
-                                                  priority: priority)) } ?? false
+        let queued = url.map {
+            enqueueLocked(
+                Job(id: id, url: $0, kind: .display, maxPixel: 0, priority: priority,
+                    orientation: orientation))
+        } ?? false
         lock.unlock()
         if queued { pump() }
         return nil
@@ -448,7 +466,7 @@ final class DecodeEngine: @unchecked Sendable {
             let decoded: CGImage? =
                 switch job.kind {
                 case .thumbnail: Self.decodeThumbnail(url: job.url, maxPixel: job.maxPixel)
-                case .display: Self.decodeFull(url: job.url)
+                case .display: Self.decodeFull(url: job.url, orientation: job.orientation)
                 }
             store(job, decoded)
         }
@@ -556,10 +574,74 @@ final class DecodeEngine: @unchecked Sendable {
     /// Canon R8 CR3's embedded JPEG is 6000×4000, i.e. the sensor's full size, so "100%" is
     /// honest. A viewport-sized `decodeThumbnail` would be far cheaper to cache for fit-to-viewport
     /// and is a one-line change if the 96 MB per photo ever matters more than the decode time.
-    static func decodeFull(url: URL) -> CGImage? {
+    ///
+    /// `kCGImageSourceShouldCacheImmediately` alone does **not** apply the EXIF orientation, and
+    /// 26 of Game1JENKS's 708 frames are orientation 8 (rotate 270°) — measured, not assumed. The
+    /// loupe rendered those upside down while the filmstrip, which goes through
+    /// `decodeThumbnail` with `kCGImageSourceCreateThumbnailWithTransform`, showed them right way
+    /// up, so the same photo appeared twice in two orientations. `CGImageSourceCreateImageAtIndex`
+    /// has no transform option, so the rotation is applied here from the parsed orientation.
+    static func decodeFull(url: URL, orientation: UInt8) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
-        return CGImageSourceCreateImageAtIndex(
-            source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        guard
+            let raw = CGImageSourceCreateImageAtIndex(
+                source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        else { return nil }
+        return applying(orientation: orientation, to: raw)
+    }
+
+    /// EXIF orientation 1–8 → the pixels, upright.
+    ///
+    /// The tag is defined so 1 is upright and 8 is "rotate 270° CW to display", which for a
+    /// landscape frame is a half turn. Only the transforms that change the pixels are applied; 1 is
+    /// the identity. The mirror cases (2, 4) are handled too rather than left wrong, even though a
+    /// camera does not produce them for a back-of-camera shot.
+    ///
+    /// There is no image-level affine in Core Graphics, so this composites through a context sized
+    /// to the *output* — which is what makes a quarter turn come out the right way up instead of
+    /// cropped to a corner.
+    static func applying(orientation: UInt8, to image: CGImage) -> CGImage {
+        guard orientation > 1, let space = CGColorSpace(name: CGColorSpace.sRGB) else { return image }
+        let width = image.width
+        let height = image.height
+
+        // (rotation, mirror) per EXIF orientation, expressed as what to draw where.
+        let quarterTurn: Int
+        let mirrored: Bool
+        switch orientation {
+        case 2: (quarterTurn, mirrored) = (0, true)
+        case 3: (quarterTurn, mirrored) = (2, false)
+        case 4: (quarterTurn, mirrored) = (0, false)
+        case 5: (quarterTurn, mirrored) = (3, true)
+        case 6: (quarterTurn, mirrored) = (1, false)
+        case 7: (quarterTurn, mirrored) = (3, false)
+        // 8 is a quarter turn, **not** a mirror. Treating it as "rotate 90 then mirror" produced a
+        // portrait frame with the jersey reading "LLORRAC" — verified by rendering IMG_3181.CR3 and
+        // looking at it, which is the only way to catch a transform that is the right shape and the
+        // wrong transform. 26 of this game's 708 frames are orientation 8, so it is not a corner.
+        case 8: (quarterTurn, mirrored) = (1, false)
+        default: return image
+        }
+
+        let turns = quarterTurn % 2 == 1
+        let outWidth = turns ? height : width
+        let outHeight = turns ? width : height
+        guard
+            let context = CGContext(
+                data: nil, width: outWidth, height: outHeight, bitsPerComponent: 8, bytesPerRow: 0,
+                space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                    | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return image }
+
+        context.translateBy(x: CGFloat(outWidth) / 2, y: CGFloat(outHeight) / 2)
+        // Rotate first, then mirror in the *output* frame. Mirroring before rotating mirrors about
+        // the source axes, which is a different image.
+        context.rotate(by: CGFloat(quarterTurn) * .pi / 2)
+        if mirrored { context.scaleBy(x: -1, y: 1) }
+        context.translateBy(x: -CGFloat(width) / 2, y: -CGFloat(height) / 2)
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage() ?? image
     }
 
     /// No source-level cache: the engine owns one cache, and a second invisible one inside ImageIO
