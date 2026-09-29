@@ -500,7 +500,10 @@ mod tests {
     fn a_keep_shows_as_five_stars_in_stars_mode() {
         // task.md §6: "a keep ↔ 5 stars by default". Without this the user's keeps look Unrated.
         let keep = Rating::keep();
-        assert_eq!(keep.stars, 0, "stored as-is: nothing is written into the stars field");
+        assert_eq!(
+            keep.stars, 0,
+            "stored as-is: nothing is written into the stars field"
+        );
         let shown = display_rating(&keep, RatingMode::Stars);
         assert_eq!(shown.stars, 5);
         assert_eq!(display_tier(&keep, RatingMode::Stars), Tier::Keep);
@@ -523,7 +526,7 @@ mod tests {
             display_tier(&Rating::stars(3), RatingMode::KeepNotKeep),
             Tier::Unrated
         );
-        assert!(display_rating(&Rating::stars(3), RatingMode::KeepNotKeep).keep == false);
+        assert!(!display_rating(&Rating::stars(3), RatingMode::KeepNotKeep).keep);
     }
 
     #[test]
@@ -541,7 +544,10 @@ mod tests {
         }
         for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
             let keep = Rating::keep();
-            assert!(display_rating(&keep, mode).is_kept(mode), "a keep is a keep in {mode}");
+            assert!(
+                display_rating(&keep, mode).is_kept(mode),
+                "a keep is a keep in {mode}"
+            );
         }
     }
 
@@ -574,8 +580,14 @@ mod tests {
                     there.tier(mode),
                     "{state:?} changed tier on the way to {mode} and back"
                 );
-                assert_eq!(returned.flag, there.flag, "{state:?} changed flag on a round trip");
-                assert_eq!(returned.label, there.label, "{state:?} changed label on a round trip");
+                assert_eq!(
+                    returned.flag, there.flag,
+                    "{state:?} changed flag on a round trip"
+                );
+                assert_eq!(
+                    returned.label, there.label,
+                    "{state:?} changed label on a round trip"
+                );
             }
         }
     }
@@ -584,7 +596,12 @@ mod tests {
     fn display_never_mutates_the_stored_rating() {
         // `display_*` is a view. If it ever wrote the mapped value back, switching modes would
         // silently rewrite the user's ratings -- the failure REV-69 describes.
-        let states = [Rating::neutral(), Rating::stars(4), Rating::keep(), Rating::stars(1)];
+        let states = [
+            Rating::neutral(),
+            Rating::stars(4),
+            Rating::keep(),
+            Rating::stars(1),
+        ];
         for state in states {
             for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
                 let _ = display_rating(&state, mode);
@@ -608,7 +625,10 @@ mod tests {
     #[test]
     fn map_rating_clears_the_inactive_mode_and_is_the_identity_within_one_mode() {
         let keep = Rating::keep();
-        assert_eq!(map_rating(&keep, RatingMode::KeepNotKeep, RatingMode::KeepNotKeep), keep);
+        assert_eq!(
+            map_rating(&keep, RatingMode::KeepNotKeep, RatingMode::KeepNotKeep),
+            keep
+        );
 
         let as_stars = map_rating(&keep, RatingMode::KeepNotKeep, RatingMode::Stars);
         assert_eq!(as_stars, Rating::stars(5));
