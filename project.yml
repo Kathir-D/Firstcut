@@ -121,6 +121,13 @@ targets:
     platform: macOS
     sources:
       - path: App/Tests/Performance
+      # `App/Tests/Performance/Support/FirstcutTestSupport.swift` was a byte-identical second copy
+      # of the integration bundle's support file (REV-56 again: one concept, two definitions, and
+      # the two drifted -- only one of them got the TCC fix, so the perf suite kept hanging). The
+      # copy is deleted and this target compiles the single shared file instead.
+      - path: App/Tests/Integration/Support
+        type: group
+        buildPhase: sources
       - path: tests/fixtures/exiftool
         type: folder
         buildPhase: resources
