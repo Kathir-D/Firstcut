@@ -22,8 +22,10 @@ import Foundation
     private var nextChangeID: UInt64 = 1
     private var index = 0
 
-    /// Test hooks.
+    /// Test hooks. `xmpWrites` is the *pending* queue that `flush()` drains; `xmpWriteCount` is the
+    /// running total, so a test can still count writes across a batch change.
     public private(set) var xmpWrites: [PhotoID] = []
+    public private(set) var xmpWriteCount = 0
     public private(set) var flushCount = 0
     public private(set) var executedPlans: [FinishPlanData] = []
     public private(set) var undoneFinishes = 0
@@ -151,6 +153,7 @@ import Foundation
         undoStack.append(change)
         redoStack.removeAll()
         xmpWrites.append(photo)  // stands in for the debounced ≤ 1 s XMP queue
+        xmpWriteCount += 1
         return change
     }
 
@@ -160,6 +163,7 @@ import Foundation
         data.ratings[change.photo] = change.before
         redoStack.append(change)
         xmpWrites.append(change.photo)
+        xmpWriteCount += 1
         return change
     }
 
@@ -169,6 +173,7 @@ import Foundation
         data.ratings[change.photo] = change.after
         undoStack.append(change)
         xmpWrites.append(change.photo)
+        xmpWriteCount += 1
         return change
     }
 

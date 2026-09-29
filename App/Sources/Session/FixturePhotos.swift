@@ -325,8 +325,9 @@ enum ExifDate {
         var offsetMinutes = parseOffset(offsetTimeOriginal) ?? 0
 
         // Peel a trailing +HH:MM / -HH:MM off the time field: "19:54:49.84-06:00".
+        // The sign is part of the offset, so it has to be parsed together with the digits.
         if let index = timePart.lastIndex(where: { $0 == "+" || $0 == "-" }),
-            let parsed = parseOffset(String(timePart[timePart.index(after: index)...]))
+            let parsed = parseOffset(String(timePart[index...]))
         {
             offsetMinutes = parsed
             timePart = String(timePart[timePart.startIndex..<index])

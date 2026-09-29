@@ -49,11 +49,9 @@ public enum RatingRules {
             // photographer who wants only 5-star keeps can ask for it.
             let stars = Int(rating.stars)
             if stars >= keepThreshold { return .keep }
-            return switch stars {
-            case 3: .good
-            case 2, 1: .maybe
-            default: .unrated
-            }
+            if stars >= 3 { return .good }
+            if stars >= 1 { return .maybe }
+            return .unrated
         }
     }
 

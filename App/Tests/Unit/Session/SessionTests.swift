@@ -470,11 +470,13 @@ struct AppModelRatingTests {
         let (model, session) = Self.makeModel()
         model.perform(.setStars(5))
         let firstID = try #require(model.currentPhoto?.id)
-        #expect(session.xmpWrites == [firstID])
-        model.moveBatch(by: 1)
+        #expect(session.xmpWriteCount == 1)
+        model.moveBatch(by: 1)  // flushes the pending XMP queue
+        #expect(session.xmpWrites.isEmpty)
         let secondID = try #require(model.currentPhoto?.id)
         model.perform(.setStars(5))
-        #expect(session.xmpWrites == [firstID, secondID])
+        #expect(session.xmpWriteCount == 2)
+        #expect(session.xmpWrites == [secondID])
         // The first batch is untouched.
         #expect(model.photos(inBatch: 0)[0].tier == .keep)
         #expect(model.photos(inBatch: 1)[0].tier == .keep)
@@ -538,7 +540,7 @@ struct AppModelRatingTests {
         model.perform(.setStars(4))
         #expect(model.currentPhoto?.tier == .keep)
         model.updateSettings { $0.keepThreshold = 5 }
-        #expect(model.currentPhoto?.tier == .maybe)  // 4 stars is not a keep any more
+        #expect(model.currentPhoto?.tier == .good)  // 4 stars is not a keep any more
         #expect(model.currentPhoto?.isKeep == false)
         model.updateSettings { $0.keepThreshold = 4 }
         #expect(model.currentPhoto?.tier == .keep)
@@ -583,6 +585,7 @@ struct AppModelUndoTests {
         let ratedID = try #require(model.currentPhoto?.id)
         model.moveBatch(by: 2)
         #expect(model.currentBatchIndex == 2)
+        model.perform(.undo)
         #expect(model.currentBatchIndex == 0)  // navigated back to the change
         #expect(model.currentPhoto?.id == ratedID)
         #expect(model.currentPhoto?.rating.stars == 0)
@@ -730,7 +733,7 @@ struct FinishFlowTests {
         }
         #expect(summary[.keep] == 2)
         #expect(summary[.good] == 1)
-        #expect(summary.unkeptCount == 9)
+        #expect(summary.unkeptCount == 10)
         #expect(summary.unvisitedBatches == 2)
         #expect(summary.isComplete == false)
         #expect(summary.totalPhotos == 12)
