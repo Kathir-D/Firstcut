@@ -17,7 +17,8 @@ Firstcut/
 │   │   ├── Session/          # app-logic: AppModel, navigation, rating rules, undo bridging
 │   │   ├── Input/            # app-logic: Command, keymap, key routing
 │   │   ├── Pipeline/         # pipeline: decoders, CacheManager, scheduler, ThumbnailStore, memory budget
-│   │   └── Render/           # pipeline: IOSurface/Metal viewer layer, zoom/pan, overlays
+│   │   ├── Render/           # pipeline: IOSurface/Metal viewer layer, zoom/pan, overlays
+│   │   └── Shared/           # infra: CoreTypes.swift stand-ins until UniFFI bindings replace them
 │   ├── Resources/            # ui: Assets; app-logic: DefaultKeymap.json; infra: Info.plist
 │   ├── Generated/            # infra: UniFFI Swift bindings (git-ignored, built)
 │   └── Tests/
@@ -50,6 +51,22 @@ Firstcut/
 | App target / scheme / bundle | `Firstcut` / `Firstcut` / `com.kathird.firstcut` |
 | Test photos env var | `FIRSTCUT_TEST_PHOTOS` (default `~/Documents/testing`) |
 
+## Day-one bootstrap (already in the repo)
+
+| Thing | Where | Owner |
+| --- | --- | --- |
+| Rust workspace, every module declared in `lib.rs` | `core/` | infra (each module: its agent) |
+| XcodeGen project, app + 3 test targets | `project.yml` | infra |
+| Placeholder app entry point | `App/Sources/App/FirstcutApp.swift` | ui (replace it) |
+| Swift stand-ins for core types | `App/Sources/Shared/CoreTypes.swift` | infra (request changes; deleted when UniFFI lands) |
+| Placeholder tests | `App/Tests/*/…PlaceholderTests.swift` | the owning agent may delete them |
+| exiftool dumps of the test games | `tests/fixtures/exiftool/<game>.json` | core-batch (read-only for others) |
+
+- Sources are included by **folder**, so adding Swift files never requires editing `project.yml`.
+- **Dependency exception**: any agent may add its own crates to `[dependencies]` in
+  `core/firstcut-core/Cargo.toml` (one line each, alphabetical). Swift packages: request them from infra.
+- `Cargo.lock` conflicts: take `main`'s version, then `cargo build`.
+
 ## Build & test commands
 
 | What | Command |
@@ -57,21 +74,19 @@ Firstcut/
 | Rust tests | `cargo test --manifest-path core/Cargo.toml` |
 | Rust lint | `cargo fmt --check` and `cargo clippy -- -D warnings` |
 | Build the Rust core + bindings | `scripts/build-core.sh` |
-| Generate the Xcode project | `xcodegen` |
+| Generate the Xcode project | `xcodegen` (run after pulling; `Firstcut.xcodeproj` is git-ignored) |
 | Build the app | `scripts/build-app.sh` → `dist/Firstcut.app` |
-| Swift tests | `xcodebuild test -scheme Firstcut` |
+| Swift tests | `xcodebuild -project Firstcut.xcodeproj -scheme Firstcut -destination 'platform=macOS,arch=arm64' test` |
 
 ## Git workflow for parallel agents
 
-- **One worktree and one branch per agent**, so agents never trample each other's checkouts:
-  ```sh
-  cd ~/Documents/projects/Firstcut
-  git worktree add ../Firstcut-wt/<agent> -b agent/<agent>
-  ```
-  The main checkout (`~/Documents/projects/Firstcut`) stays on `main` and is only used for merging.
-- **Reading other agents' live status**: their working files are on disk at
-  `~/Documents/projects/Firstcut-wt/<agent>/docs/agents/<agent>.md`, the freshest view. Committed
-  state: `git show agent/<agent>:docs/agents/<agent>.md`, since all worktrees share one `.git`.
+- **One worktree and one branch per agent, already created.** Work only in yours:
+  `~/Documents/projects/Firstcut-wt/<agent>` on branch `agent/<agent>` (upstream set). Don't create
+  worktrees. The main checkout (`~/Documents/projects/Firstcut`) stays on `main` and isn't used for work.
+- **Reading other agents' files**: always read the live copy from the owner's worktree,
+  `~/Documents/projects/Firstcut-wt/<owner>/<path>`, e.g. `.../Firstcut-wt/senior-dev/docs/review.md`
+  or `.../Firstcut-wt/core-store/docs/contracts/session-api.md`. Your own checkout only has what's been
+  merged to `main`. Committed state is also available via `git show agent/<owner>:<path>`.
 - **Commit often, push right after every commit** (`git push -u origin agent/<agent>` the first time).
 - **Stay current**: `git merge origin/main` into your branch. Don't rebase shared branches.
   **Never force-push.**

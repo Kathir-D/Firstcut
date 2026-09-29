@@ -48,7 +48,7 @@ How anything looks (ui), decoding (pipeline), storage (core-store).
 ## Deliverables
 
 - [ ] **Wave 1**: freeze app-model.md at v1.0 with ui.
-- [ ] **Wave 1**: `AppModel` + `Command` + `perform()` against `MockSession` and a mock `ImageProvider` built from `tests/fixtures/meta/<game>.json`; `AppModel.preview(game:)` for ui.
+- [ ] **Wave 1**: `AppModel` + `Command` + `perform()` against `MockSession` and a mock `ImageProvider` built from `tests/fixtures/exiftool/<game>.json` (using the types in `App/Sources/Shared/CoreTypes.swift`); `AppModel.preview(game:)` for ui.
 - [ ] **Wave 1**: keymap: default JSON (Lightroom parity, no zoom keys), user overrides, a single `NSEvent` local-monitor router, smooth key repeat, Caps Lock auto-advance.
 - [ ] **Wave 2**: rating rules for both modes (tiers, keep toggle on P, current-batch-only), auto-advance, batch-end behavior setting, entering-batch behavior, visited tracking; `setFocus` on every navigation; switch to the real Session + pipeline.
 - [ ] **Wave 2**: undo/redo bridging (navigate to the other batch first), `batches_changed` handling that never moves the user's current batch.
@@ -65,7 +65,11 @@ Read, in order: task.md §0 (team, protocol, schedule), docs/agents/app-logic.md
 docs/review.md (fix every open finding under "app-logic" and "All agents" first, highest severity first),
 docs/contracts/build.md, the contracts listed under "Contracts" in your file, the task.md sections listed
 in your file, and the "Requests to others" sections of every other file in docs/agents/.
-Work only in your own worktree (../Firstcut-wt/app-logic, branch agent/app-logic) and only on the paths you own.
+Work only in your own worktree, ~/Documents/projects/Firstcut-wt/app-logic (branch agent/app-logic, already
+created), and only on the paths you own. Read other agents' files live from their worktrees
+(~/Documents/projects/Firstcut-wt/<agent>/...). All agents are starting at the same time: never wait
+for anyone. Build against the v0.1 contracts, CoreTypes.swift, and tests/fixtures/exiftool/, and
+file requests for anything missing.
 Then pick the next unchecked deliverable, do it, then update your Live status (answer REV findings in
 Incoming requests), tick task.md boxes you own,
 commit, and push. Ask other agents for anything you need through requests, never by editing their files.
@@ -79,7 +83,7 @@ _Last updated: — (not started)_
 
 ### Current focus
 
-Not started. Waiting for the owner's go-ahead.
+Not started. Ready to start (bootstrap done, see task.md §0.7).
 
 ### Done log
 

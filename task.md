@@ -4,8 +4,9 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
-**Status (2026-09-29): planning.** The plan is agreed; **no app code has been written yet, and coding
-does not start until the owner gives the go-ahead.** The next step is M0's remaining setup (§14).
+**Status (2026-09-29): ready for all agents to start at once.** The plan is agreed and the bootstrap
+is done: a compiling Rust workspace and Xcode project skeleton (empty modules, no features), shared Swift
+stand-in types, exiftool fixtures for all four test games, and one git worktree per agent. See §0.8.
 
 **Work is split across 9 parallel agents.** How they're organized, the rules they follow, and the
 schedule are in [§0](#0-team-protocol--schedule) below. Their charters, live status, contracts, and the
@@ -22,7 +23,7 @@ senior dev's review board live in [`docs/`](docs/).
 | Agent | Mission | End goal (done when…) | Owns | Charter + status |
 | --- | --- | --- | --- | --- |
 | **senior-dev** | Technical lead and reviewer for everything | Every merged change has been reviewed; no open P0/P1 findings at any wave gate; contracts are consistent; v0.1.0 signed off | `docs/review.md`, `docs/agents/senior-dev.md` | [docs/agents/senior-dev.md](docs/agents/senior-dev.md) |
-| **infra** | Build system, Rust↔Swift bridge, CI, releases, Homebrew, README | `scripts/build-app.sh` produces a signed `dist/Firstcut.app` with the Rust core; CI green; a `v*` tag publishes the zip and updates the Homebrew cask | `core/Cargo.toml`, `core/firstcut-core/src/lib.rs` + `ffi.rs`, `project.yml`, `scripts/`, `.github/`, `Casks/`, `VERSION`, `README.md`, `LICENSE`, dotfiles | [docs/agents/infra.md](docs/agents/infra.md) |
+| **infra** | Build system, Rust↔Swift bridge, CI, releases, Homebrew, README | `scripts/build-app.sh` produces a signed `dist/Firstcut.app` with the Rust core; CI green; a `v*` tag publishes the zip and updates the Homebrew cask | `core/Cargo.toml`, `core/firstcut-core/src/lib.rs` + `ffi.rs`, `App/Sources/Shared/`, `project.yml`, `scripts/`, `.github/`, `Casks/`, `VERSION`, `README.md`, `LICENSE`, dotfiles | [docs/agents/infra.md](docs/agents/infra.md) |
 | **core-meta** | Read every file's metadata fast and correctly | `scan_folder()` returns a complete `PhotoMeta` for all four test games in < 3 s, matching exiftool on every field; every §8 format handled | `core/firstcut-core/src/{scan,meta,formats}/`, `tests/fixtures/headers/` | [docs/agents/core-meta.md](docs/agents/core-meta.md) |
 | **core-batch** | Turn photos into correct bursts | ≥ 98% boundary F1 against visually verified ground truth for all four games; deterministic; < 2 s for 1,500 files | `core/firstcut-core/src/{order,batch}/`, `core/firstcut-cli/`, `tests/fixtures/{meta,ground-truth}/` | [docs/agents/core-batch.md](docs/agents/core-batch.md) |
 | **core-store** | Persist everything safely | Session DB, XMP sidecars, undo/redo, resume, and Finish Cull file ops all work, survive crashes, never touch originals | `core/firstcut-core/src/{store,xmp,fileops}/`, `src/session.rs` | [docs/agents/core-store.md](docs/agents/core-store.md) |
@@ -64,9 +65,15 @@ senior-dev approves every contract before it's frozen at v1.0 and reviews every 
 
 ### 0.4 Protocol
 
+**Always read other agents' files from their worktree, not from your own checkout.** Your checkout
+only has what's been merged to `main`. The live version of any file owned by agent X is at
+`~/Documents/projects/Firstcut-wt/X/<path>` (e.g. the review board is
+`~/Documents/projects/Firstcut-wt/senior-dev/docs/review.md`, and the photo-meta contract is
+`~/Documents/projects/Firstcut-wt/core-meta/docs/contracts/photo-meta.md`). Read them; never write there.
+
 **Start of every work session**
 1. Read this §0, your own `docs/agents/<you>.md`, and [build.md](docs/contracts/build.md).
-2. Read **[`docs/review.md`](docs/review.md)**, the senior dev's review board. Fix every open item
+2. Read **[`docs/review.md`](docs/review.md)** (live copy in the senior-dev worktree), the senior dev's review board. Fix every open item
    addressed to you or to "All agents" before starting new work, highest severity first.
 3. Read the **Requests to others** section of every file in `docs/agents/` for anything addressed to you.
 4. Check the changelog of each contract you consume.
@@ -108,7 +115,8 @@ senior-dev approves every contract before it's frozen at v1.0 and reviews every 
 
 ### 0.5 Schedule
 
-Every agent has real work from day one, using mocks where needed. **A wave ends only when senior-dev
+**All 9 agents start at the same time.** Every agent has real work from day one, using mocks where
+needed. **A wave ends only when senior-dev
 signs it off in `docs/review.md`** (no open P0/P1 findings).
 
 | Wave | Goal | infra | core-meta | core-batch | core-store | pipeline | app-logic | ui | qa | senior-dev |
@@ -136,7 +144,24 @@ signs it off in `docs/review.md`** (no open P0/P1 findings).
 | §13 Build, CI & distribution | infra |
 | §14 Milestones | whoever owns the item; infra for M0/M8; senior-dev signs off each milestone |
 
-### 0.7 docs/ layout
+### 0.7 Starting all agents at once
+
+Everything that would otherwise force agents to wait on each other already exists:
+
+| Would have blocked | Already done |
+| --- | --- |
+| Agents creating worktrees at the same time | 9 worktrees exist at `~/Documents/projects/Firstcut-wt/<agent>` on branches `agent/<agent>`, pushed |
+| Rust agents waiting for infra's workspace | `core/` workspace compiles; every agent's module (`scan`, `meta`, `formats`, `order`, `batch`, `store`, `xmp`, `fileops`, `session`, `ffi`) is already declared in `lib.rs`, so nobody edits `lib.rs` to add code |
+| Swift agents waiting for the Xcode project | `project.yml` builds the app + Unit/Integration/Performance test targets (`xcodegen && xcodebuild test` passes); every agent's folder exists; sources are picked up by folder, so adding files never touches `project.yml` |
+| Swift agents waiting for UniFFI types | `App/Sources/Shared/CoreTypes.swift`: Swift mirrors of `PhotoMeta`, `Batch`, `VisualSig`, `Rating`, etc. Build against these; infra swaps them for the generated types later with the same names |
+| Everyone waiting for core-batch's meta JSON | `tests/fixtures/exiftool/<game>.json`: exiftool dumps of all 2,880 test photos (time, shutter count, lens, exposure, orientation, drive/shutter mode, AF mode), sorted by capture time. Build mocks from these now |
+| Contracts not frozen yet | Build against the v0.1 drafts now. senior-dev reviews them in parallel; changes go through **Proposed changes** so nobody is surprised |
+| Rust dependencies need editing infra's `Cargo.toml` | Exception: any agent may add its own crates to `[dependencies]` in `core/firstcut-core/Cargo.toml` (one line each, alphabetical). On a `Cargo.lock` merge conflict, take `main`'s version and run `cargo build` |
+
+Machine note: 9 agents compiling at once on a 16 GB M1 Pro is heavy. Prefer `cargo check` / `cargo test -p`
+for quick loops and a full `xcodebuild` only when needed.
+
+### 0.8 docs/ layout
 
 ```
 docs/
@@ -793,9 +818,14 @@ Each milestone ends with something runnable and measured.
 - [x] Rust stable (1.98.1) installed via rustup; `~/.cargo/env` sourced from `~/.zprofile`.
 - [x] `exiftool` installed (Homebrew) for checking the metadata parser.
 - [x] Test data measured (§3).
-- [ ] Install `xcodegen` and `swift-format` (Homebrew).
-- [ ] Rust workspace (`core/`: `firstcut-core`, `firstcut-cli`), UniFFI set up.
-- [ ] `project.yml` + minimal app target that calls one Rust function through UniFFI ("hello").
+- [x] Install `xcodegen` and `swift-format` (Homebrew).
+- [x] Rust workspace skeleton (`core/`: `firstcut-core`, `firstcut-cli`, every module declared).
+- [x] exiftool fixtures for all four games (`tests/fixtures/exiftool/`).
+- [x] One worktree + branch per agent.
+- [x] Shared Swift stand-in types (`App/Sources/Shared/CoreTypes.swift`).
+- [ ] UniFFI set up.
+- [x] `project.yml` + placeholder app and three test targets (builds, tests pass).
+- [ ] The app calls one Rust function through UniFFI ("hello").
 - [ ] `scripts/build-core.sh`, `scripts/build-app.sh`, `VERSION`.
 - [ ] CI skeleton (fmt, clippy, tests, app build).
 

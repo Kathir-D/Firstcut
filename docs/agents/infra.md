@@ -15,7 +15,7 @@ Own the build system, the Rust↔Swift bridge, CI, releases, the Homebrew cask, 
 
 ## Owns (only you edit these)
 
-`core/Cargo.toml` (workspace), `core/firstcut-core/src/lib.rs` + `ffi.rs` (module wiring and UniFFI exports), `project.yml`, `scripts/`, `.github/`, `Casks/`, `VERSION`, `README.md`, `LICENSE`, `.gitignore`, `.gitattributes`, `.editorconfig`, `App/Resources/Info.plist`, `App/Generated/`
+`core/Cargo.toml` (workspace), `core/firstcut-core/src/lib.rs` + `ffi.rs` (module wiring and UniFFI exports), `project.yml`, `scripts/`, `.github/`, `Casks/`, `VERSION`, `README.md`, `LICENSE`, `.gitignore`, `.gitattributes`, `.editorconfig`, `App/Sources/Shared/` (CoreTypes stand-ins), `App/Generated/`
 
 ## Does NOT own
 
@@ -47,9 +47,9 @@ Any feature code. Other agents' exports in `ffi.rs` are added **at their request
 
 ## Deliverables
 
-- [ ] **Wave 1**: install `xcodegen` + `swift-format`; create the Cargo workspace (`firstcut-core`, `firstcut-cli`) with empty modules for every agent (`scan/ meta/ formats/ order/ batch/ store/ xmp/ fileops/ session.rs`); set up UniFFI with a `hello()` export; write `project.yml` (App target, Unit/Integration/Performance test targets, macOS 15 deployment target, arm64 only, Swift 6 strict concurrency); `scripts/build-core.sh` (→ `FirstcutCore.xcframework` + Swift bindings in `App/Generated/`); `scripts/build-app.sh`; `VERSION`; a minimal app that calls `hello()`. Freeze `build.md` at v1.0.
+- [x] **Bootstrap (done before kickoff)**: `xcodegen` + `swift-format` installed; Cargo workspace with every agent's module declared; `project.yml` with app + Unit/Integration/Performance targets (macOS 15, arm64, Swift 6 strict concurrency); `App/Sources/Shared/CoreTypes.swift` stand-ins; placeholder tests; per-agent worktrees.
+- [ ] **Wave 1**: UniFFI with a `hello()` export; `scripts/build-core.sh` (→ `FirstcutCore.xcframework` + Swift bindings in `App/Generated/`); link it in `project.yml`; `scripts/build-app.sh`; `VERSION`; the app calls `hello()`. Plan the switch from `CoreTypes.swift` to generated types (same names) and announce it in Notes for other agents before doing it. Freeze `build.md` at v1.0.
 - [ ] **Wave 1**: CI workflow: `cargo fmt --check`, `clippy -D warnings`, `cargo test`, build-core, xcodegen, `xcodebuild build test`. Cache cargo + DerivedData.
-- [ ] **Wave 1**: each agent's worktree set up per build.md, or instructions verified to work.
 - [ ] **Wave 2**: export the real `Session` API (session-api.md) and `PhotoMeta`/`Batch`/`VisualSig` types; pre-build phase re-runs build-core when Rust changes.
 - [ ] **Wave 3**: release workflow on `v*` tags (build-app, zip, SHA-256, GitHub Release); `Casks/firstcut.rb` modeled on `sonar.rb` in the tap (postflight clears quarantine); workflow bumps the cask in `Kathir-D/homebrew-tap`.
 - [ ] **Wave 4**: README screenshots + GIF (ask ui for captures), version bump in the curl example, issue templates, `THIRD-PARTY-NOTICES.md` if needed, GPL-3.0 compatibility check of every crate. Tag v0.1.0.
@@ -64,7 +64,11 @@ Read, in order: task.md §0 (team, protocol, schedule), docs/agents/infra.md (yo
 docs/review.md (fix every open finding under "infra" and "All agents" first, highest severity first),
 docs/contracts/build.md, the contracts listed under "Contracts" in your file, the task.md sections listed
 in your file, and the "Requests to others" sections of every other file in docs/agents/.
-Work only in your own worktree (../Firstcut-wt/infra, branch agent/infra) and only on the paths you own.
+Work only in your own worktree, ~/Documents/projects/Firstcut-wt/infra (branch agent/infra, already
+created), and only on the paths you own. Read other agents' files live from their worktrees
+(~/Documents/projects/Firstcut-wt/<agent>/...). All agents are starting at the same time: never wait
+for anyone. Build against the v0.1 contracts, CoreTypes.swift, and tests/fixtures/exiftool/, and
+file requests for anything missing.
 Then pick the next unchecked deliverable, do it, then update your Live status (answer REV findings in
 Incoming requests), tick task.md boxes you own,
 commit, and push. Ask other agents for anything you need through requests, never by editing their files.
@@ -78,7 +82,7 @@ _Last updated: — (not started)_
 
 ### Current focus
 
-Not started. Waiting for the owner's go-ahead.
+Not started. Ready to start (bootstrap done, see task.md §0.7).
 
 ### Done log
 

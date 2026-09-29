@@ -48,7 +48,8 @@ Metadata parsing (core-meta), computing VisualSig from pixels in the app (pipeli
 ## Deliverables
 
 - [ ] **Wave 1**: freeze batching.md at v1.0 (confirm VisualSig with pipeline, Batch with core-store/app-logic).
-- [ ] **Wave 1**: `firstcut dump-meta --from-exiftool <folder>` → `tests/fixtures/meta/<game>.json` for all four games (**other agents' mocks depend on this, so do it first**).
+- [x] **Bootstrap (done before kickoff)**: raw exiftool dumps in `tests/fixtures/exiftool/<game>.json` (others mock from these now).
+- [ ] **Wave 1**: `firstcut dump-meta --from-exiftool <folder>` → `tests/fixtures/meta/<game>.json` in exact `PhotoMeta` field names for all four games; announce it in Notes for other agents when it lands.
 - [ ] **Wave 1**: `order()`, handling missing sub-seconds, shutter-count ties, multiple bodies, and file-name rollover (synthetic fixture `IMG_9998 → IMG_0002`).
 - [ ] **Wave 1**: metadata-only `batch()` per task.md §5.3; `firstcut batch <folder>` prints batches.
 - [ ] **Wave 2**: `firstcut contact-sheet <folder> --out <dir>`: one image per batch plus boundary pairs in the ambiguous zone, for **visual** review.
@@ -67,7 +68,11 @@ Read, in order: task.md §0 (team, protocol, schedule), docs/agents/core-batch.m
 docs/review.md (fix every open finding under "core-batch" and "All agents" first, highest severity first),
 docs/contracts/build.md, the contracts listed under "Contracts" in your file, the task.md sections listed
 in your file, and the "Requests to others" sections of every other file in docs/agents/.
-Work only in your own worktree (../Firstcut-wt/core-batch, branch agent/core-batch) and only on the paths you own.
+Work only in your own worktree, ~/Documents/projects/Firstcut-wt/core-batch (branch agent/core-batch, already
+created), and only on the paths you own. Read other agents' files live from their worktrees
+(~/Documents/projects/Firstcut-wt/<agent>/...). All agents are starting at the same time: never wait
+for anyone. Build against the v0.1 contracts, CoreTypes.swift, and tests/fixtures/exiftool/, and
+file requests for anything missing.
 Then pick the next unchecked deliverable, do it, then update your Live status (answer REV findings in
 Incoming requests), tick task.md boxes you own,
 commit, and push. Ask other agents for anything you need through requests, never by editing their files.
@@ -81,7 +86,7 @@ _Last updated: — (not started)_
 
 ### Current focus
 
-Not started. Waiting for the owner's go-ahead.
+Not started. Ready to start (bootstrap done, see task.md §0.7).
 
 ### Done log
 

@@ -1,0 +1,12 @@
+# Owner: infra. Agents add their own dependencies here by request (see docs/contracts/build.md).
+[package]
+name = "firstcut-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib"]
+
+[dependencies]

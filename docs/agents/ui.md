@@ -47,7 +47,7 @@ State and rules (app-logic), the image layer itself and zoom gestures (pipeline'
 
 ## Deliverables
 
-- [ ] **Wave 1**: window + unified toolbar (‹ › batch buttons in a glass capsule, title `Batch 12 of 148 — IMG_8231`, view-mode control, info toggle, Finish button), forced dark appearance, viewer area embedding a placeholder until pipeline's layer lands, Finder-style filmstrip (custom AppKit, rounded selection plate). All from `AppModel.preview(game:)`.
+- [ ] **Wave 1**: replace the placeholder `App/Sources/App/FirstcutApp.swift`; window + unified toolbar (‹ › batch buttons in a glass capsule, title `Batch 12 of 148 — IMG_8231`, view-mode control, info toggle, Finish button), forced dark appearance, viewer area embedding a placeholder until pipeline's layer lands, Finder-style filmstrip (custom AppKit, rounded selection plate). All from `AppModel.preview(game:)`.
 - [ ] **Wave 1**: record Finder gallery-view reference screenshots on macOS 26 (`docs/ui/`, which you own) for side-by-side checks.
 - [ ] **Wave 2**: rating visuals: stars/flags/labels in stars mode, green/red rings in keep mode; progress HUD (glass capsule); menu bar with every command; embed `PhotoViewerLayerView`.
 - [ ] **Wave 3**: info panel (I, right side, Lightroom-style fields + histogram), grid view, 2–4-up compare, welcome window (open folder, recents with progress, drag and drop), Finish Cull sheet (summary → options → dry-run list → progress → report → undo), Settings window (General, Keyboard editor, Viewer, Metadata, Performance).
@@ -63,7 +63,11 @@ Read, in order: task.md §0 (team, protocol, schedule), docs/agents/ui.md (your 
 docs/review.md (fix every open finding under "ui" and "All agents" first, highest severity first),
 docs/contracts/build.md, the contracts listed under "Contracts" in your file, the task.md sections listed
 in your file, and the "Requests to others" sections of every other file in docs/agents/.
-Work only in your own worktree (../Firstcut-wt/ui, branch agent/ui) and only on the paths you own.
+Work only in your own worktree, ~/Documents/projects/Firstcut-wt/ui (branch agent/ui, already
+created), and only on the paths you own. Read other agents' files live from their worktrees
+(~/Documents/projects/Firstcut-wt/<agent>/...). All agents are starting at the same time: never wait
+for anyone. Build against the v0.1 contracts, CoreTypes.swift, and tests/fixtures/exiftool/, and
+file requests for anything missing.
 Then pick the next unchecked deliverable, do it, then update your Live status (answer REV findings in
 Incoming requests), tick task.md boxes you own,
 commit, and push. Ask other agents for anything you need through requests, never by editing their files.
@@ -77,7 +81,7 @@ _Last updated: — (not started)_
 
 ### Current focus
 
-Not started. Waiting for the owner's go-ahead.
+Not started. Ready to start (bootstrap done, see task.md §0.7).
 
 ### Done log
 

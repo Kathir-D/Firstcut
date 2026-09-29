@@ -1,0 +1,55 @@
+# Owner: infra. XcodeGen spec; run `xcodegen` to generate Firstcut.xcodeproj (git-ignored).
+name: Firstcut
+options:
+  bundleIdPrefix: com.kathird
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: NO
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    GENERATE_INFOPLIST_FILE: YES
+    DEVELOPMENT_TEAM: ""
+targets:
+  Firstcut:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/Sources
+      - path: App/Resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kathird.firstcut
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Firstcut
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+        MARKETING_VERSION: "0.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+  FirstcutUnitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [App/Tests/Unit]
+    dependencies: [{ target: Firstcut }]
+  FirstcutIntegrationTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [App/Tests/Integration]
+    dependencies: [{ target: Firstcut }]
+  FirstcutPerformanceTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [App/Tests/Performance]
+    dependencies: [{ target: Firstcut }]
+schemes:
+  Firstcut:
+    build:
+      targets:
+        Firstcut: all
+    test:
+      targets: [FirstcutUnitTests, FirstcutIntegrationTests, FirstcutPerformanceTests]

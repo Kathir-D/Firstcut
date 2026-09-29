@@ -65,7 +65,11 @@ Read, in order: task.md §0 (team, protocol, schedule), docs/agents/core-meta.md
 docs/review.md (fix every open finding under "core-meta" and "All agents" first, highest severity first),
 docs/contracts/build.md, the contracts listed under "Contracts" in your file, the task.md sections listed
 in your file, and the "Requests to others" sections of every other file in docs/agents/.
-Work only in your own worktree (../Firstcut-wt/core-meta, branch agent/core-meta) and only on the paths you own.
+Work only in your own worktree, ~/Documents/projects/Firstcut-wt/core-meta (branch agent/core-meta, already
+created), and only on the paths you own. Read other agents' files live from their worktrees
+(~/Documents/projects/Firstcut-wt/<agent>/...). All agents are starting at the same time: never wait
+for anyone. Build against the v0.1 contracts, CoreTypes.swift, and tests/fixtures/exiftool/, and
+file requests for anything missing.
 Then pick the next unchecked deliverable, do it, then update your Live status (answer REV findings in
 Incoming requests), tick task.md boxes you own,
 commit, and push. Ask other agents for anything you need through requests, never by editing their files.
@@ -79,7 +83,7 @@ _Last updated: — (not started)_
 
 ### Current focus
 
-Not started. Waiting for the owner's go-ahead.
+Not started. Ready to start (bootstrap done, see task.md §0.7).
 
 ### Done log
 

@@ -1,0 +1,14 @@
+# Owner: core-batch
+[package]
+name = "firstcut-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "firstcut"
+path = "src/main.rs"
+
+[dependencies]
+firstcut-core = { path = "../firstcut-core" }

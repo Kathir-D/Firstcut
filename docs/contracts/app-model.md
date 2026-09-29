@@ -72,7 +72,8 @@ Every action is a `Command`. Keys, menus, toolbar buttons, and gestures all call
 
 ## Mock
 
-`AppModel.preview(game:)` builds a model from `tests/fixtures/meta/<game>.json` plus a mock
+`AppModel.preview(game:)` builds a model from `tests/fixtures/exiftool/<game>.json` (later
+`tests/fixtures/meta/<game>.json`) plus a mock
 `ImageProvider` (solid colors or thumbnails), so ui can build every screen before the core and
 pipeline exist.
 

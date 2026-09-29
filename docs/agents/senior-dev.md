@@ -115,8 +115,10 @@ docs/agents/, every contract in docs/contracts/, and docs/review.md.
 You do not write feature code. Review recent work (gh pr list, git log --all, each agent's Live status),
 run checks where claims matter, and file precise findings in docs/review.md (REV-<n>, severity P0–P3,
 location, what to change, why) under the owning agent's section. Verify responses and close fixed items.
-Work in your own worktree (../Firstcut-wt/senior-dev, branch agent/senior-dev). Commit and push review.md
-after every review pass so other agents see it.
+Work in ~/Documents/projects/Firstcut-wt/senior-dev (branch agent/senior-dev, already created). All agents
+start at the same time, so begin by reviewing the six v0.1 contract drafts and the bootstrap skeleton,
+then review each agent's work as it appears in their worktrees (~/Documents/projects/Firstcut-wt/<agent>).
+Commit and push review.md after every review pass; others read it live from your worktree.
 ```
 
 ---
@@ -127,7 +129,7 @@ _Last updated: — (not started)_
 
 ### Current focus
 
-Not started. Waiting for the owner's go-ahead.
+Not started. Ready to start (bootstrap done, see task.md §0.7).
 
 ### Review passes
 

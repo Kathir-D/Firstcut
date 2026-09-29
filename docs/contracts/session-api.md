@@ -83,7 +83,8 @@ pub trait SessionListener: Send + Sync {
 ## Mock
 
 app-logic uses `MockSession` (Swift, conforming to the generated protocol) backed by
-`tests/fixtures/meta/<game>.json` until the real core is linked.
+`tests/fixtures/exiftool/<game>.json` (and later `tests/fixtures/meta/<game>.json`) until the real
+core is linked. Use the Swift types in `App/Sources/Shared/CoreTypes.swift`.
 
 ## Proposed changes
 
