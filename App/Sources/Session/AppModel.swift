@@ -66,7 +66,12 @@ public final class AppModel: SessionListener, KeyRouterSource {
 
     /// The live session. A stored `let` can't be swapped when a second folder is opened, and opening
     /// one must not leave the previous session's listener attached.
-    private var backend: any SessionBackend { backendBox.session }
+    ///
+    /// Internal rather than private so `AppEnvironment` can hand a mock model's own backend to its
+    /// own `open(_:folderName:)`. The write path stays in this file: swapping happens through
+    /// `open(_:folderName:)`, which detaches the old listener first.
+    private var storage: SessionBox { backendBox }
+    var backend: any SessionBackend { storage.session }
 
     // MARK: Init
 

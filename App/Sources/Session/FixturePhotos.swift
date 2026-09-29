@@ -25,7 +25,27 @@ public enum FixturePhotos {
             let url = URL(fileURLWithPath: root).appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: url.path) { return url }
         }
-        // Session/ → Sources/ → App/ → the repository root.
+        // Bundled copy first. `tests/fixtures/` is committed into the test bundles (see project.yml),
+        // because walking up to the repository root means reading a path inside ~/Documents — and the
+        // test host is a GUI app, so that raises a TCC consent prompt on every run and the host
+        // blocks forever waiting for a click that never comes. Three hangs and about an hour on
+        // 2026-09-29, all from this function. The bundle copy is read from the app's own container,
+        // which needs no grant.
+        if let bundled = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: fixtureDirectory)
+            ?? Bundle.main.url(forResource: "\(fixtureDirectory)/\(name)", withExtension: nil),
+            FileManager.default.fileExists(atPath: bundled.path)
+        {
+            return bundled
+        }
+        for bundle in Bundle.allBundles {
+            if let found = bundle.url(forResource: name, withExtension: nil, subdirectory: fixtureDirectory),
+                FileManager.default.fileExists(atPath: found.path)
+            {
+                return found
+            }
+        }
+        // Session/ → Sources/ → App/ → the repository root. Still useful for a command-line tool run
+        // from a checkout, and only reached when the fixtures are not bundled.
         var directory = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { directory.deleteLastPathComponent() }
         for _ in 0..<4 {

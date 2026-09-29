@@ -108,7 +108,9 @@ protocol CullImageSource: AnyObject {
   func histogram(for id: PhotoID) -> CullHistogram?
 }
 
-struct CullHistogram: Equatable {
+/// Sendable because the pipeline computes it on a decode thread and hands it to the info panel;
+/// every field is a value type, so nothing about it is actor-bound.
+struct CullHistogram: Equatable, Sendable {
   var red: [Double]
   var green: [Double]
   var blue: [Double]

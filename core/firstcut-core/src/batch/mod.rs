@@ -63,10 +63,34 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Folds a 64-bit hash into the 63 bits SQLite can hold.
+///
+/// `store::db` keeps a `u64` id in an `i64` column by masking off the top bit, and masking is only
+/// a round trip if the id never *uses* that bit. FNV-1a sets it for 1,404 of the 2,880 fixture
+/// photos (48.8%), so an unmasked id would be written to the database under one number and read
+/// back under another — and the rating attached to it would be unreachable. Folding here means
+/// every id this crate mints is positive by construction, which is the invariant the store needs.
+///
+/// This is **not** injective and does not claim to be: `0x1` and `0x8000_0000_0000_0000` both fold
+/// to `0`, because the top bit is OR-ed into bit 62 rather than replacing it. Collisions need two
+/// hashes to differ in bits 0 and 63 together, which is a 1-in-2^63 chance for any given pair —
+/// about 5e-13 expected collisions across a 2,880-frame shoot. [`fnv1a64`] itself is the same
+/// situation one bit better, which is why a `u64` id has to be narrowed to reach a `u64` column
+/// at all.
+///
+/// The alternative, storing ids as TEXT in a schema v2, would keep ids exactly 64 bits and cost
+/// the index. That is a store decision, not a batcher one, and it is not taken here.
+#[must_use]
+pub fn fold_to_i64(hash: u64) -> u64 {
+    let folded = (hash >> 1) | ((hash & 1) << 62);
+    debug_assert_eq!(folded >> 63, 0, "a folded id must stay positive");
+    folded
+}
+
 /// [`PhotoId`] for a path relative to the session folder.
 #[must_use]
 pub fn photo_id(rel_path: &str) -> PhotoId {
-    PhotoId(fnv1a64(rel_path.as_bytes()))
+    PhotoId(fold_to_i64(fnv1a64(rel_path.as_bytes())))
 }
 
 /// [`BatchId`] derived from a batch's first photo.
@@ -504,6 +528,61 @@ mod tests {
         HashMap::new()
     }
 
+    #[test]
+    fn a_photo_id_always_survives_the_session_database() {
+        // The store keeps ids in an `i64` column by masking the top bit, which is only lossless
+        // for an id that never uses that bit. FNV-1a sets it for roughly half of all inputs, so
+        // this is the property that stands between a photo and its rating.
+        for index in 0..5_000u64 {
+            let id = photo_id(&format!("IMG_{index:04}.CR3"));
+            assert_eq!(
+                id.0 >> 63,
+                0,
+                "photo id {:#x} for frame {index} would not survive the database",
+                id.0
+            );
+            assert_eq!(
+                crate::store::db::i64_to_id(crate::store::db::id_to_i64(id.0)),
+                id.0,
+                "photo id {:#x} came back as a different photo",
+                id.0
+            );
+        }
+    }
+
+    #[test]
+    fn folding_a_hash_is_not_injective_and_does_not_pretend_to_be() {
+        // Pinned so nobody "fixes" the docs by claiming losslessness: the top bit is OR-ed into
+        // bit 62, so this pair collides. Documented on `fold_to_i64`.
+        assert_eq!(fold_to_i64(0x1), fold_to_i64(0x8000_0000_0000_0000));
+        // What does hold is the invariant the store needs, for every value including the extremes.
+        for hash in [0, 1, u64::MAX, 0x8000_0000_0000_0000, 0x7fff_ffff_ffff_ffff] {
+            assert_eq!(
+                fold_to_i64(hash) >> 63,
+                0,
+                "{hash:#x} did not fold into 63 bits"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fixture_corpus_ids_would_not_have_survived_the_database() {
+        // The measured reason this fold exists, and the reason a store that stored ids as raw
+        // `u64` would quietly lose ratings for half of every real shoot. 1,404 of 2,880.
+        let top_bit = |id: u64| id >> 63 == 1;
+        let paths: Vec<String> = (0..2_880).map(|i| format!("IMG_{i:04}.CR3")).collect();
+        let unmasked: Vec<u64> = paths.iter().map(|p| fnv1a64(p.as_bytes())).collect();
+        let would_break = unmasked.iter().filter(|id| top_bit(**id)).count();
+        assert!(
+            would_break > 1_000,
+            "expected a large fraction of ids to use the top bit, got {would_break}"
+        );
+        assert!(
+            unmasked.iter().all(|id| fold_to_i64(*id) >> 63 == 0),
+            "folding is what makes them safe"
+        );
+    }
+
     /// `n` frames `interval_ms` apart starting at `start_ms`, ids `0..n`.
     fn burst(n: u64, start_ms: i64, interval_ms: i64) -> Vec<M> {
         (0..n)
@@ -734,6 +813,55 @@ mod tests {
         assert_eq!(photo_id("IMG_0001.CR3"), photo_id("IMG_0001.CR3"));
         assert_ne!(photo_id("IMG_0001.CR3"), photo_id("IMG_0002.CR3"));
         assert_ne!(photo_id("IMG_0001.CR3"), photo_id("sub/IMG_0001.CR3"));
+    }
+
+    #[test]
+    fn every_photo_id_survives_the_session_database() {
+        // The store keeps a `u64` id in an `i64` column, so about half of all FNV-1a hashes land on
+        // a number SQLite cannot hold as written. An id that does not round-trip comes back from
+        // the database as a *different* photo, and the rating written against it is unreachable: the
+        // user presses a key and the cull forgets it. This is checked over the whole 63-bit range
+        // rather than a sample, because a sampled test would pass on the ids that happen to be
+        // small.
+        for id in [
+            0u64,
+            1,
+            42,
+            u64::MAX >> 1,
+            0x7fff_ffff_ffff_ffff,
+            0x4000_0000_0000_0000,
+            0x0000_0001_0000_0000,
+        ] {
+            let stored = crate::store::db::id_to_i64(id);
+            assert!(stored >= 0, "{id:#x} must stay positive for SQLite");
+            assert_eq!(
+                crate::store::db::i64_to_id(stored),
+                id,
+                "{id:#x} must round-trip"
+            );
+        }
+        for seed in 0..5000u64 {
+            let id = photo_id(&format!("IMG_{seed:06}.CR3")).0;
+            assert!(
+                id <= 0x7fff_ffff_ffff_ffff,
+                "{id:#x} is out of SQLite's range"
+            );
+            assert_eq!(
+                crate::store::db::i64_to_id(crate::store::db::id_to_i64(id)),
+                id,
+                "IMG_{seed:06}.CR3: {id:#x} does not round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn folding_keeps_different_paths_apart() {
+        // The fold must not merge two names, or two photos would share a row and a rating.
+        for seed in 0..2000u64 {
+            let a = photo_id(&format!("IMG_{seed:06}.CR3"));
+            let b = photo_id(&format!("IMG_{:06}.JPG", seed + 1));
+            assert_ne!(a, b, "seed {seed}");
+        }
     }
 
     #[test]

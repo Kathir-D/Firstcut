@@ -6,13 +6,17 @@
 //!
 //! Conventions:
 //! - Exports are grouped by the agent that owns the implementation, with a comment naming them.
-//! - Errors that Swift must distinguish are `#[derive(uniffi::Error)]` enums with a
-//!   `#[uniffi(flat_error)]` or an explicit `UniffiError` wrapper, never bare `String`.
-//! - Types that cross the boundary are declared here as `#[derive(uniffi::Record)]` mirrors of
-//!   the Rust types, so the Swift names match `App/Sources/Shared/CoreTypes.swift` exactly.
+//! - Errors Swift must tell apart are a `#[derive(uniffi::Error)]` enum with one variant per
+//!   failure, never a bare `String`, so "no such folder" and "the card is locked" are
+//!   distinguishable on the Swift side (task.md §8).
+//! - Types crossing the boundary are declared here as `#[derive(uniffi::Record)]` mirrors of the
+//!   Rust types, named so the generated Swift matches `App/Sources/Shared/CoreTypes.swift`.
+//! - This file lives *inside* the crate, so everything it wraps is `crate::`, never
+//!   `firstcut_core::`.
+
+use std::sync::Arc;
 
 /// Wave 1 smoke test: proves the Rust core is linked and callable from Swift.
-/// Swift side: `FirstcutCore.hello()`.
 #[uniffi::export]
 pub fn hello() -> String {
     format!(
@@ -29,6 +33,1148 @@ pub fn core_version() -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Wave 1 end of infra exports. Next: PhotoMeta / Batch / VisualSig (core-meta,
-// core-batch) and Session (core-store), added on request — see the Wave 2 row in
-// docs/agents/infra.md.
+// core-meta exports (docs/contracts/photo-meta.md)
+
+/// Mirrors `crate::meta::RawFormat` and `CoreTypes.swift`'s `RawFormat`. The same 24 spellings,
+/// so the Swift `case .cr3` pattern-matches the generated enum.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiRawFormat {
+    Cr3,
+    Cr2,
+    Crw,
+    Arw,
+    Sr2,
+    Srf,
+    Nef,
+    Nrw,
+    Raf,
+    Rw2,
+    Orf,
+    Pef,
+    Dng,
+    Rwl,
+    ThreeFr,
+    Fff,
+    Iiq,
+    Srw,
+    Dcr,
+    Kdc,
+    Erf,
+    Mef,
+    Mos,
+    Gpr,
+    X3f,
+}
+
+impl From<FfiRawFormat> for crate::meta::RawFormat {
+    fn from(format: FfiRawFormat) -> Self {
+        use crate::meta::RawFormat as Raw;
+        match format {
+            FfiRawFormat::Cr3 => Raw::Cr3,
+            FfiRawFormat::Cr2 => Raw::Cr2,
+            FfiRawFormat::Crw => Raw::Crw,
+            FfiRawFormat::Arw => Raw::Arw,
+            FfiRawFormat::Sr2 => Raw::Sr2,
+            FfiRawFormat::Srf => Raw::Srf,
+            FfiRawFormat::Nef => Raw::Nef,
+            FfiRawFormat::Nrw => Raw::Nrw,
+            FfiRawFormat::Raf => Raw::Raf,
+            FfiRawFormat::Rw2 => Raw::Rw2,
+            FfiRawFormat::Orf => Raw::Orf,
+            FfiRawFormat::Pef => Raw::Pef,
+            FfiRawFormat::Dng => Raw::Dng,
+            FfiRawFormat::Rwl => Raw::Rwl,
+            FfiRawFormat::ThreeFr => Raw::ThreeFr,
+            FfiRawFormat::Fff => Raw::Fff,
+            FfiRawFormat::Iiq => Raw::Iiq,
+            FfiRawFormat::Srw => Raw::Srw,
+            FfiRawFormat::Dcr => Raw::Dcr,
+            FfiRawFormat::Kdc => Raw::Kdc,
+            FfiRawFormat::Erf => Raw::Erf,
+            FfiRawFormat::Mef => Raw::Mef,
+            FfiRawFormat::Mos => Raw::Mos,
+            FfiRawFormat::Gpr => Raw::Gpr,
+            FfiRawFormat::X3f => Raw::X3f,
+        }
+    }
+}
+
+impl From<crate::meta::RawFormat> for FfiRawFormat {
+    fn from(format: crate::meta::RawFormat) -> Self {
+        use crate::meta::RawFormat as Raw;
+        match format {
+            Raw::Cr3 => FfiRawFormat::Cr3,
+            Raw::Cr2 => FfiRawFormat::Cr2,
+            Raw::Crw => FfiRawFormat::Crw,
+            Raw::Arw => FfiRawFormat::Arw,
+            Raw::Sr2 => FfiRawFormat::Sr2,
+            Raw::Srf => FfiRawFormat::Srf,
+            Raw::Nef => FfiRawFormat::Nef,
+            Raw::Nrw => FfiRawFormat::Nrw,
+            Raw::Raf => FfiRawFormat::Raf,
+            Raw::Rw2 => FfiRawFormat::Rw2,
+            Raw::Orf => FfiRawFormat::Orf,
+            Raw::Pef => FfiRawFormat::Pef,
+            Raw::Dng => FfiRawFormat::Dng,
+            Raw::Rwl => FfiRawFormat::Rwl,
+            Raw::ThreeFr => FfiRawFormat::ThreeFr,
+            Raw::Fff => FfiRawFormat::Fff,
+            Raw::Iiq => FfiRawFormat::Iiq,
+            Raw::Srw => FfiRawFormat::Srw,
+            Raw::Dcr => FfiRawFormat::Dcr,
+            Raw::Kdc => FfiRawFormat::Kdc,
+            Raw::Erf => FfiRawFormat::Erf,
+            Raw::Mef => FfiRawFormat::Mef,
+            Raw::Mos => FfiRawFormat::Mos,
+            Raw::Gpr => FfiRawFormat::Gpr,
+            Raw::X3f => FfiRawFormat::X3f,
+        }
+    }
+}
+
+/// Mirrors `crate::meta::FileKind` and Swift's `FileKind`, including the `raw(format)` case.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiFileKind {
+    Raw(FfiRawFormat),
+    Jpeg,
+    Heif,
+    Tiff,
+    Png,
+}
+
+impl From<crate::meta::FileKind> for FfiFileKind {
+    fn from(kind: crate::meta::FileKind) -> Self {
+        use crate::meta::FileKind as Kind;
+        match kind {
+            Kind::Raw(format) => FfiFileKind::Raw(format.into()),
+            Kind::Jpeg => FfiFileKind::Jpeg,
+            Kind::Heif => FfiFileKind::Heif,
+            Kind::Tiff => FfiFileKind::Tiff,
+            Kind::Png => FfiFileKind::Png,
+        }
+    }
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiTimeSource {
+    Exif,
+    /// A guess. The app greys the timestamp so the user knows ordering may be wrong.
+    FileModified,
+}
+
+impl From<crate::meta::TimeSource> for FfiTimeSource {
+    fn from(source: crate::meta::TimeSource) -> Self {
+        use crate::meta::TimeSource as Source;
+        match source {
+            Source::Exif => FfiTimeSource::Exif,
+            Source::FileModified => FfiTimeSource::FileModified,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiCaptureTime {
+    pub unix_ms: i64,
+    pub subsec_resolution_ms: u16,
+    pub offset_minutes: Option<i16>,
+    pub source: FfiTimeSource,
+}
+
+impl From<crate::meta::CaptureTime> for FfiCaptureTime {
+    fn from(time: crate::meta::CaptureTime) -> Self {
+        FfiCaptureTime {
+            unix_ms: time.unix_ms,
+            subsec_resolution_ms: time.subsec_resolution_ms,
+            offset_minutes: time.offset_minutes,
+            source: time.source.into(),
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiByteRange {
+    pub offset: u64,
+    pub len: u64,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiEmbeddedPreview {
+    pub range: FfiByteRange,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl From<crate::meta::EmbeddedPreview> for FfiEmbeddedPreview {
+    fn from(preview: crate::meta::EmbeddedPreview) -> Self {
+        FfiEmbeddedPreview {
+            range: FfiByteRange {
+                offset: preview.range.offset,
+                len: preview.range.len,
+            },
+            width: preview.width,
+            height: preview.height,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq)]
+pub struct FfiAfPoint {
+    /// Normalized 0..=1 over the AF image, in sensor orientation.
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub in_focus: bool,
+}
+
+impl From<crate::meta::AfPoint> for FfiAfPoint {
+    fn from(point: crate::meta::AfPoint) -> Self {
+        FfiAfPoint {
+            x: point.x,
+            y: point.y,
+            w: point.w,
+            h: point.h,
+            in_focus: point.in_focus,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct FfiAfInfo {
+    /// Empty when the camera did not name the mode; the points are still drawn.
+    pub area_mode: String,
+    /// The AF image the coordinates are relative to, so the overlay can letterbox correctly.
+    pub image_width: u32,
+    pub image_height: u32,
+    pub points: Vec<FfiAfPoint>,
+    /// Indices the camera reports as in focus, in the same units exiftool prints.
+    pub points_in_focus: Vec<u16>,
+}
+
+impl From<crate::meta::AfInfo> for FfiAfInfo {
+    fn from(af: crate::meta::AfInfo) -> Self {
+        FfiAfInfo {
+            area_mode: af.area_mode.unwrap_or_default(),
+            image_width: af.image_width,
+            image_height: af.image_height,
+            points: af.points.into_iter().map(FfiAfPoint::from).collect(),
+            points_in_focus: af.points_in_focus,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct FfiPhotoMeta {
+    pub id: u64,
+    pub rel_path: String,
+    pub companions: Vec<String>,
+    pub kind: FfiFileKind,
+    pub file_size: u64,
+    pub capture_time: Option<FfiCaptureTime>,
+    pub shutter_count: Option<u64>,
+    pub file_number: Option<u32>,
+    pub camera_make: Option<String>,
+    pub camera_model: Option<String>,
+    pub camera_serial: Option<String>,
+    pub lens_model: Option<String>,
+    pub focal_length_mm: Option<f32>,
+    pub exposure_time_s: Option<f32>,
+    pub f_number: Option<f32>,
+    pub iso: Option<u32>,
+    pub exposure_comp_ev: Option<f32>,
+    pub metering_mode: Option<String>,
+    pub drive_mode: Option<String>,
+    pub shutter_mode: Option<String>,
+    pub orientation: u8,
+    pub width: u32,
+    pub height: u32,
+    pub af: Option<FfiAfInfo>,
+    pub preview: Option<FfiEmbeddedPreview>,
+    pub warnings: Vec<String>,
+}
+
+impl From<crate::meta::PhotoMeta> for FfiPhotoMeta {
+    fn from(meta: crate::meta::PhotoMeta) -> Self {
+        FfiPhotoMeta {
+            id: meta.id.0,
+            rel_path: meta.rel_path,
+            companions: meta.companions,
+            kind: meta.kind.into(),
+            file_size: meta.file_size,
+            capture_time: meta.capture_time.map(FfiCaptureTime::from),
+            shutter_count: meta.shutter_count,
+            file_number: meta.file_number,
+            camera_make: meta.camera_make,
+            camera_model: meta.camera_model,
+            camera_serial: meta.camera_serial,
+            lens_model: meta.lens_model,
+            focal_length_mm: meta.focal_length_mm,
+            exposure_time_s: meta.exposure_time_s,
+            f_number: meta.f_number,
+            iso: meta.iso,
+            exposure_comp_ev: meta.exposure_comp_ev,
+            metering_mode: meta.metering_mode,
+            drive_mode: meta.drive_mode,
+            shutter_mode: meta.shutter_mode,
+            orientation: meta.orientation,
+            width: meta.width,
+            height: meta.height,
+            af: meta.af.map(FfiAfInfo::from),
+            preview: meta.preview.map(FfiEmbeddedPreview::from),
+            warnings: meta.warnings,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiSkipped {
+    pub rel_path: String,
+    pub reason: String,
+}
+
+impl From<crate::meta::Skipped> for FfiSkipped {
+    fn from(skipped: crate::meta::Skipped) -> Self {
+        FfiSkipped {
+            rel_path: skipped.rel_path,
+            reason: skipped.reason,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct FfiScanResult {
+    /// In `rel_path` order. Ordering into batches is core-batch's job, not the scanner's.
+    pub photos: Vec<FfiPhotoMeta>,
+    /// Files found and not understood, each with the reason. Never empty because a parse failed
+    /// quietly (task.md §8).
+    pub skipped: Vec<FfiSkipped>,
+}
+
+impl From<crate::meta::ScanResult> for FfiScanResult {
+    fn from(scan: crate::meta::ScanResult) -> Self {
+        FfiScanResult {
+            photos: scan.photos.into_iter().map(FfiPhotoMeta::from).collect(),
+            skipped: scan.skipped.into_iter().map(FfiSkipped::from).collect(),
+        }
+    }
+}
+
+/// Scans a folder of photos: Swift `try scanFolder(path:)`.
+///
+/// Headers only, never a whole file. A folder that cannot be opened throws `FfiError.scan`; a
+/// file that cannot be read is in `skipped`, so nothing is lost silently.
+#[uniffi::export]
+pub fn scan_folder(path: String) -> Result<FfiScanResult, FfiError> {
+    crate::meta::scan_folder(std::path::Path::new(&path))
+        .map(FfiScanResult::from)
+        .map_err(|err| FfiError::Scan {
+            message: err.to_string(),
+        })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// core-store exports (docs/contracts/session-api.md)
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiFlag {
+    None,
+    Pick,
+    Reject,
+}
+
+impl From<FfiFlag> for crate::store::Flag {
+    fn from(flag: FfiFlag) -> Self {
+        use crate::store::Flag as F;
+        match flag {
+            FfiFlag::None => F::None,
+            FfiFlag::Pick => F::Pick,
+            FfiFlag::Reject => F::Reject,
+        }
+    }
+}
+
+impl From<crate::store::Flag> for FfiFlag {
+    fn from(flag: crate::store::Flag) -> Self {
+        use crate::store::Flag as F;
+        match flag {
+            F::None => FfiFlag::None,
+            F::Pick => FfiFlag::Pick,
+            F::Reject => FfiFlag::Reject,
+        }
+    }
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiColorLabel {
+    Red,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+}
+
+impl From<FfiColorLabel> for crate::store::ColorLabel {
+    fn from(label: FfiColorLabel) -> Self {
+        use crate::store::ColorLabel as L;
+        match label {
+            FfiColorLabel::Red => L::Red,
+            FfiColorLabel::Yellow => L::Yellow,
+            FfiColorLabel::Green => L::Green,
+            FfiColorLabel::Blue => L::Blue,
+            FfiColorLabel::Purple => L::Purple,
+        }
+    }
+}
+
+impl From<crate::store::ColorLabel> for FfiColorLabel {
+    fn from(label: crate::store::ColorLabel) -> Self {
+        use crate::store::ColorLabel as L;
+        match label {
+            L::Red => FfiColorLabel::Red,
+            L::Yellow => FfiColorLabel::Yellow,
+            L::Green => FfiColorLabel::Green,
+            L::Blue => FfiColorLabel::Blue,
+            L::Purple => FfiColorLabel::Purple,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiRating {
+    /// 0..=5 in stars mode. Out-of-range is clamped by the core, never rejected, so a slider
+    /// that overshoots cannot throw at the user.
+    pub stars: u8,
+    pub flag: FfiFlag,
+    pub label: Option<FfiColorLabel>,
+    /// Keep / Not keep mode.
+    pub keep: bool,
+}
+
+impl From<FfiRating> for crate::store::Rating {
+    fn from(rating: FfiRating) -> Self {
+        crate::store::Rating::new(
+            rating.stars,
+            rating.flag.into(),
+            rating.label.map(Into::into),
+            rating.keep,
+        )
+    }
+}
+
+impl From<crate::store::Rating> for FfiRating {
+    fn from(rating: crate::store::Rating) -> Self {
+        FfiRating {
+            stars: rating.stars,
+            flag: rating.flag.into(),
+            label: rating.label.map(Into::into),
+            keep: rating.keep,
+        }
+    }
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiRatingMode {
+    Stars,
+    KeepNotKeep,
+}
+
+impl From<FfiRatingMode> for crate::store::RatingMode {
+    fn from(mode: FfiRatingMode) -> Self {
+        use crate::store::RatingMode as M;
+        match mode {
+            FfiRatingMode::Stars => M::Stars,
+            FfiRatingMode::KeepNotKeep => M::KeepNotKeep,
+        }
+    }
+}
+
+impl From<crate::store::RatingMode> for FfiRatingMode {
+    fn from(mode: crate::store::RatingMode) -> Self {
+        use crate::store::RatingMode as M;
+        match mode {
+            M::Stars => FfiRatingMode::Stars,
+            M::KeepNotKeep => FfiRatingMode::KeepNotKeep,
+        }
+    }
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FfiTier {
+    Keep,
+    Good,
+    Maybe,
+    Unrated,
+    Rejected,
+}
+
+impl From<crate::store::Tier> for FfiTier {
+    fn from(tier: crate::store::Tier) -> Self {
+        use crate::store::Tier as T;
+        match tier {
+            T::Keep => FfiTier::Keep,
+            T::Good => FfiTier::Good,
+            T::Maybe => FfiTier::Maybe,
+            T::Unrated => FfiTier::Unrated,
+            T::Rejected => FfiTier::Rejected,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiBatch {
+    pub id: u64,
+    pub index: u32,
+    /// In capture order.
+    pub photo_ids: Vec<u64>,
+    /// True until visual signatures have settled this batch's boundaries.
+    pub provisional: bool,
+}
+
+impl From<crate::batch::Batch> for FfiBatch {
+    fn from(batch: crate::batch::Batch) -> Self {
+        FfiBatch {
+            id: batch.id.0,
+            index: batch.index,
+            photo_ids: batch.photo_ids.iter().map(|id| id.0).collect(),
+            provisional: batch.provisional,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiCursor {
+    pub batch: u64,
+    pub photo: u64,
+}
+
+impl From<crate::session::Cursor> for FfiCursor {
+    fn from(cursor: crate::session::Cursor) -> Self {
+        FfiCursor {
+            batch: cursor.batch.0,
+            photo: cursor.photo.0,
+        }
+    }
+}
+
+impl From<FfiCursor> for crate::session::Cursor {
+    fn from(cursor: FfiCursor) -> Self {
+        crate::session::Cursor {
+            batch: crate::batch::BatchId(cursor.batch),
+            photo: crate::batch::PhotoId(cursor.photo),
+        }
+    }
+}
+
+/// One rating change, with everything undo needs to put it back (task.md §6.3).
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiChange {
+    /// Monotonic across the session, so the app can order changes it has already seen.
+    pub id: u64,
+    pub photo: u64,
+    pub batch: u64,
+    /// The batch the change was made in, so undo can navigate back across a batch boundary.
+    pub batch_index: u32,
+    pub before: FfiRating,
+    pub after: FfiRating,
+}
+
+impl From<crate::session::Change> for FfiChange {
+    fn from(change: crate::session::Change) -> Self {
+        FfiChange {
+            id: change.id,
+            photo: change.photo.0,
+            batch: change.batch.0,
+            batch_index: change.batch_index,
+            before: change.before.into(),
+            after: change.after.into(),
+        }
+    }
+}
+
+/// How the opened database relates to the folder (docs/contracts/session-api.md).
+#[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
+pub enum FfiMatchKind {
+    Created,
+    Exact,
+    /// The folder was moved or renamed and the session came with it. Carries where it was last
+    /// seen, which the app shows as a note rather than a dialog.
+    Moved {
+        from: String,
+    },
+}
+
+impl From<crate::store::MatchKind> for FfiMatchKind {
+    fn from(kind: crate::store::MatchKind) -> Self {
+        use crate::store::MatchKind as Kind;
+        match kind {
+            Kind::Created => FfiMatchKind::Created,
+            Kind::Exact => FfiMatchKind::Exact,
+            Kind::Moved { from } => FfiMatchKind::Moved {
+                from: from.display().to_string(),
+            },
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct FfiSessionSnapshot {
+    pub folder: String,
+    /// In capture order, which is the batcher's ordinal, not `rel_path`.
+    pub photos: Vec<FfiPhotoMeta>,
+    pub batches: Vec<FfiBatch>,
+    pub ratings: std::collections::HashMap<u64, FfiRating>,
+    /// Sorted, so a snapshot diff between two renders is stable.
+    pub visited: Vec<u64>,
+    pub cursor: Option<FfiCursor>,
+    /// Batch id → the last photo the user was on in it.
+    pub last_photo_in_batch: std::collections::HashMap<u64, u64>,
+    pub skipped: Vec<FfiSkipped>,
+}
+
+impl From<crate::session::SessionSnapshot> for FfiSessionSnapshot {
+    fn from(snapshot: crate::session::SessionSnapshot) -> Self {
+        let mut visited: Vec<u64> = snapshot.visited.into_iter().collect();
+        visited.sort_unstable();
+        FfiSessionSnapshot {
+            folder: snapshot.folder,
+            photos: snapshot
+                .photos
+                .into_iter()
+                .map(FfiPhotoMeta::from)
+                .collect(),
+            batches: snapshot.batches.into_iter().map(FfiBatch::from).collect(),
+            ratings: snapshot
+                .ratings
+                .into_iter()
+                .map(|(id, rating)| (id, rating.into()))
+                .collect(),
+            visited,
+            cursor: snapshot.cursor.map(FfiCursor::from),
+            last_photo_in_batch: snapshot.last_photo_in_batch,
+            skipped: snapshot.skipped.into_iter().map(FfiSkipped::from).collect(),
+        }
+    }
+}
+
+/// One photo's visual signature, as the pipeline computed it from the thumbnail.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiVisualSigEntry {
+    pub photo: u64,
+    /// Bit `row * 8 + col` is `luma[row][col] > luma[row][col + 1]`, MSB first.
+    pub dhash: u64,
+    /// 16 bins each for R, G, B, each channel normalized so its largest bin is 255. A
+    /// `[u8; 48]` on the Rust side; UniFFI has no fixed-size-array support, so it travels as an
+    /// array and is 48 long on the Swift side too.
+    pub hist: Vec<u8>,
+}
+
+/// Every failure Swift has to tell apart. Never a bare `String`: task.md §8 says a failure is
+/// reported, never a panic, and an app that cannot tell "no such folder" from "the card is locked"
+/// cannot show the user anything useful.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+pub enum FfiError {
+    #[error("could not scan that folder: {message}")]
+    Scan { message: String },
+    #[error("could not open the shoot: {message}")]
+    Session { message: String },
+}
+
+/// The session's callbacks, as a Swift protocol the app conforms to.
+///
+/// A UniFFI callback interface, so `app-logic` gets `SessionListener` pushed from the core instead
+/// of polling. Every method is called on a core thread, never the main thread — hop to the main
+/// actor before touching UI state.
+#[uniffi::export(foreign)]
+pub trait FfiSessionListener: Send + Sync {
+    /// Only unvisited batches can differ: a batch the user has been in is frozen (task.md §5.4).
+    fn on_batches_changed(&self, batches: Vec<FfiBatch>);
+    /// FSEvents: files were added to or removed from the folder.
+    fn on_files_changed(&self);
+    /// A sidecar could not be written. The database is still correct; only the copy in the folder
+    /// is behind.
+    fn on_xmp_error(&self, photo: u64, message: String);
+    /// The folder moved or was renamed since the last time this shoot was opened.
+    fn on_session_moved(&self, from: String);
+}
+
+/// Adapts a Swift listener to the core's Rust trait. Held as `Arc<dyn …>` so a session keeps it
+/// alive for as long as the session does.
+struct ListenerAdapter {
+    inner: Arc<dyn FfiSessionListener>,
+}
+
+impl crate::session::SessionListener for ListenerAdapter {
+    fn batches_changed(&self, batches: Vec<crate::batch::Batch>) {
+        self.inner
+            .on_batches_changed(batches.into_iter().map(FfiBatch::from).collect());
+    }
+
+    fn files_changed(&self) {
+        self.inner.on_files_changed();
+    }
+
+    fn xmp_error(&self, photo: crate::batch::PhotoId, message: String) {
+        self.inner.on_xmp_error(photo.0, message);
+    }
+
+    fn session_moved(&self, from: String) {
+        self.inner.on_session_moved(from);
+    }
+}
+
+/// A listener that discards every callback, for the app stages that do not care yet.
+///
+/// Swift: `NullListener()`.
+#[derive(uniffi::Object)]
+pub struct NullListener;
+
+#[uniffi::export]
+impl NullListener {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<NullListener> {
+        Arc::new(NullListener)
+    }
+}
+
+impl FfiSessionListener for NullListener {
+    fn on_batches_changed(&self, _batches: Vec<FfiBatch>) {}
+    fn on_files_changed(&self) {}
+    fn on_xmp_error(&self, _photo: u64, _message: String) {}
+    fn on_session_moved(&self, _from: String) {}
+}
+
+/// The session handle the app holds: Swift `try Session.open(folder:listener:)`.
+///
+/// A UniFFI object, so Swift holds a reference with `Arc` semantics and Rust owns the state. Every
+/// method takes `&self` and the core locks internally, so a rating from the UI thread and a sidecar
+/// write on the writer thread cannot race.
+#[derive(uniffi::Object, Debug)]
+pub struct Session {
+    inner: Arc<crate::session::Session>,
+}
+
+#[uniffi::export]
+impl Session {
+    /// Scans, orders, provisional-batches and restores the database.
+    ///
+    /// The one call that does real work, so the one that can be slow: headers only, and a
+    /// 1,500-frame Canon shoot is a few seconds on an internal SSD. Pass `NullListener()` when the
+    /// app has nothing to listen to yet — which is the state while the library grid is still empty
+    /// and the user has not chosen a folder. UniFFI cannot lift an optional callback interface, so
+    /// the "no listener" case is an explicit object rather than `nil`.
+    #[uniffi::constructor]
+    pub fn open(
+        folder: String,
+        listener: Arc<dyn FfiSessionListener>,
+    ) -> Result<Arc<Session>, FfiError> {
+        let listener: Arc<dyn crate::session::SessionListener> =
+            Arc::new(ListenerAdapter { inner: listener });
+        let session = crate::session::Session::open(std::path::Path::new(&folder), listener)
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })?;
+        Ok(Arc::new(Session {
+            inner: Arc::new(session),
+        }))
+    }
+
+    /// [`Session::open`] with the database directory chosen by the caller.
+    ///
+    /// The app uses `open`. This exists so a test — or a future portable-sessions build — can keep
+    /// its databases somewhere other than the user's Application Support folder, instead of writing
+    /// real session files into the developer's home directory.
+    #[uniffi::constructor]
+    pub fn open_in(
+        folder: String,
+        sessions_dir: String,
+        listener: Arc<dyn FfiSessionListener>,
+    ) -> Result<Arc<Session>, FfiError> {
+        let listener: Arc<dyn crate::session::SessionListener> =
+            Arc::new(ListenerAdapter { inner: listener });
+        let session = crate::session::Session::open_in(
+            std::path::Path::new(&folder),
+            std::path::Path::new(&sessions_dir),
+            listener,
+        )
+        .map_err(|err| FfiError::Session {
+            message: err.to_string(),
+        })?;
+        Ok(Arc::new(Session {
+            inner: Arc::new(session),
+        }))
+    }
+
+    /// The canonical shoot folder.
+    pub fn folder(&self) -> String {
+        self.inner.folder().display().to_string()
+    }
+
+    /// New, the same place, or re-matched after a move. The app shows a note when it is `moved`.
+    pub fn matched(&self) -> FfiMatchKind {
+        self.inner.matched().into()
+    }
+
+    /// Everything the UI draws from, in one value.
+    pub fn snapshot(&self) -> FfiSessionSnapshot {
+        self.inner.snapshot().into()
+    }
+
+    pub fn rating_mode(&self) -> FfiRatingMode {
+        self.inner.rating_mode().into()
+    }
+
+    /// Switches rating mode. Existing data is mapped, never rewritten or dropped (task.md §6).
+    pub fn set_rating_mode(&self, mode: FfiRatingMode) -> Result<(), FfiError> {
+        self.inner
+            .set_rating_mode(mode.into())
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
+    /// Records a rating. Returns in the time one WAL transaction takes; the XMP sidecar is written
+    /// on a debounced background thread, so the app never waits on a file write.
+    pub fn set_rating(&self, photo: u64, rating: FfiRating) -> Result<FfiChange, FfiError> {
+        self.inner
+            .set_rating(crate::batch::PhotoId(photo), rating.into())
+            .map(FfiChange::from)
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
+    /// Reverts the newest change, or `nil` when there is nothing to undo.
+    pub fn undo(&self) -> Option<FfiChange> {
+        self.inner.undo().map(FfiChange::from)
+    }
+
+    /// Re-applies the newest undone change, or `nil` when there is nothing to redo.
+    pub fn redo(&self) -> Option<FfiChange> {
+        self.inner.redo().map(FfiChange::from)
+    }
+
+    /// Records where the user is, so reopening the shoot lands in the same place. Also marks the
+    /// batch visited, which freezes it against re-batching.
+    pub fn set_cursor(&self, cursor: FfiCursor) -> Result<(), FfiError> {
+        self.inner
+            .set_cursor(cursor.into())
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
+    /// Marks a batch as seen, which freezes it (task.md §5.4).
+    pub fn mark_visited(&self, batch: u64) -> Result<(), FfiError> {
+        self.inner
+            .mark_visited(crate::batch::BatchId(batch))
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
+    /// Submits visual signatures from the pipeline, which may re-batch the unvisited batches.
+    pub fn submit_visual_sigs(&self, sigs: Vec<FfiVisualSigEntry>) {
+        self.inner.submit_visual_sigs(
+            sigs.into_iter()
+                .map(|entry| {
+                    // Checked, not trusted: a short slice from a malformed caller would panic
+                    // inside the batcher, and task.md §8 says no panic reaches Swift.
+                    let mut hist = [0u8; 48];
+                    let len = entry.hist.len().min(48);
+                    hist[..len].copy_from_slice(&entry.hist[..len]);
+                    (
+                        crate::batch::PhotoId(entry.photo),
+                        crate::batch::VisualSig {
+                            dhash: entry.dhash,
+                            hist,
+                        },
+                    )
+                })
+                .collect(),
+        );
+    }
+
+    /// Re-reads the folder, recognising renamed files so a rating survives a rename in Finder
+    /// (REV-68).
+    pub fn rescan(&self) -> Result<FfiScanResult, FfiError> {
+        self.inner
+            .rescan()
+            .map(FfiScanResult::from)
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
+    /// Tier counts for the Finish summary, in the given mode (task.md §6.1).
+    pub fn tier_counts(&self, mode: FfiRatingMode) -> std::collections::HashMap<FfiTier, u32> {
+        crate::session::tier_counts(&self.inner.snapshot(), mode.into())
+            .into_iter()
+            .map(|(tier, count)| (tier.into(), count as u32))
+            .collect()
+    }
+
+    /// Writes every pending sidecar. Called on a batch change and before the app quits.
+    ///
+    /// Returns only once the last write has landed on disk, so a quit immediately after this
+    /// cannot lose a rating the user just made.
+    pub fn flush(&self) {
+        self.inner.flush();
+    }
+
+    /// Flushes and stops the writer. The session is unusable afterwards, so the app drops its
+    /// handle.
+    pub fn close(&self) {
+        self.inner.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A folder of three CR3s the scanner can actually read, so these tests exercise the real
+    /// parser rather than a mock that would not catch a signature mistake.
+    fn shoot() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        for index in 0..3u32 {
+            std::fs::write(
+                dir.path().join(format!("IMG_{index:04}.CR3")),
+                crate::meta::cr3::SyntheticCr3::r8().build(),
+            )
+            .expect("writing a synthetic raw");
+        }
+        dir
+    }
+
+    /// A temp dir holding both the shoot and its session database, so a test never writes into
+    /// the developer's real Application Support folder.
+    fn shoot_with_sessions() -> (tempfile::TempDir, tempfile::TempDir) {
+        let dir = shoot();
+        let sessions = tempfile::tempdir().expect("a temp dir for sessions");
+        (dir, sessions)
+    }
+
+    fn open(dir: &tempfile::TempDir, sessions: &tempfile::TempDir) -> Arc<Session> {
+        Session::open_in(
+            dir.path().display().to_string(),
+            sessions.path().display().to_string(),
+            NullListener::new(),
+        )
+        .expect("a session")
+    }
+
+    #[test]
+    fn the_wave_one_exports_still_work() {
+        assert!(hello().starts_with("Firstcut core "));
+        assert_eq!(core_version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn scanning_a_folder_crosses_the_boundary_whole() {
+        let dir = shoot();
+        let scan = scan_folder(dir.path().display().to_string()).expect("a scan");
+        assert_eq!(scan.photos.len(), 3);
+        assert!(scan.skipped.is_empty());
+
+        let photo = &scan.photos[0];
+        assert_eq!(photo.rel_path, "IMG_0000.CR3");
+        assert_eq!(photo.camera_make.as_deref(), Some("Canon"));
+        assert_eq!(photo.camera_model.as_deref(), Some("Canon EOS R8"));
+        assert_eq!((photo.width, photo.height), (6000, 4000));
+        assert_eq!(photo.orientation, 1);
+        assert_eq!(photo.kind, FfiFileKind::Raw(FfiRawFormat::Cr3));
+        assert_eq!(
+            photo.file_size as usize,
+            std::fs::metadata(dir.path().join("IMG_0000.CR3"))
+                .expect("metadata")
+                .len() as usize,
+            "the size that crossed the boundary is the file's real size"
+        );
+        assert_eq!(
+            photo.capture_time.map(|time| time.source),
+            Some(FfiTimeSource::Exif)
+        );
+    }
+
+    #[test]
+    fn a_missing_folder_is_an_error_not_an_empty_result() {
+        let err = scan_folder("/definitely/not/a/folder".to_string())
+            .expect_err("a missing folder must fail");
+        assert!(matches!(err, FfiError::Scan { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn a_file_the_scanner_cannot_read_is_reported_not_dropped() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::write(dir.path().join("IMG_0001.CR3"), b"not a real raw file")
+            .expect("writing a junk file");
+        let scan = scan_folder(dir.path().display().to_string()).expect("a scan");
+        assert!(scan.photos.is_empty());
+        assert_eq!(
+            scan.skipped.len(),
+            1,
+            "the junk file is not dropped silently"
+        );
+        assert!(!scan.skipped[0].reason.is_empty());
+    }
+
+    #[test]
+    fn the_whole_session_lifecycle_crosses_the_boundary() {
+        let (dir, sessions) = shoot_with_sessions();
+        let session = open(&dir, &sessions);
+
+        // Open: scanned, ordered, batched.
+        let snapshot = session.snapshot();
+        assert_eq!(snapshot.photos.len(), 3);
+        assert!(
+            !snapshot.batches.is_empty(),
+            "a shoot with no batches is broken"
+        );
+        assert!(snapshot.ratings.is_empty());
+        assert_eq!(session.matched(), FfiMatchKind::Created);
+        assert_eq!(session.rating_mode(), FfiRatingMode::Stars);
+
+        // Rate.
+        let photo = snapshot.photos[0].id;
+        let change = session
+            .set_rating(
+                photo,
+                FfiRating {
+                    stars: 5,
+                    flag: FfiFlag::None,
+                    label: Some(FfiColorLabel::Green),
+                    keep: false,
+                },
+            )
+            .expect("a rating");
+        assert_eq!(change.photo, photo);
+        assert_eq!(change.after.stars, 5);
+        assert_eq!(change.after.label, Some(FfiColorLabel::Green));
+        assert_eq!(
+            session.snapshot().ratings.get(&photo).map(|r| r.stars),
+            Some(5),
+            "the rating is visible without a flush"
+        );
+
+        // Navigate.
+        let batch = snapshot.batches[0].id;
+        let first_photo = snapshot.batches[0].photo_ids[0];
+        session
+            .set_cursor(FfiCursor {
+                batch,
+                photo: first_photo,
+            })
+            .expect("a cursor");
+        session.mark_visited(batch).expect("marking visited");
+        let snapshot = session.snapshot();
+        assert!(snapshot.visited.contains(&batch));
+        assert_eq!(
+            snapshot.cursor.map(|cursor| cursor.photo),
+            Some(first_photo)
+        );
+        assert_eq!(
+            snapshot.last_photo_in_batch.get(&batch).copied(),
+            Some(first_photo)
+        );
+
+        // Tiers.
+        let counts = session.tier_counts(FfiRatingMode::Stars);
+        assert_eq!(counts.get(&FfiTier::Keep), Some(&1));
+
+        // Undo / redo.
+        assert_eq!(
+            session.undo().expect("an undo").after.stars,
+            0,
+            "undo puts the neutral rating back"
+        );
+        assert_eq!(session.redo().expect("a redo").after.stars, 5);
+
+        // Visual signatures come back from the pipeline and may re-batch.
+        let sigs = snapshot
+            .photos
+            .iter()
+            .map(|photo| FfiVisualSigEntry {
+                photo: photo.id,
+                dhash: 0,
+                hist: vec![0; 48],
+            })
+            .collect();
+        session.submit_visual_sigs(sigs);
+        assert!(!session.snapshot().batches.is_empty());
+
+        session.rescan().expect("a rescan");
+        session.close();
+    }
+
+    #[test]
+    fn switching_rating_mode_over_the_boundary_keeps_the_data() {
+        let (dir, sessions) = shoot_with_sessions();
+        let session = open(&dir, &sessions);
+        let photo = session.snapshot().photos[0].id;
+        session
+            .set_rating(
+                photo,
+                FfiRating {
+                    stars: 4,
+                    flag: FfiFlag::None,
+                    label: None,
+                    keep: false,
+                },
+            )
+            .expect("a rating");
+
+        session
+            .set_rating_mode(FfiRatingMode::KeepNotKeep)
+            .expect("switching mode");
+        assert_eq!(session.rating_mode(), FfiRatingMode::KeepNotKeep);
+        assert_eq!(
+            session.snapshot().ratings[&photo].stars,
+            4,
+            "the stars survive the switch"
+        );
+        session.close();
+    }
+
+    #[test]
+    fn a_missing_folder_never_panics_across_the_boundary() {
+        // task.md §8: an error, never a crash on the Swift side.
+        let sessions = tempfile::tempdir().expect("a temp dir for sessions");
+        let err = Session::open_in(
+            "/definitely/not/a/folder".to_string(),
+            sessions.path().display().to_string(),
+            NullListener::new(),
+        )
+        .expect_err("a missing folder must fail");
+        assert!(matches!(err, FfiError::Session { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn a_rating_with_impossible_values_is_clamped_rather_than_throwing() {
+        // Swift cannot spell `u8` > 255 but it can spell 9 stars, and the core clamps.
+        let (dir, sessions) = shoot_with_sessions();
+        let session = open(&dir, &sessions);
+        let photo = session.snapshot().photos[0].id;
+        let change = session
+            .set_rating(
+                photo,
+                FfiRating {
+                    stars: 9,
+                    flag: FfiFlag::None,
+                    label: None,
+                    keep: false,
+                },
+            )
+            .expect("a rating");
+        assert_eq!(change.after.stars, 5, "9 stars is clamped to 5");
+        session.close();
+    }
+
+    #[test]
+    fn the_session_object_is_shareable_across_threads() {
+        // UniFFI hands Swift an `Arc`, and the app calls from more than one queue, so the core
+        // has to be `Send + Sync` or the generated bindings would not compile on the Swift side.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<crate::session::Session>();
+        assert_send_sync::<Session>();
+    }
+}

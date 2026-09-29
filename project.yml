@@ -81,21 +81,51 @@ targets:
   FirstcutUnitTests:
     type: bundle.unit-test
     platform: macOS
-    sources: [App/Tests/Unit]
+    sources:
+      - App/Tests/Unit
+      # The committed EXIF/meta dumps are copied into the test bundle. A GUI test host reading them
+      # from the repository hits a TCC consent prompt (the repo is under ~/Documents) and blocks
+      # forever unattended; the bundled copy is inside the app container and needs no grant.
+      - path: tests/fixtures/exiftool
+        type: folder
+        buildPhase: resources
+      - path: tests/fixtures/meta
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Firstcut
       - target: FirstcutCore
   FirstcutIntegrationTests:
     type: bundle.unit-test
     platform: macOS
-    sources: [App/Tests/Integration]
+    sources:
+      - App/Tests/Integration
+      # The committed EXIF/meta dumps are copied into the test bundle. A GUI test host reading them
+      # from the repository hits a TCC consent prompt (the repo is under ~/Documents) and blocks
+      # forever unattended; the bundled copy is inside the app container and needs no grant.
+      - path: tests/fixtures/exiftool
+        type: folder
+        buildPhase: resources
+      - path: tests/fixtures/meta
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Firstcut
       - target: FirstcutCore
   FirstcutPerformanceTests:
     type: bundle.unit-test
     platform: macOS
-    sources: [App/Tests/Performance]
+    sources:
+      - App/Tests/Performance
+      # The committed EXIF/meta dumps are copied into the test bundle. A GUI test host reading them
+      # from the repository hits a TCC consent prompt (the repo is under ~/Documents) and blocks
+      # forever unattended; the bundled copy is inside the app container and needs no grant.
+      - path: tests/fixtures/exiftool
+        type: folder
+        buildPhase: resources
+      - path: tests/fixtures/meta
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Firstcut
       - target: FirstcutCore

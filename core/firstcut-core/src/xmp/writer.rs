@@ -54,6 +54,12 @@ struct Queue {
     /// Photo id → the write and when it was queued.
     pending: HashMap<u64, (PendingWrite, Instant)>,
     stopped: bool,
+    /// True while the writer thread holds a batch it has taken off the queue but not yet written.
+    ///
+    /// Without it `flush()` could see an empty queue in the window between taking the writes and
+    /// writing them, and return before a single sidecar existed — which is exactly the promise
+    /// `flush` makes on quit and on a batch change.
+    writing: bool,
 }
 
 struct Shared {
@@ -117,14 +123,14 @@ impl XmpWriter {
         lock(&self.shared.queue).pending.len()
     }
 
-    /// Writes everything that is waiting and returns when the queue is empty. Used on batch change
-    /// and on quit (task.md §6.3).
+    /// Writes everything that is waiting and returns when the queue is empty *and* nothing is
+    /// mid-write. Used on batch change and on quit (task.md §6.3).
     pub fn flush(&self) {
         self.shared.flushing.store(true, Ordering::Release);
         self.shared.signal.notify_all();
 
         let mut queue = lock(&self.shared.queue);
-        while !queue.pending.is_empty() && !queue.stopped {
+        while (!queue.pending.is_empty() || queue.writing) && !queue.stopped {
             queue = self
                 .shared
                 .signal
@@ -211,12 +217,18 @@ fn run(shared: Arc<Shared>, deadline: Duration) {
                 if timeout.timed_out() || flushing {
                     let ready = due_ids(&queue, deadline, flushing);
                     due = take(&mut queue, &ready);
+                    // Marked while the lock is still held, so a `flush` that wakes up next cannot
+                    // see an empty queue and return before these have been written.
+                    queue.writing = !due.is_empty();
                     break;
                 }
             }
         }
         if !due.is_empty() {
             write_all(&shared, due);
+            // Cleared after the writes, so `flush` is only released once the files exist.
+            lock(&shared.queue).writing = false;
+            shared.signal.notify_all();
         }
     }
 }

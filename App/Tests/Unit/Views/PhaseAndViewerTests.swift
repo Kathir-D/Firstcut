@@ -95,13 +95,14 @@ struct ViewerPresentationTests {
     #expect(ViewerPresentation.fit.isZoomLocked == false)
   }
 
-  @Test("A host is only registered once the app calls register")
+  @Test("A host is only created once the app calls register")
   func registration() {
-    // Before pipeline registers, `ViewerArea` draws the placeholder instead of an empty host.
-    // The app has not called `register` in a test process, so the host draws nothing and
-    // `ViewerArea` shows the placeholder.
-    #expect(PhotoViewerHostView.isRegistered == false)
-
+    // `AppEnvironment.init` now registers `CGImageViewerHost` at launch, so in a test host that has
+    // already run, `isRegistered` is true. The behaviour worth pinning is the *contract*, not the
+    // launch order: `register` is what makes a host exist, and a host view adopts whatever the
+    // factory returns. Asserting `isRegistered == false` here would only be asserting that the app
+    // forgot to wire its own viewer, which is exactly the bug that shipped the "Viewer layer pending
+    // from the pipeline agent" placeholder over every photo.
     final class TestHost: NSView, PhotoViewerHost {
       var photos: [(PhotoID, Double)] = []
       var states: [ViewerPresentation] = []

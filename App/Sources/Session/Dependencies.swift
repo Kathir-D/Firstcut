@@ -39,18 +39,27 @@ public struct Dependencies {
         self.sessionFactory = sessionFactory
     }
 
-    /// Everything on disk: real Application Support, the keymap shipped in the bundle.
+    /// Everything on disk: real Application Support, the keymap shipped in the bundle, the real
+    /// `ImageProvider` decoding real CR3 previews, and the real Rust `Session` behind the session
+    /// factory. This is the shipped app.
+    ///
+    /// The two mocks that used to be here are gone: `MockImageProvider` drew coloured rectangles,
+    /// and the default `sessionFactory` opened a `MockSession`. Both are still available — via
+    /// `.preview()` and `MockImageProvider` directly — because the tests need them, but nothing in
+    /// the app's own path reaches a mock now.
     public static func live() -> Dependencies {
         let settingsStore = SettingsStore()
         var keymapStore = KeymapStore()
         _ = try? keymapStore.load()
+        let settings = settingsStore.load()
         return Dependencies(
             backend: nil,
-            images: MockImageProvider(),
+            images: ImageProvider(memoryBudgetBytes: settings.memoryBudgetBytes),
             keymap: keymapStore.effective,
-            settings: settingsStore.load(),
+            settings: settings,
             settingsStore: settingsStore,
-            keymapStore: keymapStore)
+            keymapStore: keymapStore,
+            sessionFactory: SessionFactory.live())
     }
 
     /// Fixtures (or a synthetic shoot) and a scratch directory, so a preview can't write over the

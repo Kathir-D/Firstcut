@@ -53,16 +53,28 @@ struct LoadingScreen: View {
     ZStack {
       Appearance.viewerBackground(darkness: 0.13)
       VStack(spacing: 12) {
-        ProgressView(value: progress)
-          .progressViewStyle(.linear)
-          .frame(width: 260)
-        Text("Reading \(Int(progress * 100))%")
-          .font(.system(size: 12))
-          .foregroundStyle(Appearance.secondaryLabel)
+        // A determinate bar only when there is a fraction to show. `Session::open` scans every
+        // header in the folder and reports nothing while it does, so an honest 0% would sit on
+        // screen for seconds looking broken; a bar frozen at zero is worse than a spinner.
+        if progress > 0 {
+          ProgressView(value: progress)
+            .progressViewStyle(.linear)
+            .frame(width: 260)
+          Text("Reading \(Int(progress * 100))%")
+            .font(.system(size: 12))
+            .foregroundStyle(Appearance.secondaryLabel)
+        } else {
+          ProgressView()
+            .progressViewStyle(.circular)
+            .controlSize(.large)
+          Text("Reading the folder…")
+            .font(.system(size: 12))
+            .foregroundStyle(Appearance.secondaryLabel)
+        }
       }
     }
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("Loading \(Int(progress * 100)) percent")
+    .accessibilityLabel(progress > 0 ? "Loading \(Int(progress * 100)) percent" : "Reading the folder")
     .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
   }
 }

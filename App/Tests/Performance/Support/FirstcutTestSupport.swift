@@ -23,10 +23,40 @@ public enum TestEnvironment {
     /// Env var name that relocates the test photos (build.md "Names").
     public static let photosEnvVar = "FIRSTCUT_TEST_PHOTOS"
 
+    /// The gate for **any** test that reads the real photos in `~/Documents/testing`.
+    ///
+    /// Two independent reasons this is opt-in rather than merely "skip if the folder is absent":
+    ///
+    /// 1. **TCC.** The test host is `Firstcut.app` — a real GUI application bundle. Reading a
+    ///    TCC-protected folder from a GUI app raises a consent prompt, and an ad-hoc rebuild is a new
+    ///    code identity, so macOS re-prompts on *every* run and the grant does not persist. Nobody is
+    ///    at the keyboard to click Allow, so the host blocks until it is killed. This presented as
+    ///    "a slow test" three separate times on 2026-09-29, costing about an hour. It is the same
+    ///    exposure a shipped user gets for a shoot in ~/Documents, which is why the release notes
+    ///    tell them the folder is granted once through the open panel.
+    /// 2. **Cost.** These tests decode real 6000x4000 CR3s. They are measurements, not assertions
+    ///    about the product's logic.
+    ///
+    /// Set `FIRSTCUT_ALLOW_PHOTO_TESTS=1` to run them. The committed JSON fixtures in
+    /// `tests/fixtures/` need no gate and are what CI runs.
+    public static let photoTestsEnvVar = "FIRSTCUT_ALLOW_PHOTO_TESTS"
+
+    public static var photoTestsAllowed: Bool {
+        ProcessInfo.processInfo.environment[photoTestsEnvVar] == "1"
+    }
+
+
     public static let defaultPhotosFolder = "~/Documents/testing"
 
     /// Root of the repo checkout this test bundle was compiled from, found by walking up from this
     /// file until `project.yml` appears. Works in every agent worktree.
+    ///
+    /// Only for tests that genuinely need a *committed file* (ground truth, golden batches). The
+    /// exiftool and meta dumps are read through `fixtureURL` from the copy bundled into the test
+    /// bundle instead — see `Fixtures.bundled(_:)` — because this walk ends inside ~/Documents, and
+    /// the test host is a GUI app, so reading it raises a TCC consent prompt that blocks the run
+    /// forever with nobody there to click Allow. That cost three hangs and about an hour on
+    /// 2026-09-29 before it was diagnosed.
     public static let repositoryRoot: URL? = {
         var url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         while url.path != "/" {
@@ -39,6 +69,32 @@ public enum TestEnvironment {
         }
         return nil
     }()
+
+    /// A committed fixture, preferring the copy inside the test bundle.
+    ///
+    /// The bundle is checked first and the repository second, and the order matters: the repository
+    /// lives under ~/Documents, so a GUI test host reading it triggers a TCC prompt that hangs the
+    /// suite. `Tests <opt-in real photos>` and the CI job both need the real dumps without touching
+    /// a protected path.
+    public static func bundled(_ relativePath: String, in bundle: Bundle = .main) -> URL? {
+        let name = (relativePath as NSString).lastPathComponent
+        let directory = (relativePath as NSString).deletingLastPathComponent
+        if !directory.isEmpty,
+            let found = bundle.url(
+                forResource: name, withExtension: nil, subdirectory: "\(directory)/")
+        {
+            return found
+        }
+        for candidate in Bundle.allBundles {
+            if !directory.isEmpty,
+                let found = candidate.url(
+                    forResource: name, withExtension: nil, subdirectory: "\(directory)/")
+            {
+                return found
+            }
+        }
+        return repositoryRoot?.appendingPathComponent(relativePath)
+    }
 
     /// The test photos, or nil when this machine has none. Never creates anything.
     public static let testPhotos: URL? = {
@@ -55,9 +111,13 @@ public enum TestEnvironment {
         return url
     }()
 
-    /// Absolute URL of a committed fixture, or nil when the repo root could not be located.
+    /// Absolute URL of a committed fixture, preferring the copy bundled into the test bundle.
+    ///
+    /// The bundle first, the repository second, and the order matters: the repository is under
+    /// ~/Documents, so a GUI test host reading it raises a TCC consent prompt that hangs the run with
+    /// nobody there to click Allow. See the same note in the integration copy.
     public static func fixtureURL(_ relativePath: String) -> URL? {
-        repositoryRoot?.appendingPathComponent(relativePath)
+        bundled(relativePath)
     }
 
     /// Folders in `~/Documents/testing` that look like a game, i.e. contain at least one file with a
@@ -381,10 +441,23 @@ public enum Fixtures {
 extension XCTestCase {
     /// Skips the calling test when the machine has no test photos. Call at the top of any test that
     /// touches RAW data; the committed-fixture tests must NOT use this.
-    public func skipUnlessTestPhotos(_ message: String = "Needs the test photos in ~/Documents/testing (set \(TestEnvironment.photosEnvVar))") throws {
+    public func skipUnlessTestPhotos(
+        _ message: String = """
+            Set \(TestEnvironment.photoTestsEnvVar)=1 to run this: it reads the real photos in \
+            \(TestEnvironment.defaultPhotosFolder), which a GUI test host cannot do unattended \
+            (a TCC consent prompt appears and nobody is there to allow it).
+            """
+    ) throws {
         try XCTSkipUnless(
             TestEnvironment.testPhotos != nil,
-            message
+            "Needs the test photos in \(TestEnvironment.defaultPhotosFolder)"
+        )
+        try XCTSkipUnless(
+            TestEnvironment.photoTestsAllowed,
+            """
+            Opt-in only: set \(TestEnvironment.photoTestsEnvVar)=1. See the comment on \
+            `photoTestsEnvVar` for why an unattended run cannot read ~/Documents.
+            """
         )
     }
 
