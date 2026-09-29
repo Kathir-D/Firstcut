@@ -95,13 +95,13 @@ struct ViewerPresentationTests {
     #expect(ViewerPresentation.fit.isZoomLocked == false)
   }
 
-  @Test("A host is only registered once the app calls register")
+  @Test("A host adopts whatever register installed, and passes it the photo and the viewport")
   func registration() {
-    // Before pipeline registers, `ViewerArea` draws the placeholder instead of an empty host.
-    // The app has not called `register` in a test process, so the host draws nothing and
-    // `ViewerArea` shows the placeholder.
-    #expect(PhotoViewerHostView.isRegistered == false)
-
+    // This used to assert that nothing was registered yet, on the grounds that the app had no
+    // viewer to register. That is no longer true -- `AppEnvironment` registers the real
+    // `PreviewViewerView` -- and an assertion that a global is still in its initial state is a
+    // test of test ordering, not of behaviour. What matters is the mechanism below: `register`
+    // installs, `isRegistered` reports it, a host adopts it, and navigation reaches it.
     final class TestHost: NSView, PhotoViewerHost {
       var photos: [(PhotoID, Double)] = []
       var states: [ViewerPresentation] = []

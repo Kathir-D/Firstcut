@@ -7,8 +7,21 @@
 //   -FirstcutBatches <n>                             how many batches the mock builds
 //   -FirstcutSeed <n>                                mock seed; the same seed is the same shoot
 //   -FirstcutRatingMode stars|keep
+//   -FirstcutOpenFolder <path>                       open a real folder at launch
 //
 // Unknown values are ignored and the app starts in its normal state.
+//
+// ## -FirstcutOpenFolder
+//
+// Opens a folder on disk at launch instead of showing the welcome screen. It exists because
+// "the app opens a real folder" is a claim that has to be demonstrated rather than asserted: a
+// screenshot of the welcome screen proves nothing, and driving NSOpenPanel from a script needs
+// somebody to click Allow.
+//
+// It is a launch argument, not a preference, and that distinction is the point. ⌘O and the
+// welcome screen's button both go through NSOpenPanel, nothing is remembered between launches, and
+// no path is ever defaulted to -- a folder enters this app only when a person hands it over, whether
+// by picking it or by typing it on the command line.
 
 import Foundation
 
@@ -27,6 +40,13 @@ enum LaunchOptions {
 
   static var seed: UInt64? {
     intValue(for: "-FirstcutSeed").map { UInt64($0) }
+  }
+
+  /// A folder to open at launch, or nil. Never persisted: see the note in the header.
+  static var folderToOpen: URL? {
+    guard let path = value(for: "-FirstcutOpenFolder"), !path.isEmpty else { return nil }
+    let url = URL(fileURLWithPath: (NSString(string: path) as NSString).expandingTildeInPath)
+    return FileManager.default.fileExists(atPath: url.path) ? url : nil
   }
 
   static var ratingMode: RatingMode? {
