@@ -163,7 +163,7 @@ impl FromStr for RatingMode {
     }
 }
 
-/// The rating of one photo (docs/contracts/session-api.md).
+/// Rating of one photo (docs/contracts/session-api.md).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Rating {
     /// 0..=5, stars mode. Out-of-range values are clamped by [`Rating::new`].
@@ -172,6 +172,74 @@ pub struct Rating {
     pub label: Option<ColorLabel>,
     /// Keep / Not keep mode.
     pub keep: bool,
+}
+
+/// The star count at which a photo counts as a keep in **both** modes.
+///
+/// 4 and 5 stars are the "Keep" tier in task.md §6.1, and the Finish step only keeps the Keep
+/// tier. Using the same threshold for the keep-mode display is what stops the filmstrip from
+/// showing a red "not keep" ring on a photo the Finish step is about to move into the kept folder.
+pub const KEEP_STARS: u8 = 4;
+
+/// The rating **shown** for a photo in a given mode.
+///
+/// This is the whole mode-mapping rule (task.md §6: "Switching mode mid-session is allowed; existing
+/// data is preserved and mapped"), in one pure function, and it is the only place the rule exists.
+/// app-logic and ui call it; nobody re-derives the answer from `stars` or `keep` on their own, which
+/// is how two implementations end up disagreeing about whether a photo is a keep.
+///
+/// | state in the source mode | shown in **Stars** | shown in **Keep / Not keep** |
+/// | --- | --- | --- |
+/// | keep, no stars | **5 stars** (task.md §6: "a keep ↔ 5 stars") | Keep |
+/// | stars 4–5, `keep` unset | those stars | **Keep** |
+/// | stars 1–3, `keep` unset | those stars | Not keep (they are Good/Maybe, not kept at Finish) |
+/// | no stars, not kept | Unrated | Not keep |
+/// | reject flag (X) | `xmp:Rating=-1`, Rejected tier | Rejected tier |
+/// | colour label | unchanged, shown in both modes | unchanged |
+///
+/// Nothing is lost in either direction: the stored rating is never modified, only the view of it,
+/// and the function is idempotent, so switching modes and back shows exactly what was there before.
+pub fn display_rating(rating: &Rating, mode: RatingMode) -> Rating {
+    match mode {
+        // A keep with no stars would read as Unrated, so it shows as the 5 stars it means.
+        RatingMode::Stars => Rating {
+            stars: if rating.stars == 0 && rating.keep {
+                Rating::MAX_STARS
+            } else {
+                rating.stars
+            },
+            ..*rating
+        },
+        // In keep mode the stars are still there, they just do not drive the ring.
+        RatingMode::KeepNotKeep => Rating {
+            keep: rating.keep || rating.stars >= KEEP_STARS,
+            ..*rating
+        },
+    }
+}
+
+/// The rating as it would be *stored* if the user worked in `to` mode: [`display_rating`] plus the
+/// inactive mode's fields cleared, so a photo does not silently keep a "5 stars" it was only
+/// showing. Only used when the user re-rates a photo after switching modes.
+pub fn map_rating(rating: &Rating, from: RatingMode, to: RatingMode) -> Rating {
+    if from == to {
+        return *rating;
+    }
+    match to {
+        RatingMode::Stars => {
+            let shown = display_rating(rating, RatingMode::Stars);
+            Rating::new(shown.stars, shown.flag, shown.label, false)
+        }
+        RatingMode::KeepNotKeep => {
+            let shown = display_rating(rating, RatingMode::KeepNotKeep);
+            Rating::new(0, shown.flag, shown.label, shown.keep)
+        }
+    }
+}
+
+/// The tier to show, in the one call ui needs.
+pub fn display_tier(rating: &Rating, mode: RatingMode) -> Tier {
+    display_rating(rating, mode).tier(mode)
 }
 
 impl Rating {
@@ -255,7 +323,6 @@ pub enum Tier {
     Unrated,
     Rejected,
 }
-
 impl Tier {
     /// Every tier, in the order the Finish summary lists them.
     pub const ALL: [Tier; 5] = [
@@ -402,5 +469,121 @@ mod tests {
         assert!(!Rating::keep().is_neutral());
         assert!(Rating::stars(4).is_kept(RatingMode::Stars));
         assert!(!Rating::stars(3).is_kept(RatingMode::Stars));
+    }
+
+    #[test]
+    fn a_keep_shows_as_five_stars_in_stars_mode() {
+        // task.md §6: "a keep ↔ 5 stars by default". Without this the user's keeps look Unrated.
+        let keep = Rating::keep();
+        assert_eq!(keep.stars, 0, "stored as-is: nothing is written into the stars field");
+        let shown = display_rating(&keep, RatingMode::Stars);
+        assert_eq!(shown.stars, 5);
+        assert_eq!(display_tier(&keep, RatingMode::Stars), Tier::Keep);
+        // Still a keep in keep mode, unchanged.
+        assert_eq!(display_rating(&keep, RatingMode::KeepNotKeep), keep);
+    }
+
+    #[test]
+    fn a_starred_photo_shows_as_a_keep_in_keep_mode() {
+        assert_eq!(
+            display_tier(&Rating::stars(5), RatingMode::KeepNotKeep),
+            Tier::Keep
+        );
+        assert_eq!(
+            display_tier(&Rating::stars(4), RatingMode::KeepNotKeep),
+            Tier::Keep
+        );
+        // 3 stars is "Good", and the Finish step does not keep it, so keep mode must not claim it.
+        assert_eq!(
+            display_tier(&Rating::stars(3), RatingMode::KeepNotKeep),
+            Tier::Unrated
+        );
+        assert!(display_rating(&Rating::stars(3), RatingMode::KeepNotKeep).keep == false);
+    }
+
+    #[test]
+    fn the_display_never_contradicts_the_finish_decision() {
+        // Whatever the UI shows as a keep is exactly what Finish will keep, in either mode.
+        for stars in 0..=5u8 {
+            for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+                let rating = Rating::stars(stars);
+                assert_eq!(
+                    display_rating(&rating, mode).is_kept(mode),
+                    rating.is_kept(mode),
+                    "{stars} stars shown in {mode}"
+                );
+            }
+        }
+        for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+            let keep = Rating::keep();
+            assert!(display_rating(&keep, mode).is_kept(mode), "a keep is a keep in {mode}");
+        }
+    }
+
+    #[test]
+    fn display_is_idempotent_and_lossless_in_both_directions() {
+        let states = [
+            Rating::neutral(),
+            Rating::stars(1),
+            Rating::stars(3),
+            Rating::stars(4),
+            Rating::stars(5),
+            Rating::keep(),
+            Rating::new(0, Flag::Reject, None, false),
+            Rating::new(4, Flag::Pick, Some(ColorLabel::Blue), true),
+        ];
+        for state in states {
+            for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+                let once = display_rating(&state, mode);
+                assert_eq!(display_rating(&once, mode), once, "{state:?} in {mode}");
+
+                // Round trip: switching to the other mode and back changes nothing the user set.
+                let there = display_rating(&state, mode);
+                let back = display_rating(&there, other(mode));
+                assert_eq!(
+                    display_rating(&back, mode),
+                    there,
+                    "{state:?} lost something on the way to {mode} and back"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn map_rating_clears_the_inactive_mode_and_is_the_identity_within_one_mode() {
+        let keep = Rating::keep();
+        assert_eq!(map_rating(&keep, RatingMode::KeepNotKeep, RatingMode::KeepNotKeep), keep);
+
+        let as_stars = map_rating(&keep, RatingMode::KeepNotKeep, RatingMode::Stars);
+        assert_eq!(as_stars, Rating::stars(5));
+        assert!(!as_stars.keep, "the keep field belongs to keep mode only");
+
+        let four = Rating::stars(4);
+        let as_keep = map_rating(&four, RatingMode::Stars, RatingMode::KeepNotKeep);
+        assert!(as_keep.keep);
+        assert_eq!(as_keep.stars, 0, "the stars belong to stars mode only");
+        // And back again: the 4 stars are still what the user meant.
+        assert_eq!(
+            map_rating(&as_keep, RatingMode::KeepNotKeep, RatingMode::Stars),
+            Rating::stars(5)
+        );
+    }
+
+    #[test]
+    fn labels_and_flags_survive_a_mode_switch() {
+        let rating = Rating::new(3, Flag::Reject, Some(ColorLabel::Purple), false);
+        for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+            let shown = display_rating(&rating, mode);
+            assert_eq!(shown.flag, Flag::Reject);
+            assert_eq!(shown.label, Some(ColorLabel::Purple));
+            assert_eq!(display_tier(&rating, mode), Tier::Rejected);
+        }
+    }
+
+    fn other(mode: RatingMode) -> RatingMode {
+        match mode {
+            RatingMode::Stars => RatingMode::KeepNotKeep,
+            RatingMode::KeepNotKeep => RatingMode::Stars,
+        }
     }
 }
