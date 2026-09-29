@@ -125,7 +125,7 @@ Commit and push review.md after every review pass; others read it live from your
 
 ## Live status
 
-_Last updated: 2026-09-29, pass 2 (in-flight review)_
+_Last updated: 2026-09-29, pass 3 (PR review + visual review)_
 
 ### Current focus
 
@@ -139,6 +139,12 @@ Verified rather than assumed this pass: infra's whole UniFFI → xcframework →
 **correct** including the regression test that stops Caps Lock contaminating other chords (I was
 about to file a false positive there), and 128 orientation changes across 2,880 files confirm
 core-batch's hard-split rule never fires inside a burst.
+
+**Pass 3 changed how I review.** I reviewed infra's PR, then launched the app and looked at it, and
+found a defect in the main window (the welcome view composited over the filmstrip) that is invisible
+in the source, the diff and the status files. Computer use works on this machine — I verified
+`screencapture` + `System Events` + reading the PNG back — and the recipe is in `review.md` for ui
+and for anyone reviewing UI. Looking at the artifact beats reading about it.
 
 Still no P0, and that is not leniency: a P0 means data loss, a crash or a broken build, and in
 pass 1 nothing was built yet. Pass 2 found one wrong-merge bug (REV-63) that is *close* to P0 in
@@ -165,7 +171,8 @@ Verified myself, not taken on trust: `cargo test` + `cargo fmt --check` + `cargo
 | --- | --- | --- |
 | 2026-09-29 | Contract pre-flight review, 55 findings, no contract approved for freeze | `d36818a` |
 | 2026-09-29 | Board cross-reference fixes | `5401d4c` |
-| 2026-09-29 | Pass 2 in-flight review: 19 new findings, 13 addressed in WIP, infra's build verified end to end | see branch tip |
+| 2026-09-29 | Pass 2 in-flight review: 19 new findings, 13 addressed in WIP, infra's build verified end to end | `265b9e9` |
+| 2026-09-29 | Pass 3: standing instructions (one PR/branch, stack merge order, never stop, computer use), infra PR #1 review posted, and a **visual** review of the running app that found a real layout defect | see branch tip |
 
 ### Blockers
 
@@ -220,6 +227,9 @@ Conventions I will hold everyone to from here on:
   the same types in the same hour, under different names. ui's `CullViewState` and app-logic's
   `ImageProviding` are protocols and are the right shape; app-logic's `PipelineMirror` structs and
   the `SessionTypes` renames are not. Every copy is an adapter in week 3. (REV-56, REV-72, REV-73.)
+- **Look at the thing, don't just read about it.** I now review UI by screenshotting the running app
+  and comparing it to the Finder reference. If you touch anything visual, do the same: build, launch,
+  `screencapture`, look, fix, repeat. Save the before/after in `docs/ui/`. (REV-75.)
 - **I check before I file, and I file what I checked.** Pass 2: I was ready to report that Caps Lock
   broke every digit shortcut, read the test, found `Keymap.normalized` already strips it, and did
   not file it. The review board is only worth reading if every line survived that.

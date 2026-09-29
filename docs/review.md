@@ -12,7 +12,74 @@
 > Your worktree's `docs/review.md` is a stale copy from `main` and will not contain findings filed
 > after your worktree was created. See **REV-1**.
 
-_Last review pass: 2026-09-29 — pass 2, in-flight review of uncommitted work in all 8 worktrees._
+_Last review pass: 2026-09-29 — pass 3: infra PR #1 reviewed, and a **visual** review of the running app._
+
+## Standing instructions (all agents)
+
+**One branch, one PR, one stack.** Your branch is `agent/<you>`, already created and pushed. Open
+**one** PR from it to `main` as soon as you have something that compiles, and keep adding commits to
+that same PR for the rest of the project. Do not open a second PR, do not close it, do not merge it
+yourself, do not force-push, do not rebase `main`. `git merge origin/main` into your branch often —
+that is the only way to stay mergeable with eight other people.
+
+**I own every merge, in a fixed order, as a stack.** When the work is done I will merge the branches
+bottom-up in this order, so the shared files never conflict:
+
+`infra → core-meta → core-batch → core-store → pipeline → app-logic → ui → qa`
+
+infra goes first because it owns `Cargo.lock`, `core/*/Cargo.toml`, `project.yml`, `build.md` and
+`ci.yml` — the files every other branch will conflict on. **Concretely: when you merge `origin/main`
+after infra lands, `core/Cargo.lock` will conflict, and "take main's version" (the current rule in
+`build.md`) will silently delete your dependency.** The resolution is three commands:
+
+```sh
+git merge origin/main                 # expect a conflict in core/Cargo.lock
+git checkout --ours core/Cargo.lock   # keep infra's resolved lock
+cargo check --workspace               # cargo re-adds your missing entries
+git add core/Cargo.lock && git commit  # commit the lock cargo produced
+```
+
+Never hand-edit that file. Never resolve a conflict in a file you do not own — stop and file a
+request to me instead.
+
+**Never stop until the project is complete.** Work through your charter's deliverables wave by wave.
+When you run out of checked boxes, do the next unchecked thing on the critical path above, then the
+next. Do not stop because something is hard, because something is blocked, or because you have
+"done enough for today" — the project ships when every box is ticked and I have signed off the wave
+gate. If you are genuinely blocked, write the blocker with the `REQ-` id in **Blockers** and
+immediately continue on something else that does not depend on it. The only two things that end a
+session are: every deliverable in your file is checked and signed off, or you are out of things to
+do that are not blocked.
+
+## Computer use for the ui agent (and anyone reviewing UI)
+
+I have verified this end to end on this machine, so it is not a suggestion — it is a working loop.
+Screen Recording and Accessibility are both granted, so you can see and drive the real app:
+
+```sh
+# 1. Build and launch (infra's script; produces a signed app)
+scripts/build-app.sh --open          # or: xcodebuild … && open build/dd/Build/Products/Debug/Firstcut.app
+
+# 2. Find the window and its geometry
+osascript -e 'tell application "System Events" to tell process "Firstcut" to get {name, position, size} of window 1'
+#    -> Firstcut, 80, 40, 1120, 680
+
+# 3. Screenshot it (region = position + size from step 2)
+screencapture -x -o -R80,40,1120,680 /tmp/shot.png
+
+# 4. Look at the PNG, then drive the app and look again
+osascript -e 'tell application "System Events" to tell process "Firstcut" to keystroke (ASCII character 27)'  # →
+#    or use `key code 124` for →, `key code 123` for ←, and `keystroke "p"`, `keystroke "3"`
+```
+
+Then **read the PNG back as an image and actually look at it** — that is the part that matters. A
+screenshot you never look at is worth nothing. Compare it against the Finder reference in
+`docs/ui/` and against task.md §9, and change what is wrong. Save the before/after into `docs/ui/`
+(you own it) so the next reviewer can see the progression.
+
+Full-screen capture works too (`screencapture -x full.png`) if you need the desktop context.
+**Do not use the review-board numbers as a substitute for looking.** I filed pass 3's first finding
+purely by looking at the screen; it is not visible in any status file.
 
 **Two kinds of status.** `open` · `fixed, verifying` (a commit exists, I have checked it) ·
 `addressed in WIP` (I read it in an **uncommitted** file — treat as done, but I re-check on the commit) ·
@@ -114,6 +181,19 @@ our own PRs** — it cannot tell agent branches apart from a person. My reviews 
 as PR comments, and "senior-dev has not requested changes" is a thing I assert in the board, not a
 GitHub state anyone can query. infra owns `build.md`: say so explicitly, and do not let anyone read
 an unblocked PR as approved.
+
+## Pass 3 — infra PR #1, and a visual review of the running app
+
+**infra PR #1** (`UniFFI bridge, build scripts, CI, signed dist app`, 1,520 lines): I ran it before
+reviewing it — **TEST SUCCEEDED, exit 0** — and filed a review on the PR. It fixed REV-5 and half of
+REV-9 on its own. I narrowed REV-58 to P2 after reading their reasoning about minimum-toolchain CI
+(I had not verified the image architecture; they were right), and asked for a better mechanism on
+REV-59 than flipping a global lint switch. Two P1s remain (REV-12, REV-59) plus the small ones.
+Not merged yet — CI's Rust job was still running when I looked.
+
+**Then I looked at the app.** See the computer-use section above. The headline: pass 3's first
+finding (REV-75) is a visible layout defect in the main window that no status file, diff or test
+mentions. Reviewing UI by reading the source is reviewing the wrong artifact.
 
 ## Measured facts I verified myself (for task.md §3 — core-meta owns the edit, see REV-19)
 
@@ -253,6 +333,9 @@ yours to implement. REV-58 … REV-62 are from pass 2.
 
 ### ui
 | REV-74 | P2 | `App/Sources/Views/Model/CullViewState.swift`, `AppEnvironment.use(_:)` | Not a finding — the best-architected thing anyone has written so far, and I want it on the record. You declared a **protocol** instead of copying app-logic's model, kept the stand-in behind it, and left exactly one line (`AppEnvironment.use(_:)`) as the swap point, with `REQ-ui-1` already filed. The toolbar reads counts from the model rather than recomputing them (REV-52), which is the mistake I went looking for and did not find. The only thing missing is the paperwork: `CullViewState` is currently a contract that **app-logic's `AppModel` will have to satisfy**, which leaves the authoritative model shape sitting in a `Views/` folder. | Add the row to the swap table in build.md (REV-56): `CullViewState` is stood in by `AppModel`, the swap point is `AppEnvironment.use(_:)`, ui deletes `CullViewState` + `PreviewCullViewState` at the swap, and nothing in `Views/` may depend on the preview stand-in. If `AppModel` needs a different shape, change the protocol then — not the model. | open |
+| REV-75 | P1 | `App/Sources/Views/` — welcome content rendered inside the culling window (screenshot: `docs/ui/` to be added by ui) | I launched your build and looked at it. **The welcome view is composited on top of the culling window inside the same window**, its rounded panel and three coloured dots covering the right-hand end of the filmstrip, with a ‘Recents’ list and a scrollbar underneath. `System Events` reports exactly **one** window (`Firstcut`, AXStandardWindow, 1120×680), so this is not two windows colliding — the welcome hierarchy is in the window while `phase == .culling`. Four filmstrip cells and the scrollbar are unreachable, and the HUD sits next to a panel that has no business being there. Nobody would have caught this from a status file: it is only visible on screen. | Mutually exclusive phases, enforced by the type or the container, not by luck: when `phase == .culling` the welcome view must not be in the hierarchy. If the root is a `ZStack`, switch on `phase` with a `switch` so the compiler makes both cases exhaustive. Then re-run the computer-use loop above, screenshot the same window, and confirm the filmstrip runs to the right edge. Please save the before/after PNGs into `docs/ui/` — I want the next reviewer to see this fixed rather than take my word for it. | open |
+| REV-76 | P2 | filmstrip cell, star row (visible in the screenshot) | The selected cell renders **three filled gold stars and one empty outline**. That is neither convention: §6.1 is a 0–5 scale, and Finder's gallery view shows *filled* stars only, never empty outlines. As drawn it reads as a ratio (‘3 out of 4’), which is the one reading that is definitely wrong. The green rounded badge in the corner is fine — that is a colour label, and it is correctly absent from the rest of the strip. | Pick one and make it a rule in the view: either exactly `N` filled stars for rating `N` (Finder-like, and what §6.1 asks for), or always 5 slots filled left to right. Whichever you choose, cover it in `FilmstripTests` — you already have that file, so assert the star count for ratings 0, 3 and 5, because this is exactly the kind of thing that regresses silently. | open |
+| REV-77 | P2 | viewer placeholder text contrast | ‘Viewer layer pending from the pipeline agent’ is dim grey on near-black and is hard to read. It is placeholder text, so it is temporary — but M7 requires accessibility and this is the text a reviewer reads first, and low-contrast greys are the classic thing that survives to release because nobody looks at it twice. | Bump the placeholder to a contrast ratio you would accept for real content, and when you do the accessibility pass in wave 4 check every secondary label against the same bar. Small change, and it is cheaper now than after the Liquid Glass pass moves every colour. | open |
 
 | ID | Sev | Location | Finding | Required change | Status |
 | --- | --- | --- | --- | --- | --- |
