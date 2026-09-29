@@ -85,9 +85,24 @@ public enum RatingRules {
         return synchronized(rating, mode: mode, keepThreshold: keepThreshold)
     }
 
-    /// Restores the invariant after a mutation: in stars mode `keep` follows `stars`; in keep mode a
-    /// keep with no stars is recorded as 5 so the two never contradict (the §6 "keep ↔ 5 stars"
-    /// mapping).
+    /// Restores the invariant after a mutation.
+    ///
+    /// **In stars mode** `keep` follows `stars` (`keep = stars >= threshold`).
+    ///
+    /// **In keep mode** the two are one decision, so `stars` is *derived from* `keep` in both
+    /// directions, not only when setting it:
+    ///   - `keep == true`  → `stars = 5`, the §6 "keep ↔ 5 stars" mapping;
+    ///   - `keep == false` → `stars = 0`.
+    ///
+    /// The second direction is not a detail. An earlier version only set the stars when keep was
+    /// switched **on**, so toggling keep off left `stars == 5` behind. That produced a stored
+    /// rating the user had explicitly un-kept, and since `tier` correctly reads 5 stars as a keep
+    /// (which it must, or a 5-star photo would look Unrated in keep mode and Finish would trash a
+    /// kept photo), the photo stayed a Keep in the UI *after the user removed it*. Turning a keep
+    /// off has to clear the stars it invented.
+    ///
+    /// A photo that already carried stars from stars mode is left alone when its keep matches what
+    /// those stars mean, so visiting it in keep mode does not destroy a 3-star "good".
     public static func synchronized(
         _ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold
     ) -> Rating {
@@ -96,7 +111,13 @@ public enum RatingRules {
         case .stars:
             result.keep = Int(result.stars) >= keepThreshold
         case .keep:
-            if result.keep, result.stars == 0 { result.stars = 5 }
+            if result.keep {
+                // Only write the 5 stars if the current stars do not already mean "keep".
+                if Int(result.stars) < keepThreshold { result.stars = keepStars }
+            } else {
+                // The user removed the keep, so the stars that stood for it must go too.
+                if Int(result.stars) >= keepThreshold { result.stars = 0 }
+            }
         }
         return result
     }

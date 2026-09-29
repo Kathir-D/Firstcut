@@ -55,6 +55,33 @@ struct RatingRulesTests {
         #expect(kept.keep)
     }
 
+    @Test("Turning a keep off in keep mode clears the 5 stars it invented")
+    func unkeepingClearsTheMappedStars() {
+        // Regression. `synchronized` used to write `stars = 5` when keep was switched *on* and
+        // nothing when it was switched off, so a photo the user had un-kept still carried 5 stars.
+        // `tier` reads 5 stars as a keep (it must, or a 5-star photo would read Unrated in keep
+        // mode and Finish would trash a kept photo), so the photo stayed a Keep in the UI after
+        // the user removed it. Both directions of the mapping have to be applied.
+        let kept = RatingRules.applying(to: Rating(), mode: .keep) { $0.keep = true }
+        #expect(kept.stars == 5)
+
+        let unkept = RatingRules.applying(to: kept, mode: .keep) { $0.keep = false }
+        #expect(unkept.keep == false)
+        #expect(unkept.stars == 0, "the stars that stood for the keep must go when it is removed")
+        #expect(RatingRules.tier(of: unkept, mode: .keep) == .unrated)
+        #expect(RatingRules.isKeep(unkept, mode: .keep) == false)
+    }
+
+    @Test("Unkeeping does not destroy a 3-star good made in stars mode")
+    func unkeepingPreservesAGood() {
+        // A 3-star "good" is not a keep, so switching to keep mode and back must not wipe it.
+        let good = RatingRules.applying(to: Rating(), mode: .stars) { $0.stars = 3 }
+        #expect(good.keep == false)
+        let untouched = RatingRules.applying(to: good, mode: .keep) { $0.keep = false }
+        #expect(untouched.stars == 3)
+        #expect(RatingRules.tier(of: untouched, mode: .stars) == .good)
+    }
+
     @Test("Toggling keep leaves existing stars alone")
     func toggleKeepsStars() {
         var rating = Rating()
