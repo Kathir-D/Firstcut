@@ -12,15 +12,44 @@
 import Foundation
 
 public enum FixturePhotos {
+    /// Where the committed exiftool dumps live, relative to the repository root.
     public static let fixtureDirectory = "tests/fixtures/exiftool"
     public static let knownGames = ["Game1JENKS", "Gane2NC", "Game3KC", "Game4VRE"]
 
     // MARK: - Locating
 
-    /// Looks for the fixtures in `FIRSTCUT_FIXTURES`, then relative to this source file, so both the
-    /// test bundle and a checkout build find them without the 42 GB of RAW files.
+    /// The test bundle, whose resources always include a copy of the fixtures.
+    ///
+    /// This is checked **first**, and the reason is not tidiness. The unit tests are hosted by
+    /// `Firstcut.app`, and that app is built inside the repository -- which lives in `~/Documents`,
+    /// a TCC-protected folder. Reading a file under `~/Documents` from a GUI app triggers a
+    /// consent prompt, and because the test host is an ad-hoc-signed rebuild (a new code identity
+    /// every time) it re-prompts on every run and nobody is there to click Allow. The symptom is
+    /// not a failure, it is a **hang**: the test host sits in `mach_msg` waiting for a modal that
+    /// never gets an answer, and `xcodebuild test` times out with no diagnostic.
+    ///
+    /// A file inside the test bundle is not subject to that, so the fixtures are copied into the
+    /// bundle's resources (see project.yml) and read from there. The source-tree lookup below is
+    /// kept as a fallback for a checkout build outside a protected folder.
+    private static var testBundle: Bundle? {
+        Bundle.allBundles.first { $0.bundlePath.hasSuffix(".xctest") }
+    }
+
+    /// Looks for the fixtures in the test bundle's resources, then `FIRSTCUT_FIXTURES`, then
+    /// relative to this source file, so both the test bundle and a checkout build find them
+    /// without the 42 GB of RAW files.
     public static func fixtureURL(game: String) -> URL? {
         let name = "\(game).json"
+        if let bundle = testBundle {
+            // The dumps are copied in as a *folder reference*, so they keep the `exiftool/`
+            // directory level inside the bundle. Try the flat name first (a build that flattens
+            // them) and then the folder-qualified one.
+            if let url = bundle.url(forResource: game, withExtension: "json") { return url }
+            let folder = URL(fileURLWithPath: "exiftool", relativeTo: bundle.resourceURL)
+            if FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) {
+                return folder.appendingPathComponent(name)
+            }
+        }
         if let root = ProcessInfo.processInfo.environment["FIRSTCUT_FIXTURES"] {
             let url = URL(fileURLWithPath: root).appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: url.path) { return url }

@@ -30,6 +30,12 @@ public enum RatingRules {
     public static let defaultKeepThreshold = 4
 
     /// True when the photo counts as kept, for the given mode.
+    ///
+    /// This reads the **mapped** answer, not the raw field, in both directions: a keep made in
+    /// keep mode is a keep in stars mode, and a 4- or 5-star photo is a keep in keep mode. That
+    /// symmetry is what stops the filmstrip showing a red ring on a photo the Finish step is
+    /// about to move into the kept folder, or a green ring on one it is about to trash. It mirrors
+    /// core-store's Rust `Rating::is_kept` / `Rating::tier`, which the session store also uses.
     public static func isKeep(_ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold) -> Bool {
         switch mode {
         case .stars: rating.stars >= UInt8(keepThreshold)
@@ -42,18 +48,24 @@ public enum RatingRules {
 
     /// The tier a photo sits in (app-model.md). `flag.pick` never changes the tier; it is stored
     /// for Lightroom parity and shown as a badge.
+    ///
+    /// **This is the only implementation of the rating-mode mapping in Swift.** It mirrors
+    /// `Rating::tier` in `core/firstcut-core/src/store/rating.rs` field for field, and there is
+    /// no second copy: `RatingTiers` in the Views folder was deleted because it disagreed with
+    /// this one about a keep with 0 stars, which is REV-69's bug (keeps vanishing on a mode
+    /// switch). ui reads the tier the model supplies; a view that recomputed it from
+    /// `stars`/`keep` would disagree with the finish summary the moment the mapping changed.
     public static func tier(of rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold) -> Tier {
         if rating.flag == .reject { return .rejected }
         switch mode {
         case .keep:
             return isKeep(rating, mode: mode, keepThreshold: keepThreshold) ? .keep : .unrated
         case .stars:
-            // §6.1: 5 or 4 is a full keep, and the boundary is the setting, not a constant, so a
-            // photographer who wants only 5-star keeps can ask for it.
-            let stars = Int(rating.stars)
-            if stars >= keepThreshold { return .keep }
-            if stars >= 3 { return .good }
-            if stars >= 1 { return .maybe }
+            // §6: a keep made in keep mode maps to 5 stars, so it must not read as Unrated.
+            let mapped: Int = rating.stars == 0 && rating.keep ? Int(RatingRules.keepStars) : Int(rating.stars)
+            if mapped >= keepThreshold { return .keep }
+            if mapped >= 3 { return .good }
+            if mapped >= 1 { return .maybe }
             return .unrated
         }
     }

@@ -9,6 +9,7 @@
 //   -FirstcutBatches <n>                             how many batches the mock builds
 //   -FirstcutSeed <n>                                mock seed; the same seed is the same shoot
 //   -FirstcutRatingMode stars|keep
+//   -FirstcutOpenFolder <path>                       open a real folder at launch
 //
 // Unknown values are ignored. With no flags at all the app starts on the welcome screen with no
 // session, which is the honest default: it will not invent photographs to show.
@@ -48,6 +49,13 @@ enum LaunchOptions {
 
   static var seed: UInt64? {
     intValue(for: "-FirstcutSeed").map { UInt64($0) }
+  }
+
+  /// A folder to open at launch, or nil. Never persisted: see the note in the header.
+  static var folderToOpen: URL? {
+    guard let path = value(for: "-FirstcutOpenFolder"), !path.isEmpty else { return nil }
+    let url = URL(fileURLWithPath: (NSString(string: path) as NSString).expandingTildeInPath)
+    return FileManager.default.fileExists(atPath: url.path) ? url : nil
   }
 
   static var ratingMode: RatingMode? {

@@ -44,11 +44,11 @@ struct FirstcutCommands: Commands {
                 .disabled(!isCulling)
         }
 
-        CommandGroup(replacing: .textEditing) {
+        SwiftUI.CommandMenu("Photo") {
             Button("Auto-Advance") { environment.send(.toggleAutoAdvance) }
-        }
 
-        CommandMenu("Photo") {
+            Divider()
+
             Button("Previous Photo") { environment.send(.photoPrevious) }
                 .keyboardShortcut(.leftArrow, modifiers: [])
                 .disabled(!isCulling)
@@ -67,13 +67,22 @@ struct FirstcutCommands: Commands {
 
             Divider()
 
+            // Listed explicitly rather than with a `ForEach`. `Commands` is a result builder, not
+            // a view builder: a `ForEach` there is not a menu item, and the failure mode is a
+            // baffling "extra trailing closure passed in call" reported at the *next* `CommandMenu`,
+            // which is how this file lost time. Five buttons, written out, read better anyway.
             Menu("Rate") {
-                ForEach((1...5).reversed(), id: \.self) { stars in
-                    Button("\(stars) Star\(stars == 1 ? "" : "s")") {
-                        environment.send(.setRating(stars: UInt8(stars)))
-                    }
-                    .keyboardShortcut(KeyEquivalent(Character("\(stars)")), modifiers: [])
-                }
+                Button("5 Stars") { environment.send(.setRating(stars: 5)) }
+                    .keyboardShortcut("5", modifiers: [])
+                Button("4 Stars") { environment.send(.setRating(stars: 4)) }
+                    .keyboardShortcut("4", modifiers: [])
+                Button("3 Stars") { environment.send(.setRating(stars: 3)) }
+                    .keyboardShortcut("3", modifiers: [])
+                Button("2 Stars") { environment.send(.setRating(stars: 2)) }
+                    .keyboardShortcut("2", modifiers: [])
+                Button("1 Star") { environment.send(.setRating(stars: 1)) }
+                    .keyboardShortcut("1", modifiers: [])
+                Divider()
                 Button("No Stars") { environment.send(.setRating(stars: 0)) }
                     .keyboardShortcut("0", modifiers: [])
             }
@@ -104,8 +113,19 @@ struct FirstcutCommands: Commands {
             .disabled(!isCulling)
         }
 
-        CommandGroup(after: .toolbar) {
-            Button("As Loupe") { environment.send(.setViewMode(.loupe)) }
+        // `SwiftUI.` is required, not decoration: app-logic declares its own `CommandMenu` enum
+        // in `App/Sources/Input/CommandCatalog.swift` (which menu a command lives in), and because
+        // that one is `public` in the same module it shadows `SwiftUI.CommandMenu` for every file.
+        // The bare `CommandMenu("Photo")` then resolved to the enum -- which takes no arguments --
+        // and the compiler reported "extra trailing closure passed in call" pointing at the *next*
+        // menu, with no note naming the shadowing type. Qualifying it is the smallest fix that
+        // keeps both names, and `CommandMenu` is the right name for the catalog side.
+        //
+        // View commands also live in their own submenu rather than `CommandGroup(after: .toolbar)`,
+        // which does not compile: `.toolbar` is a placement you can replace, not one you can put
+        // things after.
+        SwiftUI.CommandMenu("View") {
+            Button("as Loupe") { environment.send(.setViewMode(.loupe)) }
                 .keyboardShortcut("e", modifiers: [])
                 .disabled(!isCulling)
             Button("as Grid") { environment.send(.setViewMode(.grid)) }

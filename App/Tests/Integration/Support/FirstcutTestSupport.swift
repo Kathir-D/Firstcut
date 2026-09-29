@@ -97,7 +97,12 @@ public enum TestEnvironment {
     }
 
     /// The test photos, or nil when this machine has none. Never creates anything.
-    public static let testPhotos: URL? = {
+    ///
+    /// Nil when photo access has not been granted, deliberately: it routes the photo-dependent
+    /// tests through their normal "no photos on this machine" path instead of blocking.
+    /// See `photoTestsAllowed`.
+    public static var testPhotos: URL? {
+        guard photoTestsAllowed else { return nil }
         let raw =
             ProcessInfo.processInfo.environment[photosEnvVar]
             ?? (NSString(string: defaultPhotosFolder).expandingTildeInPath)
@@ -109,7 +114,7 @@ public enum TestEnvironment {
             isDirectory.boolValue
         else { return nil }
         return url
-    }()
+    }
 
     /// Absolute URL of a committed fixture, or nil when it is in neither the bundle nor the repo.
     public static func fixtureURL(_ relativePath: String) -> URL? {

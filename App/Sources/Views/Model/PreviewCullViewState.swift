@@ -189,8 +189,8 @@ final class PreviewCullViewState: CullViewState {
       var updated = photo
       let rating = ratings[id] ?? Rating()
       updated.rating = rating
-      updated.tier = RatingTiers.tier(for: rating, mode: ratingMode)
-      updated.isKeep = RatingTiers.isKeep(rating)
+      updated.tier = RatingRules.tier(of: rating, mode: ratingMode)
+      updated.isKeep = RatingRules.isKeep(rating, mode: ratingMode)
       allPhotos[id] = updated
     }
     photosInCurrentBatch = batches.indices.contains(currentBatchIndex)
@@ -208,8 +208,8 @@ final class PreviewCullViewState: CullViewState {
       fileName: (meta.relPath as NSString).lastPathComponent,
       meta: meta,
       rating: rating,
-      tier: RatingTiers.tier(for: rating, mode: ratingMode),
-      isKeep: RatingTiers.isKeep(rating)
+      tier: RatingRules.tier(of: rating, mode: ratingMode),
+      isKeep: RatingRules.isKeep(rating, mode: ratingMode)
     )
   }
 
@@ -226,8 +226,8 @@ final class PreviewCullViewState: CullViewState {
     ratings[photo.id] = rating
     var updated = photo
     updated.rating = rating
-    updated.tier = RatingTiers.tier(for: rating, mode: ratingMode)
-    updated.isKeep = RatingTiers.isKeep(rating)
+    updated.tier = RatingRules.tier(of: rating, mode: ratingMode)
+    updated.isKeep = RatingRules.isKeep(rating, mode: ratingMode)
     allPhotos[photo.id] = updated
     photosInCurrentBatch[currentPhotoIndex] = updated
     currentPhoto = updated

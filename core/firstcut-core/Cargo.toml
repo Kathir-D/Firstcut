@@ -31,5 +31,6 @@ rusqlite = { version = "0.37", features = ["bundled"] }  # session DB (WAL)
 thiserror = "2"
 
 [dev-dependencies]
+serde_json = "1"
 # core-store
 tempfile = "3"

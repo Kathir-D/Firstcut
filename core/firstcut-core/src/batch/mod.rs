@@ -60,7 +60,11 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
         hash ^= u64::from(b);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    hash
+    // Keep the top bit clear. SQLite integers are signed and the store stores ids as positive
+    // i64, so an id with bit 63 set could not survive a round trip through the database -- it
+    // would come back as a different photo, and a rating keyed to it would silently vanish.
+    // See `store::db::ID_MASK`, which is the other half of this.
+    hash & crate::store::db::ID_MASK
 }
 
 /// Folds a 64-bit hash into the 63 bits SQLite can hold.
@@ -979,5 +983,58 @@ mod tests {
         let mut rotated = photos.clone();
         rotated.rotate_left(33);
         assert_eq!(batch(&rotated, &no_sigs(), &frozen), expected);
+    }
+
+    /// REV-63, end to end. A no-EXIF pair sharing an mtime must not be welded into one burst: it
+    /// goes to `Ambiguous`, the score decides, and both touching batches come back `provisional` so
+    /// the visual pass can still revisit the boundary.
+    #[test]
+    fn an_mtime_only_pair_never_becomes_a_hard_batch_boundary() {
+        // Four frames, no EXIF anywhere, every mtime identical: the "gaps" are all 0 ms, which
+        // under the old rule was four hard joins and one single giant batch.
+        let photos: Vec<M> = (0..4)
+            .map(|i| M::frame(i, 0).without_capture_time().with_mtime(50_000))
+            .collect();
+
+        let out = batch_with(&photos, &no_sigs(), &[], BatchParams::default());
+        let joined = out.batches.iter().all(|b| b.photo_ids.len() > 1);
+        assert!(
+            !joined || out.batches.iter().all(|b| b.provisional),
+            "if identical mtimes still group, every such batch must be provisional so the \
+             signatures can take them apart"
+        );
+
+        // Whichever way it grouped, no boundary may be a *hard* join: each one is either ambiguous
+        // (provisional) or a split.
+        for v in &out.verdicts {
+            assert_ne!(
+                v.decision,
+                Decision::Join,
+                "boundary {} was a hard join on mtimes alone",
+                v.index
+            );
+        }
+        assert!(
+            out.batches.iter().all(|b| b.provisional),
+            "with no signature available, every batch from mtime-only evidence stays provisional"
+        );
+    }
+
+    /// A real EXIF burst at 90 ms is unaffected: it must still be one batch, and one that is not
+    /// provisional, or rule 2 has made every burst in the app provisional and the tool useless.
+    #[test]
+    fn a_real_exif_burst_is_still_one_settled_batch() {
+        let photos = burst(8, 1_000_000, 90);
+        let out = batch_with(&photos, &no_sigs(), &[], BatchParams::default());
+        assert_eq!(out.batches.len(), 1, "8 frames 90 ms apart are one burst");
+        assert_eq!(out.batches[0].photo_ids.len(), 8);
+        assert!(
+            !out.batches[0].provisional,
+            "a burst of real EXIF times needs no signature to settle it"
+        );
+        assert!(
+            out.verdicts.iter().all(|v| v.decision == Decision::Join),
+            "every interior boundary is a hard join"
+        );
     }
 }

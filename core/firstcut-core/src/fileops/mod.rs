@@ -542,11 +542,599 @@ pub fn open_in_lightroom(path: &Path) -> std::io::Result<()> {
         .map(|_| ())
 }
 
+// -------------------------------------------------------------- execution
+
+/// What one operation actually did. This is what the undo log records, so it is written down even
+/// when the result is a failure: "this one did not happen" is the most useful thing to know when
+/// undoing the other forty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutedOp {
+    pub kind: FileOpKind,
+    /// Where the file was before.
+    pub src: String,
+    /// Where it is now. `None` for deletes and for failures, where it did not move.
+    pub dst: Option<String>,
+    pub size_bytes: u64,
+    /// `done` or `failed`, as stored in `file_ops.status`.
+    pub status: &'static str,
+    /// Why it failed, when it did. Never swallowed: the report shows every one (task.md §9.7).
+    pub error: Option<String>,
+}
+
+impl ExecutedOp {
+    fn failure(op: &FileOp, reason: impl Into<String>) -> Self {
+        Self {
+            kind: op.kind.clone(),
+            src: op.from.clone(),
+            dst: None,
+            size_bytes: 0,
+            status: "failed",
+            error: Some(reason.into()),
+        }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.status == "done"
+    }
+}
+
+/// Walks a plan, one operation at a time, and reports what happened.
+///
+/// The plan is already final, so this half makes no decisions about *what* to do -- only about
+/// whether it is still safe to do it. The one decision it does make is the important one: if the
+/// destination is now taken, the operation fails rather than overwriting somebody's file. A dry run
+/// can be minutes old by the time it is agreed to, and "never overwrite" (task.md §9.7) has to hold
+/// at the moment of the write, not the moment of the preview.
+///
+/// Nothing here is undoable on its own; call [`undo_ops`] with what comes back.
+pub fn execute_ops(ops: &[FileOp]) -> Vec<ExecutedOp> {
+    ops.iter().map(execute_op).collect()
+}
+
+/// A count and a list of what could not be done, for the report the UI shows when it finishes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExecutionSummary {
+    pub done: u32,
+    pub failed: Vec<(String, String)>,
+    /// False as soon as a permanent delete ran, whatever else happened (task.md §9.7).
+    pub undoable: bool,
+}
+
+impl ExecutionSummary {
+    pub fn is_clean(&self) -> bool {
+        self.failed.is_empty()
+    }
+}
+
+pub fn summarize(executed: &[ExecutedOp]) -> ExecutionSummary {
+    let mut summary = ExecutionSummary {
+        undoable: true,
+        ..Default::default()
+    };
+    for op in executed {
+        if op.is_done() {
+            summary.done += 1;
+        } else if let Some(reason) = &op.error {
+            summary.failed.push((op.src.clone(), reason.clone()));
+        }
+        if op.kind == FileOpKind::Delete && op.is_done() {
+            summary.undoable = false;
+        }
+    }
+    summary
+}
+
+/// One operation, done.
+fn execute_op(op: &FileOp) -> ExecutedOp {
+    let source = PathBuf::from(&op.from);
+    let size = std::fs::metadata(&source)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+
+    // A source that has gone is a failure, not a crash: files move underneath a cull app (Finder,
+    // another program, the photographer), and one missing file must not abandon the other forty.
+    if !source.exists() {
+        return ExecutedOp::failure(op, "the file is no longer there");
+    }
+
+    match &op.kind {
+        FileOpKind::MarkRejected => mark_rejected(op),
+        FileOpKind::WriteList => write_list(op),
+        FileOpKind::Move => transfer(op, &source, Move::Rename),
+        FileOpKind::Copy => transfer(op, &source, Move::Copy),
+        FileOpKind::Trash => transfer(op, &source, Move::Trash),
+        FileOpKind::Delete => match std::fs::remove_file(&source) {
+            Ok(()) => ExecutedOp {
+                kind: op.kind.clone(),
+                src: op.from.clone(),
+                dst: None,
+                size_bytes: size,
+                status: "done",
+                error: None,
+            },
+            Err(error) => ExecutedOp::failure(op, error.to_string()),
+        },
+    }
+}
+
+enum Move {
+    Rename,
+    Copy,
+    Trash,
+}
+
+fn transfer(op: &FileOp, source: &Path, how: Move) -> ExecutedOp {
+    let Some(target) = op.to.as_ref().map(PathBuf::from) else {
+        return ExecutedOp::failure(op, "the plan gave no destination for this file");
+    };
+    let size = std::fs::metadata(source)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+
+    if matches!(how, Move::Rename | Move::Copy) && target.exists() {
+        // The safety rule, enforced at the last possible moment.
+        return ExecutedOp::failure(
+            op,
+            format!(
+                "{} already exists, so the file was left alone",
+                target
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| target.to_string_lossy().into_owned())
+            ),
+        );
+    }
+
+    if let Some(parent) = target.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        return ExecutedOp::failure(op, format!("could not create the folder: {error}"));
+    }
+
+    let result = match how {
+        Move::Rename => std::fs::rename(source, &target),
+        Move::Copy => std::fs::copy(source, &target).map(|_| ()),
+        Move::Trash => move_to_trash(source, &target),
+    };
+
+    match result {
+        Ok(()) => ExecutedOp {
+            kind: op.kind.clone(),
+            src: op.from.clone(),
+            dst: Some(target.to_string_lossy().into_owned()),
+            size_bytes: size,
+            status: "done",
+            error: None,
+        },
+        Err(error) => ExecutedOp::failure(op, error.to_string()),
+    }
+}
+
+/// Moves a file into the Trash so Finder can recover it (task.md §9.7: "Trash is recoverable via
+/// Finder").
+///
+/// The plan has already picked a free name in `op.to`; on the way here that name is checked again,
+/// because the plan may be older than whatever is in `~/.Trash` now. Nothing is ever overwritten,
+/// here or anywhere else in this module.
+fn move_to_trash(source: &Path, planned: &Path) -> std::io::Result<()> {
+    let name = source
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let trash = trash_dir()?;
+    let mut target = planned.to_path_buf();
+    // The plan's destination may live somewhere other than ~/.Trash (it only guarantees a free
+    // name); re-resolve it in the real trash so a stale plan cannot put two files in one place.
+    if target.parent() != Some(trash.as_path()) {
+        target = trash.join(&name);
+    }
+    let mut counter = 1;
+    while target.exists() {
+        counter += 1;
+        target = trash.join(suffixed(&name, counter));
+    }
+    std::fs::rename(source, &target)
+}
+
+fn trash_dir() -> std::io::Result<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| std::io::Error::other("no HOME, so there is no Trash"))?;
+    let trash = home.join(".Trash");
+    if !trash.is_dir() {
+        std::fs::create_dir_all(&trash)?;
+    }
+    Ok(trash)
+}
+
+/// `xmp:Rating="-1"` on the sidecar next to the file, so Lightroom shows the photo as rejected.
+///
+/// The sidecar is named after the RAW (`<basename>.xmp`), never after the JPEG: that is the
+/// convention Lightroom reads, and a rejection the other catalog does not see is not a rejection.
+fn mark_rejected(op: &FileOp) -> ExecutedOp {
+    let source = PathBuf::from(&op.from);
+    let sidecar = crate::xmp::sidecar_path(&source.to_string_lossy());
+    let mapping = crate::xmp::XmpMapping::default();
+    let rejected = crate::store::Rating {
+        stars: 0,
+        flag: crate::store::Flag::Reject,
+        label: None,
+        keep: false,
+    };
+    let written = crate::xmp::write_rating(
+        &sidecar,
+        rejected,
+        crate::store::RatingMode::Stars,
+        &mapping,
+    );
+    let size = std::fs::metadata(&sidecar)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+    match written {
+        Ok(_) => ExecutedOp {
+            kind: op.kind.clone(),
+            src: sidecar.to_string_lossy().into_owned(),
+            dst: Some(sidecar.to_string_lossy().into_owned()),
+            size_bytes: size,
+            status: "done",
+            error: None,
+        },
+        Err(error) => ExecutedOp::failure(op, error.to_string()),
+    }
+}
+
+/// Writes the kept-files list (task.md §9.7: "a text/CSV list of kept file names").
+///
+/// The plan carries the *list file* as `from` and the lines to write as `to`, which is the only
+/// shape available: a `FileOp` is a pair of paths, and inventing a third field would mean the undo
+/// log could not describe the operation it has to reverse.
+fn write_list(op: &FileOp) -> ExecutedOp {
+    let Some(body) = op.to.as_deref() else {
+        return ExecutedOp::failure(op, "the plan gave no list to write");
+    };
+    let target = PathBuf::from(&op.from);
+    if let Some(parent) = target.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        return ExecutedOp::failure(op, format!("could not create the folder: {error}"));
+    }
+    let lines: String = body
+        .lines()
+        .map(|line| format!("{}\n", line.trim_end()))
+        .collect::<Vec<_>>()
+        .join("");
+    match std::fs::write(&target, lines) {
+        Ok(()) => ExecutedOp {
+            kind: op.kind.clone(),
+            src: op.from.clone(),
+            dst: Some(target.to_string_lossy().into_owned()),
+            size_bytes: std::fs::metadata(&target)
+                .map(|meta| meta.len())
+                .unwrap_or(0),
+            status: "done",
+            error: None,
+        },
+        Err(error) => ExecutedOp::failure(op, error.to_string()),
+    }
+}
+
+/// Walks a run backwards, putting every file back where it came from.
+///
+/// Only the operations that actually happened are reversed, and only those with somewhere to go:
+/// a copy is undone by deleting the copy, a move by moving the file back. A permanent delete cannot
+/// be reversed, and the caller is told so by `summary.undoable` *before* asking, which is why
+/// [`FinishPlan::is_undoable`] and the UI both check it first.
+pub fn undo_ops(executed: &[ExecutedOp]) -> Vec<ExecutedOp> {
+    executed
+        .iter()
+        .rev()
+        .filter(|op| op.is_done() && op.kind.is_undoable() && op.dst.is_some())
+        .map(|op| {
+            let target = PathBuf::from(op.dst.as_deref().unwrap_or_default());
+            let source = PathBuf::from(&op.src);
+            let undone = match op.kind {
+                FileOpKind::Move => std::fs::rename(&target, &source),
+                FileOpKind::Copy => std::fs::remove_file(&target),
+                FileOpKind::Trash => std::fs::rename(&target, &source),
+                // A sidecar write is reversed by putting the original bytes back, which is only
+                // possible if something kept them. Rather than guess, this one reports that it
+                // could not be undone, so the UI can say so out loud.
+                FileOpKind::MarkRejected | FileOpKind::WriteList => {
+                    return ExecutedOp {
+                        kind: op.kind.clone(),
+                        src: op.src.clone(),
+                        dst: op.dst.clone(),
+                        size_bytes: op.size_bytes,
+                        status: "failed",
+                        error: Some("this cannot be undone automatically".to_string()),
+                    };
+                }
+                FileOpKind::Delete => return ExecutedOp::failure_unundoable(op),
+            };
+            match undone {
+                Ok(()) => ExecutedOp {
+                    kind: op.kind.clone(),
+                    src: op.dst.clone().unwrap_or_default(),
+                    dst: Some(op.src.clone()),
+                    size_bytes: op.size_bytes,
+                    status: "done",
+                    error: None,
+                },
+                Err(error) => ExecutedOp {
+                    kind: op.kind.clone(),
+                    src: op.src.clone(),
+                    dst: op.dst.clone(),
+                    size_bytes: op.size_bytes,
+                    status: "failed",
+                    error: Some(error.to_string()),
+                },
+            }
+        })
+        .collect()
+}
+
+impl ExecutedOp {
+    fn failure_unundoable(op: &ExecutedOp) -> ExecutedOp {
+        ExecutedOp {
+            kind: op.kind.clone(),
+            src: op.src.clone(),
+            dst: None,
+            size_bytes: 0,
+            status: "failed",
+            error: Some("a deleted file cannot be brought back".to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::rating::{ColorLabel, Flag};
+    use crate::store::rating::{ColorLabel, Flag, Tier};
     use std::fs;
+
+    // ---------------------------------------------------------- execution
+
+    /// The rule the whole module exists to protect: a dry run is a promise, and a file that
+    /// appeared between the preview and the click must not be overwritten.
+    #[test]
+    fn a_move_never_overwrites_a_file_that_appeared_after_the_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("IMG_0001.CR3");
+        let to = dir.path().join("kept").join("IMG_0001.CR3");
+        fs::create_dir_all(to.parent().unwrap()).unwrap();
+        fs::write(&from, b"the original").unwrap();
+        // Something else claimed the destination after the plan was made.
+        fs::write(&to, b"somebody else's file").unwrap();
+
+        let done = execute_ops(&[FileOp::new(
+            FileOpKind::Move,
+            from.to_string_lossy().into_owned(),
+            Some(to.to_string_lossy().into_owned()),
+        )]);
+
+        assert_eq!(done[0].status, "failed");
+        assert!(done[0].error.as_deref().unwrap().contains("already exists"));
+        assert_eq!(
+            fs::read(&from).unwrap(),
+            b"the original",
+            "the source is untouched"
+        );
+        assert_eq!(
+            fs::read(&to).unwrap(),
+            b"somebody else's file",
+            "the destination is untouched"
+        );
+    }
+
+    #[test]
+    fn a_move_takes_the_whole_group_and_undo_puts_every_file_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = dir.path().join("kept");
+        let sources: Vec<PathBuf> = ["IMG_0001.CR3", "IMG_0001.JPG", "IMG_0001.CR3.xmp"]
+            .iter()
+            .map(|name| {
+                let path = dir.path().join(name);
+                fs::write(&path, name.as_bytes()).unwrap();
+                path
+            })
+            .collect();
+
+        let plan: Vec<FileOp> = sources
+            .iter()
+            .map(|src| {
+                let name = src.file_name().unwrap().to_string_lossy().into_owned();
+                FileOp::new(
+                    FileOpKind::Move,
+                    src.to_string_lossy().into_owned(),
+                    Some(kept.join(name).to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+
+        let done = execute_ops(&plan);
+        assert_eq!(summarize(&done).done, 3);
+        assert!(summarize(&done).is_clean(), "{:?}", summarize(&done).failed);
+        for src in &sources {
+            assert!(!src.exists(), "{} moved", src.display());
+        }
+        assert!(kept.join("IMG_0001.CR3").exists());
+        assert!(
+            kept.join("IMG_0001.JPG").exists(),
+            "the JPEG travels with the RAW"
+        );
+        assert!(
+            kept.join("IMG_0001.CR3.xmp").exists(),
+            "so does the sidecar"
+        );
+
+        let undone = undo_ops(&done);
+        assert_eq!(undone.len(), 3);
+        for src in &sources {
+            assert_eq!(
+                fs::read(src).unwrap(),
+                src.file_name().unwrap().as_encoded_bytes(),
+                "{} came back",
+                src.display()
+            );
+        }
+    }
+
+    /// A copy is undone by removing the copy, never by touching the original.
+    #[test]
+    fn undoing_a_copy_deletes_the_copy_and_leaves_the_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("IMG_0002.CR3");
+        let to = dir.path().join("kept").join("IMG_0002.CR3");
+        fs::write(&from, b"original bytes").unwrap();
+
+        let done = execute_ops(&[FileOp::new(
+            FileOpKind::Copy,
+            from.to_string_lossy().into_owned(),
+            Some(to.to_string_lossy().into_owned()),
+        )]);
+        assert_eq!(done[0].status, "done");
+        assert_eq!(fs::read(&to).unwrap(), b"original bytes");
+
+        undo_ops(&done);
+        assert!(!to.exists(), "the copy is gone");
+        assert_eq!(
+            fs::read(&from).unwrap(),
+            b"original bytes",
+            "the original is untouched"
+        );
+    }
+
+    /// A file that vanished mid-cull fails that one operation and no other.
+    #[test]
+    fn one_missing_file_does_not_abandon_the_rest_of_the_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let present = dir.path().join("IMG_0002.CR3");
+        fs::write(&present, b"here").unwrap();
+        let kept = dir.path().join("kept");
+
+        let done = execute_ops(&[
+            FileOp::new(
+                FileOpKind::Move,
+                dir.path().join("GONE.CR3").to_string_lossy().into_owned(),
+                Some(kept.join("GONE.CR3").to_string_lossy().into_owned()),
+            ),
+            FileOp::new(
+                FileOpKind::Move,
+                present.to_string_lossy().into_owned(),
+                Some(kept.join("IMG_0002.CR3").to_string_lossy().into_owned()),
+            ),
+        ]);
+
+        assert_eq!(done[0].status, "failed");
+        assert!(
+            done[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("no longer there")
+        );
+        assert_eq!(done[1].status, "done", "the second file still moved");
+        let summary = summarize(&done);
+        assert_eq!(summary.done, 1);
+        assert_eq!(summary.failed.len(), 1);
+    }
+
+    /// Delete is the one operation that cannot be taken back, and the summary has to say so.
+    #[test]
+    fn a_permanent_delete_is_reported_as_not_undoable() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("IMG_0003.CR3");
+        fs::write(&file, b"gone for good").unwrap();
+
+        let done = execute_ops(&[FileOp::new(
+            FileOpKind::Delete,
+            file.to_string_lossy().into_owned(),
+            None,
+        )]);
+        assert_eq!(done[0].status, "done");
+        assert!(!file.exists());
+        assert!(
+            !summarize(&done).undoable,
+            "a delete makes the whole run not undoable"
+        );
+
+        let undone = undo_ops(&done);
+        assert!(undone.is_empty(), "nothing is even attempted");
+    }
+
+    /// Undo of a *mixed* run reverses the reversible parts and leaves the delete alone.
+    #[test]
+    fn undo_skips_the_delete_and_reverses_the_moves_around_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = dir.path().join("kept");
+        let moving = dir.path().join("IMG_0004.CR3");
+        let deleting = dir.path().join("IMG_0005.CR3");
+        fs::write(&moving, b"moved").unwrap();
+        fs::write(&deleting, b"deleted").unwrap();
+
+        let done = execute_ops(&[
+            FileOp::new(
+                FileOpKind::Move,
+                moving.to_string_lossy().into_owned(),
+                Some(kept.join("IMG_0004.CR3").to_string_lossy().into_owned()),
+            ),
+            FileOp::new(
+                FileOpKind::Delete,
+                deleting.to_string_lossy().into_owned(),
+                None,
+            ),
+        ]);
+        assert!(!summarize(&done).undoable);
+
+        let undone = undo_ops(&done);
+        assert_eq!(undone.len(), 1, "only the move is reversible");
+        assert_eq!(fs::read(&moving).unwrap(), b"moved");
+    }
+
+    /// A rejected photo must be marked on the sidecar Lightroom reads, without touching the RAW.
+    #[test]
+    fn mark_rejected_writes_the_sidecar_and_never_the_raw() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join("IMG_0006.CR3");
+        fs::write(&raw, b"the raw bytes, exactly").unwrap();
+
+        let done = execute_ops(&[FileOp::new(
+            FileOpKind::MarkRejected,
+            raw.to_string_lossy().into_owned(),
+            None,
+        )]);
+
+        assert_eq!(done[0].status, "done", "{:?}", done[0].error);
+        assert_eq!(
+            fs::read(&raw).unwrap(),
+            b"the raw bytes, exactly",
+            "the RAW is never rewritten"
+        );
+        let sidecar = dir.path().join("IMG_0006.CR3.xmp");
+        assert!(sidecar.exists(), "the sidecar is next to the RAW");
+        let text = fs::read_to_string(&sidecar).unwrap();
+        assert!(
+            text.contains("-1"),
+            "xmp:Rating=\"-1\" is what Lightroom reads as rejected: {text}"
+        );
+    }
+
+    #[test]
+    fn a_move_into_a_folder_that_does_not_exist_yet_creates_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("IMG_0007.CR3");
+        fs::write(&from, b"x").unwrap();
+        let nested = dir.path().join("kept").join("5 Keep");
+
+        let done = execute_ops(&[FileOp::new(
+            FileOpKind::Move,
+            from.to_string_lossy(),
+            Some(nested.join("IMG_0007.CR3").to_string_lossy().into_owned()),
+        )]);
+
+        assert_eq!(done[0].status, "done", "{:?}", done[0].error);
+        assert!(nested.join("IMG_0007.CR3").exists());
+    }
 
     /// IMG_0001 is a RAW with a paired JPEG and a sidecar already on disk, left unrated.
     /// IMG_0002 is a plain RAW, and the one that gets kept.
@@ -648,6 +1236,126 @@ mod tests {
         folders.sort();
         folders.dedup();
         folders
+    }
+
+    /// REV-78, at the level where a photo is actually lost. The Finish planner must decide from
+    /// the **mapped** rating, the same one the filmstrip draws, and not from the raw `keep` field.
+    ///
+    /// The reported failure was: a 4-star photo in keep mode showed a green Keep ring and was then
+    /// scheduled for the trash. Unrated photos go to `_Not kept`, so "trashed" here means the plan
+    /// contains a move for a photo the UI promised would be kept.
+    #[test]
+    fn a_photo_the_ui_shows_as_kept_is_never_moved_to_not_kept() {
+        for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+            for stars in 0..=Rating::MAX_STARS {
+                for keep in [false, true] {
+                    let shoot = Shoot::new();
+                    // Rate the second photo (the one with no companion) and leave the first alone.
+                    let rating = Rating::new(stars, Flag::None, None, keep);
+                    let ratings = HashMap::from([(2u64, rating)]);
+
+                    let plan = plan_finish(
+                        shoot.path(),
+                        &shoot.photos(),
+                        &ratings,
+                        &FinishOptions {
+                            unkept: UnkeptAction::MoveToSubfolder("_Not kept".into()),
+                            kept: KeptAction::None,
+                            rating_mode: mode,
+                        },
+                        0,
+                    );
+
+                    // What the filmstrip would draw.
+                    let shown_as_keep =
+                        crate::store::rating::display_tier(&rating, mode) == Tier::Keep;
+                    let discarded = file_names(&plan, "IMG_0002");
+
+                    if shown_as_keep {
+                        assert!(
+                            discarded.is_empty(),
+                            "{stars} stars keep={keep} in {mode} draws a Keep ring but Finish \
+                             would discard it: {discarded:?}"
+                        );
+                    } else {
+                        assert!(
+                            !discarded.is_empty(),
+                            "{stars} stars keep={keep} in {mode} is not shown as kept, so Finish \
+                             should dispose of it, but produced no operations at all"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same rule for a **permanent delete**, which is the one option that cannot be undone. A
+    /// false positive here destroys the photograph, so it gets its own test rather than being
+    /// folded into the move test above.
+    #[test]
+    fn a_photo_the_ui_shows_as_kept_is_never_permanently_deleted() {
+        for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+            for stars in 4..=Rating::MAX_STARS {
+                let shoot = Shoot::new();
+                let rating = Rating::stars(stars);
+                assert_eq!(
+                    crate::store::rating::display_tier(&rating, mode),
+                    Tier::Keep,
+                    "{stars} stars in {mode} must read as a keep"
+                );
+
+                let plan = plan_finish(
+                    shoot.path(),
+                    &shoot.photos(),
+                    &HashMap::from([(2u64, rating)]),
+                    &FinishOptions {
+                        unkept: UnkeptAction::DeletePermanently,
+                        kept: KeptAction::None,
+                        rating_mode: mode,
+                    },
+                    0,
+                );
+
+                assert!(
+                    plan.ops.is_empty() || file_names(&plan, "IMG_0002").is_empty(),
+                    "{stars} stars in {mode} would be deleted even though the UI shows it as kept: \
+                     {:?}",
+                    plan.ops
+                );
+            }
+        }
+    }
+
+    /// The Finish **summary** counts tiers, so the count the user approves and the set of files
+    /// that are actually kept have to come from the same rule. A summary that says "12 kept" while
+    /// the plan trashes 3 of them is the same bug wearing a different hat.
+    #[test]
+    fn the_kept_count_agrees_with_the_files_kept() {
+        for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+            for stars in 0..=Rating::MAX_STARS {
+                let shoot = Shoot::new();
+                let rating = Rating::stars(stars);
+                let kept_by_rating = rating.is_kept(mode);
+
+                let plan = plan_finish(
+                    shoot.path(),
+                    &shoot.photos(),
+                    &HashMap::from([(2u64, rating)]),
+                    &FinishOptions {
+                        unkept: UnkeptAction::DeletePermanently,
+                        kept: KeptAction::None,
+                        rating_mode: mode,
+                    },
+                    0,
+                );
+                let actually_deleted = !file_names(&plan, "IMG_0002").is_empty();
+                assert_eq!(
+                    kept_by_rating, !actually_deleted,
+                    "{stars} stars in {mode}: the rating says kept={kept_by_rating} but the plan \
+                     deleted={actually_deleted}"
+                );
+            }
+        }
     }
 
     #[test]
