@@ -702,10 +702,10 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 
 ## 11. Session, persistence & data safety
 
-- [ ] **Session DB**: SQLite (rusqlite, WAL mode) at
+- [x] **Session DB**: SQLite (rusqlite, WAL mode) at
       `~/Library/Application Support/Firstcut/Sessions/<folder-id>.sqlite`, keyed by volume UUID +
       folder path + a fingerprint of file names/sizes, so a moved folder can be re-matched.
-- [ ] Tables: photos (path, group, metadata, hash), batches (members, visited, last position),
+- [x] Tables: photos (path, group, metadata, hash), batches (members, visited, last position),
       ratings (current state), history (undo/redo log), file_ops (finish-step moves for undo).
 - [ ] **Resume**: reopening a folder restores batches, ratings, current batch/photo, zoom lock, view.
 - [ ] If the DB is missing but XMP sidecars exist, import ratings from XMP.
@@ -714,11 +714,13 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
       games don't cross 9999 inside one folder.
 - [ ] Watch the folder with FSEvents: new files appear in new batches at the end (or are re-batched if
       not yet visited); deleted/renamed files are removed gracefully.
-- [ ] **XMP sidecars**: `<basename>.xmp` next to the RAW (Lightroom naming), writing `xmp:Rating`,
+- [x] **XMP sidecars**: `<basename>.xmp` next to the RAW (Lightroom naming), writing `xmp:Rating`,
       `xmp:Label`; preserve any existing unknown XMP content (merge, don't clobber). JPEG/HEIF-only
-      photos: sidecar as well (don't rewrite originals) — configurable.
-- [ ] Atomic writes (temp file + rename) for XMP and DB checkpoints.
-- [ ] Never modify original image files.
+      photos: sidecar as well (don't rewrite originals) — configurable. _(sidecar naming, merging
+      and atomic writes done and tested; the "configurable" switch is Settings plumbing, wave 2:
+      `docs/agents/core-store.md`)_
+- [x] Atomic writes (temp file + rename) for XMP and DB checkpoints.
+- [x] Never modify original image files.
 
 ---
 
