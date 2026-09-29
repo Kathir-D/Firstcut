@@ -282,7 +282,86 @@ fn a_synthetic_rollover_shoot_orders_by_time() {
     );
 }
 
-/// Ground-truth F1. Skipped per game until a human has verified that game's boundaries.
+/// REV-26: renaming every file must not change the order. The only test here that can catch a
+/// name-based `order()`, because the corpus itself cannot (see the rollover test above).
+#[test]
+fn a_scrambled_photo_set_produces_a_byte_identical_order() {
+    // REV-26, and the only test in the suite that can actually catch a name-based `order()`.
+    // `the_real_corpus_cannot_exercise_a_name_rollover` proves the corpus cannot do it: names run
+    // forwards in all 2,880 files, so a purely name-based order passes every other test here, every
+    // F1 number and every CI run we have.
+    //
+    // So rename every photo to a name deliberately *anti-correlated* with capture time and assert
+    // the produced order is unchanged. The scramble is a deterministic permutation of the file
+    // number, so this is a CI test, not a local curiosity.
+    use firstcut_core::batch::PhotoId;
+    use firstcut_core::order;
+
+    for game in GAMES {
+        let photos = load_photos(game);
+        let base: Vec<PhotoId> = order::order(&photos);
+
+        let scrambled: Vec<PhotoMeta> = photos
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let mut clone = p.clone();
+                let number = scramble_number(i as u64, photos.len() as u64);
+                clone.rel_path = format!("ZZ_{number:05}.CR3");
+                // In production the id is a hash of the path, so re-derive it from the new path —
+                // this is exactly what a real re-scan after files are renamed produces.
+                clone.id = PhotoId(firstcut_core::batch::fnv1a64(clone.rel_path.as_bytes()));
+                clone.companions = Vec::new();
+                clone
+            })
+            .collect();
+
+        let after: Vec<PhotoId> = order::order(&scrambled);
+        assert_eq!(
+            after.len(),
+            base.len(),
+            "{game}: scramble changed the photo count"
+        );
+
+        // Compare by *capture identity*, not by PhotoId: the ids are hashes of the paths, and the
+        // scramble changed those. A name-based order emits these in scrambled order and fails.
+        let before: Vec<Option<i64>> = base
+            .iter()
+            .map(|id| {
+                photos
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .and_then(|p| p.capture_time.as_ref())
+                    .map(|c| c.unix_ms)
+            })
+            .collect();
+        let now: Vec<Option<i64>> = after
+            .iter()
+            .map(|id| {
+                scrambled
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .and_then(|p| p.capture_time.as_ref())
+                    .map(|c| c.unix_ms)
+            })
+            .collect();
+
+        assert_eq!(
+            now, before,
+            "{game}: renaming the files changed the order, so order() is reading the file name"
+        );
+    }
+}
+
+/// A deterministic permutation of `0..n`, so names are shuffled, no two photos collide, and the
+/// same input always produces the same scramble. Odd multiplier, odd increment, and `n` forced odd.
+fn scramble_number(index: u64, n: u64) -> u64 {
+    let m = n | 1;
+    (index.wrapping_mul(2_654_435_761).wrapping_add(n) % m) + 1
+}
+
+// `CullProgress`-style ground truth: the F1 measurement below needs a human, so until the file
+// exists the test skips loudly rather than passing on its own output.
 #[test]
 fn boundary_f1_matches_the_visual_ground_truth() {
     let mut checked = 0;
