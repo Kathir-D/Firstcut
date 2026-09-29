@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "bindings": [
+    { "command": "photo.previous", "key": "leftArrow", "modifiers": [] },
+    { "command": "photo.next", "key": "rightArrow", "modifiers": [] },
+    { "command": "batch.previous", "key": "leftArrow", "modifiers": ["command"] },
+    { "command": "batch.next", "key": "rightArrow", "modifiers": ["command"] },
+    { "command": "batch.previous", "key": "leftBracket", "modifiers": [] },
+    { "command": "batch.next", "key": "rightBracket", "modifiers": [] },
+
+    { "command": "rate.stars", "argument": 1, "key": "one", "modifiers": [] },
+    { "command": "rate.stars", "argument": 2, "key": "two", "modifiers": [] },
+    { "command": "rate.stars", "argument": 3, "key": "three", "modifiers": [] },
+    { "command": "rate.stars", "argument": 4, "key": "four", "modifiers": [] },
+    { "command": "rate.stars", "argument": 5, "key": "five", "modifiers": [] },
+    { "command": "rate.stars", "argument": 0, "key": "zero", "modifiers": [] },
+
+    { "command": "rate.starsAndAdvance", "argument": 1, "key": "one", "modifiers": ["shift"] },
+    { "command": "rate.starsAndAdvance", "argument": 2, "key": "two", "modifiers": ["shift"] },
+    { "command": "rate.starsAndAdvance", "argument": 3, "key": "three", "modifiers": ["shift"] },
+    { "command": "rate.starsAndAdvance", "argument": 4, "key": "four", "modifiers": ["shift"] },
+    { "command": "rate.starsAndAdvance", "argument": 5, "key": "five", "modifiers": ["shift"] },
+
+    { "command": "flag.pick", "key": "p", "modifiers": [], "modes": ["stars"] },
+    { "command": "keep.toggle", "key": "p", "modifiers": [], "modes": ["keep"] },
+    { "command": "flag.reject", "key": "x", "modifiers": [] },
+    { "command": "flag.unflag", "key": "u", "modifiers": [] },
+    { "command": "flag.toggle", "key": "backtick", "modifiers": [] },
+
+    { "command": "label", "argument": 6, "key": "six", "modifiers": [] },
+    { "command": "label", "argument": 7, "key": "seven", "modifiers": [] },
+    { "command": "label", "argument": 8, "key": "eight", "modifiers": [] },
+    { "command": "label", "argument": 9, "key": "nine", "modifiers": [] },
+
+    { "command": "autoAdvance.toggle", "key": "capsLock", "modifiers": ["capsLock"] },
+
+    { "command": "view.loupe", "key": "e", "modifiers": [] },
+    { "command": "view.grid", "key": "g", "modifiers": [] },
+    { "command": "view.compare", "argument": 2, "key": "c", "modifiers": [] },
+    { "command": "view.compare", "argument": 3, "key": "c", "modifiers": ["option"] },
+    { "command": "view.compare", "argument": 4, "key": "c", "modifiers": ["option", "shift"] },
+    { "command": "panel.info", "key": "i", "modifiers": [] },
+    { "command": "overlay.clipping", "key": "j", "modifiers": [] },
+    { "command": "overlay.af", "key": "a", "modifiers": [] },
+    { "command": "hud.toggle", "key": "h", "modifiers": [] },
+
+    { "command": "edit.undo", "key": "z", "modifiers": ["command"] },
+    { "command": "edit.redo", "key": "z", "modifiers": ["command", "shift"] },
+    { "command": "file.open", "key": "o", "modifiers": ["command"] },
+    { "command": "cull.finish", "key": "return", "modifiers": ["command"] },
+    { "command": "cull.finish", "key": "keypadEnter", "modifiers": ["command"] },
+    { "command": "app.fullScreen", "key": "f", "modifiers": ["control", "command"] }
+  ]
+}
