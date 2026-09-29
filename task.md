@@ -556,16 +556,16 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
 
 ### 9.1 Window & toolbar
 
-- [ ] Single-window app (`NSWindow` + unified toolbar, full-size content view, glass toolbar items).
+- [x] Single-window app (`NSWindow` + unified toolbar, full-size content view, glass toolbar items).
 - [ ] Liquid Glass on macOS 26+: system toolbar glass, SwiftUI `glassEffect` / `GlassEffectContainer`
       for floating controls (HUD, overlays), AppKit `NSGlassEffectView` where views are AppKit. Use
       stock controls wherever possible so they pick up system styling automatically.
 - [ ] Standard macOS menu bar (File, Edit, View, Photo, Window, Help) with every command listed and
       its current (remapped) shortcut shown.
-- [ ] Toolbar, left: **‹ › batch navigation buttons** (Previous batch / Next batch) in a glass
+- [x] Toolbar, left: **‹ › batch navigation buttons** (Previous batch / Next batch) in a glass
       capsule like Finder's back/forward.
-- [ ] Toolbar, title: batch position + file name, e.g. `Batch 12 of 148 — IMG_8231`.
-- [ ] Toolbar, right: view mode segmented control (Loupe · Grid · Compare), Info panel toggle,
+- [x] Toolbar, title: batch position + file name, e.g. `Batch 12 of 148 — IMG_8231`.
+- [x] Toolbar, right: view mode segmented control (Loupe · Grid · Compare), Info panel toggle,
       Finish Cull button.
 - [ ] Full-screen support (hide chrome, filmstrip auto-hides at the bottom edge).
 - [ ] macOS 15 fallback: same layout with `NSVisualEffectView` materials; verify visually on a
@@ -593,12 +593,13 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
 
 ### 9.3 Filmstrip
 
-- [ ] Horizontal strip of **the current batch only**, Finder-style: thumbnails at their aspect
+- [x] Horizontal strip of **the current batch only**, Finder-style: thumbnails at their aspect
       ratio, selected frame on a rounded gray plate.
-- [ ] Scrolls to keep the selection visible; smooth at 120 Hz with 60+ frames.
-- [ ] Shows rating stars / flags / color labels (stars mode) or green/red rings (keep mode).
-- [ ] Clicking a thumbnail selects it. No drag-reordering.
-- [ ] Custom AppKit / layer-backed implementation (not SwiftUI `ScrollView`) for guaranteed
+- [ ] Scrolls to keep the selection visible; smooth at 120 Hz with 60+ frames. (Keeps the
+      selection visible: done. 120 Hz with 60+ frames: still to measure.)
+- [x] Shows rating stars / flags / color labels (stars mode) or green/red rings (keep mode).
+- [x] Clicking a thumbnail selects it. No drag-reordering.
+- [x] Custom AppKit / layer-backed implementation (not SwiftUI `ScrollView`) for guaranteed
       performance.
 
 ### 9.4 Batch navigation
@@ -612,7 +613,7 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
 
 ### 9.5 Info panel (I)
 
-- [ ] **I** toggles a right-side glass inspector (like Lightroom's info), with: file name, capture
+- [x] **I** toggles a right-side glass inspector (like Lightroom's info), with: file name, capture
       time (with sub-seconds), camera + serial, lens, focal length, shutter, aperture, ISO, exposure
       comp, metering, AF mode + points, drive mode, shutter count, dimensions, file size, folder
       path, rating/flag/label, batch number and position, histogram.
