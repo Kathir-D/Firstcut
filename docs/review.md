@@ -37,6 +37,54 @@ critical path in task.md §0.9. Blocked on something? Write the blocker with its
 to something that does not depend on it. Only a fully signed-off charter or an empty unblocked queue
 ends a session.
 
+### Close out the dev environment — both agents, every session
+
+Leaving a running app behind is not tidiness, it is a bug source. On 2026-09-29 the app reported
+**"Firstcut quit unexpectedly"** and reappeared every time the user clicked Ignore. Diagnosis, in
+order of what I ruled out:
+
+- **Not a crash.** No `Firstcut` crash report exists after 04:26; the only ones on the machine are
+  app-logic's unit-test traps (array out of range, `SessionTests.swift:469`, in
+  `AppModelRatingTests.onlyCurrentBatchIsRateable`).
+- **It was being killed.** Concurrent rebuilds replace the binary at
+  `build/dd/Build/Products/…/Firstcut.app` under a running process, and the test host is torn down
+  after every `xcodebuild test`. Either one kills the app, and macOS reports a non-zero exit.
+- **The reopen was macOS window restoration.** Fixed at the source:
+  `defaults write com.kathird.firstcut NSQuitAlwaysKeepsWindows -bool false`, so macOS no longer
+  relaunches the app to restore its windows. If it ever comes back, that key is the first thing to
+  check.
+- **A red herring worth naming:** `defaults read com.kathird.firstcut` also holds
+  `NSWindow Frame SwiftUI.WindowGroup<…Text…>`, which looks like a second restored window. It is
+  stale state from the *bootstrap placeholder* app, which used a `WindowGroup` around a `Text` view.
+  The real app uses the singular `Window` scene, as task.md §9.1 requires, and System Events
+  confirms exactly one live window. Do not chase this.
+
+So the rule, for the worker and for me: **before ending a session, quit the app and stop what you
+started.** No app left running, no build or test process left in the background, `git status` clean
+or everything committed and pushed, and a line in your Live status saying exactly what was mid-flight
+so the next session resumes instead of restarting.
+
+### Use subagents to get the parallelism back
+
+Collapsing to two agents cost us parallelism, and subagents are how it comes back — with one
+integrator instead of nine, which is the part that was actually broken. The worker's charter is now
+nine areas in one context; that is exactly the shape that fans out well.
+
+For the worker: brief one subagent per independent area (a CR3 parser field, a batching threshold
+sweep, an FFI export, a screen, a test suite), each with a precise brief naming the files it owns
+and the contract it must satisfy. **Subagents never commit to `main` and never touch files outside
+their brief** — overlapping paths in one worktree is how a fan-out corrupts itself. They return
+changes or a report; the worker reviews, integrates, builds and tests.
+
+For me: subagents review in parallel. One on the Rust core, one on Swift, one re-deriving the measured
+facts from the fixtures, one checking the six contracts against each other for drift. I keep the
+synthesis and the findings; I do not delegate the judgement.
+
+The rule that makes both work: **a subagent's output is evidence, not truth.** I verify the review
+findings against the diff; the worker verifies the subagent's code by building and testing it. When a
+number matters, someone re-runs it — that is how REV-25 (the histogram normalisation) and REV-64
+(the missing 256 px stage) were caught in code that had a passing test.
+
 ### What the collapse dissolves
 
 Several pass-1 and pass-2 findings were not bugs in the code — they were artefacts of nine agents
