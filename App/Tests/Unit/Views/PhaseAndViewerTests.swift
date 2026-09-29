@@ -86,6 +86,7 @@ struct StarRowTests {
 }
 
 @Suite("Viewer presentation (REV-52)")
+@MainActor
 struct ViewerPresentationTests {
   @Test("The default state is fit, not zoomed")
   func defaults() {
@@ -97,8 +98,9 @@ struct ViewerPresentationTests {
   @Test("A host is only registered once the app calls register")
   func registration() {
     // Before pipeline registers, `ViewerArea` draws the placeholder instead of an empty host.
-    let wasRegistered = PhotoViewerHostView.isRegistered
-    #expect(wasRegistered == false)
+    // The app has not called `register` in a test process, so the host draws nothing and
+    // `ViewerArea` shows the placeholder.
+    #expect(PhotoViewerHostView.isRegistered == false)
 
     final class TestHost: NSView, PhotoViewerHost {
       var photos: [(PhotoID, Double)] = []
@@ -126,6 +128,6 @@ struct ViewerPresentationTests {
     #expect(test != nil)
     #expect(test?.photos.last?.0 == 7)
 
-    PhotoViewerHostView.register { _, _ in nil as? TestHost ?? TestHost(frame: .zero) }
+    PhotoViewerHostView.register { _, _ in TestHost(frame: .zero) }
   }
 }

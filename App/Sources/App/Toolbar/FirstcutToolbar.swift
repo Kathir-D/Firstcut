@@ -8,7 +8,21 @@ import SwiftUI
 struct FirstcutToolbar: ToolbarContent {
   let environment: AppEnvironment
 
+  /// REV-75: the culling controls are not culled themselves. Outside `.culling`/`.finishing` the
+  /// toolbar shows the folder name and Open Folder, because a "Batch 12 of 148" title and a Finish
+  /// button on the welcome screen is the same defect one level up: chrome for a phase the window is
+  /// not in.
   var body: some ToolbarContent {
+    switch environment.state.phase {
+    case .culling, .finishing:
+      cullingItems
+    case .welcome, .loading:
+      idleItems
+    }
+  }
+
+  @ToolbarContentBuilder
+  private var cullingItems: some ToolbarContent {
     ToolbarItem(placement: .navigation) {
       BatchNavigationCapsule(environment: environment)
     }
@@ -19,6 +33,27 @@ struct FirstcutToolbar: ToolbarContent {
       ViewModeControl(environment: environment)
       InfoToggleButton(environment: environment)
       FinishCullButton(environment: environment)
+    }
+  }
+
+  @ToolbarContentBuilder
+  private var idleItems: some ToolbarContent {
+    ToolbarItem(placement: .principal) {
+      Text(environment.state.folderName)
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(Appearance.secondaryLabel)
+        .accessibilityLabel("Folder \(environment.state.folderName)")
+    }
+    ToolbarItem(placement: .primaryAction) {
+      Button {
+        environment.send(.openFolder)
+      } label: {
+        Text("Open Folder…")
+          .font(.system(size: 12, weight: .medium))
+      }
+      .buttonStyle(.borderedProminent)
+      .help("Open Folder… (⌘O)")
+      .accessibilityLabel("Open folder")
     }
   }
 }
