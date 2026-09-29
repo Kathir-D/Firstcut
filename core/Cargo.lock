@@ -199,12 +199,16 @@ name = "firstcut-cli"
 version = "0.0.0"
 dependencies = [
  "firstcut-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "firstcut-core"
 version = "0.0.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "uniffi",
 ]
 
