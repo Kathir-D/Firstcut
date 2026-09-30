@@ -1902,8 +1902,13 @@ mod tests {
         let first = Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
         let photo = first.snapshot().photos[0].clone();
         first.set_rating(photo.id, Rating::stars(5)).unwrap();
+        first.flush();
         drop(first);
 
+        // The new shoot does not inherit the old *database*. (A sidecar the old session left beside
+        // `IMG_0001.CR3` is the photographer's data and would be imported by design, so the
+        // stand-in for "a fresh card" clears it.)
+        std::fs::remove_file(folder.path().join("IMG_0001.CR3.xmp")).ok();
         write_cr3(folder.path(), "IMG_0002.CR3", 2);
         let second =
             Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
