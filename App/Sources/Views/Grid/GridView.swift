@@ -10,6 +10,8 @@ import SwiftUI
 struct GridView: View {
   let state: any CullViewState
 
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
   private let columns = [GridItem(.adaptive(minimum: 160, maximum: 240), spacing: 12)]
 
   var body: some View {
@@ -42,7 +44,9 @@ struct GridView: View {
       }
       .onChange(of: state.currentPhotoIndex) { _, index in
         guard photos.indices.contains(index) else { return }
-        withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(photos[index].id) }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.15)) {
+          proxy.scrollTo(photos[index].id)
+        }
       }
     }
     .background(Appearance.viewerBackground(darkness: state.viewerBackgroundDarkness))

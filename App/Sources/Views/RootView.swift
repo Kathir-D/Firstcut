@@ -14,6 +14,8 @@ import SwiftUI
 struct RootView: View {
   let state: any CullViewState
 
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
   var body: some View {
     Group {
       switch state.phase {
@@ -64,7 +66,7 @@ struct RootView: View {
           .transition(.move(edge: .trailing).combined(with: .opacity))
       }
     }
-    .animation(.easeInOut(duration: 0.18), value: state.isInfoPanelVisible)
+    .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: state.isInfoPanelVisible)
   }
 
   /// The photograph area, by view mode (G / E / C).

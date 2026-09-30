@@ -87,6 +87,12 @@ final class AppEnvironment {
     // last-wins.
     PhotoViewerHostView.register { [images] _, _ in CGImageViewerHost(images: images) }
 
+    // The model asks for a panel and a window; it cannot make either. Without these two lines
+    // "Open Folder…" (⌘O, the toolbar, the Welcome button) and Full Screen (⌃⌘F) were consumed by
+    // the key router and then did nothing, because nothing was listening.
+    model.onRequestOpenFolder = { [weak self] in self?.presentOpenPanel() }
+    model.onRequestToggleFullScreen = { _ in NSApp.keyWindow?.toggleFullScreen(nil) }
+
     // Launch flags, applied to *this* instance rather than through `AppEnvironment.shared`.
     //
     // The obvious spelling — a static helper that reaches back for `AppEnvironment.shared` — traps
@@ -134,6 +140,21 @@ final class AppEnvironment {
       Task { @MainActor in self.open(folder: url) }
     }
     return true
+  }
+
+  /// The folder chooser. The URL it returns carries the user's grant for that folder, which is the
+  /// only way the app is meant to be given one (see `open(folder:)`).
+  func presentOpenPanel() {
+    let panel = NSOpenPanel()
+    panel.title = "Open a Folder of Photos"
+    panel.message = "Choose the folder that holds the whole shoot."
+    panel.prompt = "Open"
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.canCreateDirectories = false
+    panel.allowsMultipleSelection = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    open(folder: url)
   }
 
   /// Open a real folder. The URL arrives from `NSOpenPanel` (which already carries the grant) or

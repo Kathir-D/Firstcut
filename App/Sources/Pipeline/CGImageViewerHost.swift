@@ -204,7 +204,8 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
       center = imagePoint(at: CGPoint(x: bounds.midX, y: bounds.midY), in: rect)
     }
     CATransaction.begin()
-    if animated {
+    // The click-to-100% glide is decoration, so it is dropped when Reduce Motion is on.
+    if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
       CATransaction.setAnimationDuration(0.22)
       CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
     } else {
