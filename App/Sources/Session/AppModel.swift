@@ -71,6 +71,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
     private var ratedCount: Int = 0
     private var saveTask: Task<Void, Never>?
     private var folderWatcher: FolderWatcher?
+    private let visualSigWorker = VisualSigWorker()
     private var viewportPixelSize: CGSize = .zero
     private var isTextEditingFlag: Bool = false
 
@@ -241,6 +242,23 @@ public final class AppModel: SessionListener, KeyRouterSource {
         updatePipelineFocus()
         recordRecent()
         startWatchingFolder()
+        startVisualSignatures()
+    }
+
+    // MARK: - Visual signatures (task.md §5.4, phase two)
+
+    /// Refines the ambiguous batch boundaries by how the frames look, in the background. Only for a
+    /// real folder: a mock backend has no files to decode.
+    private func startVisualSignatures() {
+        visualSigWorker.cancel()
+        guard backend.canRescan, !allPhotos.isEmpty else { return }
+        let photos = allPhotos.map(\.meta)
+        let index = currentBatch.map { $0.range.lowerBound + currentPhotoIndex } ?? 0
+        visualSigWorker.start(
+            photos: photos, folder: URL(fileURLWithPath: backend.data.folder), startingAt: index
+        ) { [weak self] sigs in
+            self?.backend.submitVisualSigs(sigs)
+        }
     }
 
     // MARK: - Files appearing and vanishing (task.md §11)
@@ -297,6 +315,8 @@ public final class AppModel: SessionListener, KeyRouterSource {
         recomputeCounts()
         pushCursor()
         updatePipelineFocus()
+        // New photographs need signatures too, and the ones already computed are cheap to redo.
+        startVisualSignatures()
     }
 
     /// Remembers this folder and how far through it the user is. Called when a folder opens, when
@@ -344,6 +364,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
     public func closeSession() {
         folderWatcher?.stop()
         folderWatcher = nil
+        visualSigWorker.cancel()
         recordRecent()
         backend.flush()
         backend.listener = nil

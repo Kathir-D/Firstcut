@@ -32,6 +32,17 @@ public enum FirstcutCoreBridge {
     /// Version of the Rust core the app is running against, e.g. "0.1.0". Shown in About.
     public static var coreVersion: String { FirstcutCore.coreVersion() }
 
+    /// The reference visual signature (docs/contracts/batching.md) of an 8-bit sRGB RGBA bitmap, from
+    /// the Rust core. The app never computes this itself (REV-64). nil for a buffer that does not
+    /// match its stated size.
+    public static func visualSig(rgba: [UInt8], width: Int, height: Int) -> VisualSig? {
+        guard width > 0, height > 0,
+            let ffi = FirstcutCore.computeVisualSig(
+                rgba: Data(rgba), width: UInt32(width), height: UInt32(height))
+        else { return nil }
+        return VisualSig(dhash: ffi.dhash, hist: [UInt8](ffi.hist))
+    }
+
     /// Cheap check for code that wants to branch on the bridge being usable (tests, first-run
     /// diagnostics). Never throws, never traps.
     public static var isLinked: Bool { !greeting.isEmpty }

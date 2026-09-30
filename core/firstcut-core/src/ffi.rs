@@ -668,6 +668,36 @@ pub struct FfiVisualSigEntry {
     pub hist: Vec<u8>,
 }
 
+/// A photo's visual signature with no photo attached, as computed from one thumbnail.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiVisualSig {
+    pub dhash: u64,
+    /// 48 bins: 16 each for R, G, B.
+    pub hist: Vec<u8>,
+}
+
+/// The reference signature algorithm from docs/contracts/batching.md, for Swift to call on the
+/// thumbnails it decodes (REV-64: the app must use this, never its own copy of the algorithm, or
+/// the two sides drift and the ambiguous zone is decided by a hash nobody tested).
+///
+/// `rgba` is `width * height * 4` bytes, 8 bits per channel, sRGB, orientation already applied.
+/// `None` for a buffer that does not match its stated size, or a zero dimension, rather than a
+/// panic across the FFI boundary.
+#[uniffi::export]
+pub fn compute_visual_sig(rgba: Vec<u8>, width: u32, height: u32) -> Option<FfiVisualSig> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    if rgba.len() as u64 != u64::from(width) * u64::from(height) * 4 {
+        return None;
+    }
+    let sig = crate::batch::visual_sig(&rgba, width, height);
+    Some(FfiVisualSig {
+        dhash: sig.dhash,
+        hist: sig.hist.to_vec(),
+    })
+}
+
 /// Every failure Swift has to tell apart. Never a bare `String`: task.md §8 says a failure is
 /// reported, never a panic, and an app that cannot tell "no such folder" from "the card is locked"
 /// cannot show the user anything useful.
@@ -1476,5 +1506,35 @@ mod tests {
         assert_eq!(undone.done, 2);
         assert!(dir.path().join("IMG_0002.JPG").exists());
         assert!(session.undo_finish().unwrap().nothing_to_undo);
+    }
+
+    #[test]
+    fn the_exported_signature_is_the_reference_one() {
+        // A 16x16 left-to-right gradient: every dHash comparison is "left > right" false, so the
+        // hash is 0, and the red histogram has bins across the range.
+        let (w, h) = (16u32, 16u32);
+        let mut rgba = Vec::new();
+        for _y in 0..h {
+            for x in 0..w {
+                let v = (x * 255 / (w - 1)) as u8;
+                rgba.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        let exported = compute_visual_sig(rgba.clone(), w, h).expect("a valid buffer");
+        let reference = crate::batch::visual_sig(&rgba, w, h);
+        assert_eq!(exported.dhash, reference.dhash);
+        assert_eq!(exported.hist, reference.hist.to_vec());
+        assert_eq!(exported.hist.len(), 48);
+        assert_eq!(
+            exported.dhash, 0,
+            "a brightening gradient has no left>right bits"
+        );
+    }
+
+    #[test]
+    fn a_buffer_that_does_not_match_its_size_is_none_not_a_panic() {
+        assert!(compute_visual_sig(vec![0; 10], 4, 4).is_none());
+        assert!(compute_visual_sig(vec![], 0, 0).is_none());
+        assert!(compute_visual_sig(vec![0; 16], 0, 4).is_none());
     }
 }
