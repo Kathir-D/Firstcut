@@ -89,7 +89,14 @@ final class AppEnvironment {
     // empty and drew "Viewer layer pending from the pipeline agent" over every photo. It is
     // unconditional: a test that wants a different host registers its own, and `register` is
     // last-wins.
-    PhotoViewerHostView.register { [images] _, _ in CGImageViewerHost(images: images) }
+    PhotoViewerHostView.register { [images, model] _, _ in
+      let host = CGImageViewerHost(images: images)
+      // The closing end of the key-to-frame, batch-to-frame, zoom-to-sharp and open-to-first-photo
+      // intervals (todo.md §7.3): the model opens them, and only a committed frame can close them.
+      // Weak, so a torn-down window cannot keep the model alive.
+      host.onFramePresented = { [weak model] frame in model?.frameDidPresent(frame) }
+      return host
+    }
 
     // The model asks for a panel and a window; it cannot make either. Without these two lines
     // "Open Folder…" (⌘O, the toolbar, the Welcome button) and Full Screen (⌃⌘F) were consumed by

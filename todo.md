@@ -562,16 +562,27 @@ Still **unmeasured**, and so still not claimed: folder open -> first photo on sc
 and their rows in that file are still empty.
 
 - [x] Instrument with `os_signpost` + a hidden debug HUD (cache hits/misses, decode queue depth,
-      memory by tier, frame times). **Partly done, deliberately.** `App/Sources/Pipeline/Signpost.swift`
-      names intervals after the §7.3 rows (`keyToFrame`, `batchToFrame`, `zoomToSharp`,
-      `openToFirstPhoto`, `decodeThumbnail`, `decodeDisplay`, `decodeFromBytes`, `setFocus`,
-      `evictions`) and the decode engine, the focus update and the eviction pass emit them. The debug
-      HUD (`Views/HUD/DebugHUD.swift`, Settings → Performance → Debug HUD, which was a setting nothing
+      memory by tier, frame times). **Done.** `App/Sources/Pipeline/Signpost.swift` names intervals
+      after the §7.3 rows (`keyToFrame`, `batchToFrame`, `zoomToSharp`, `openToFirstPhoto`,
+      `decodeThumbnail`, `decodeDisplay`, `decodeFromBytes`, `setFocus`, `evictions`) and the decode
+      engine, the focus update and the eviction pass emit them. The debug HUD
+      (`Views/HUD/DebugHUD.swift`, Settings → Performance → Debug HUD, which was a setting nothing
       honoured until now) shows focus misses, queue depth, cache hits, memory by tier against the
-      budget, decode failures, pressure sheds and the viewport size T2 is decoded at.
-      **Still open:** the three intervals that have to *end* in the view layer — `keyToFrame`,
-      `batchToFrame`, `zoomToSharp` and `openToFirstPhoto` — because only a presented frame closes
-      them, and this session did not wire the view's frame callbacks.
+      budget, decode failures, pressure sheds and the viewport size T2 is decoded at — plus the
+      **measured key-to-frame**, last and worst, and the count of frames that reached the user as the
+      256 px stand-in.
+      The four intervals that need a **presented frame** are now wired end to end: `AppModel` opens
+      the span in the command handler and `CGImageViewerHost` closes it from a `CATransaction`
+      completion block at the commit that swaps `layer.contents`. Three details are the difference
+      between a measurement and a number that looks like one: a **stand-in does not close a span**
+      that is waiting for the display decode (otherwise a missed prefetch reports sub-millisecond
+      key-to-frame over a soft picture); a key that **moves nothing** closes its own span (otherwise
+      a → at the end of the shoot reports the time until the *next* keystroke); and a **failed open**
+      or a **closed session** ends the span rather than leaving it open for the rest of the process.
+      `zoomToSharp` is bounded by what the pipeline can answer — today the display decode *is* the
+      full-resolution one, so it closes on the first committed frame; it becomes "T3 on screen" when
+      the T2/T3 split below lands. Nine tests in `FrameIntervalTests`, and each of the three
+      properties above fails if its guard is removed.
 - [ ] Automated benchmark (`firstcut-cli bench` + XCTest perf tests) run against `~/Documents/testing`.
 - [ ] Stress test: hold → for the entire shoot at key-repeat rate; zero cache misses in the
       current batch, no memory growth.
@@ -647,8 +658,8 @@ and their rows in that file are still empty.
       both directions fail if the sharing is removed (checked by mutation).
 - [ ] App: T2 at the viewer's backing size through DCT scaling; re-decode on resize (§7.1).
 - [ ] App: speculative T3 for the current photo after a dwell; T2 upscale as the instant zoom.
-- [ ] Instrumentation: `os_signpost` intervals named after the rows above, plus the debug HUD
-      (§7.3).
+- [x] Instrumentation: `os_signpost` intervals named after the rows above, plus the debug HUD
+      (§7.3). **Done**, including the four spans that a presented frame has to close.
 - [x] `firstcut bench --folder <dir>`: scan (cold/warm), order, batch, per phase. **Done**, and
       **measured on the photos** - see [docs/qa/perf-baselines.md](docs/qa/perf-baselines.md).
       The DB insert is not in it yet (that needs a sessions directory and the `Session`, not just the

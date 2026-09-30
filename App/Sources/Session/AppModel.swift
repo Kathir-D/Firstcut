@@ -202,6 +202,12 @@ public final class AppModel: SessionListener, KeyRouterSource {
         // screen is drawn while the core reads the folder. Without an async factory (tests,
         // previews) it is the synchronous path below. A shoot already open is saved first: its
         // pending sidecars and its place in the recents.
+        //
+        // The span opens here, not in `open(_ session:)`: §7.3 measures from the open panel
+        // returning, and on the shipped path that is a whole scan away. It takes *any* frame,
+        // because the row is "a photograph on screen", and the first paint is legitimately the
+        // 256 px stand-in while the display decode is still running.
+        beginFrameInterval(Signposts.openToFirstPhoto, accepts: .anyFrame)
         let previous = phase
         recordRecent()
         reportedXMPFailure = false
@@ -219,6 +225,9 @@ public final class AppModel: SessionListener, KeyRouterSource {
                     self.open(session, folderName: url.lastPathComponent)
                 } catch {
                     guard !Task.isCancelled, let self else { return }
+                    // No photograph is coming, so the span must not stay open across the rest of
+                    // the session: it would report the time until the next folder's first frame.
+                    self.endFrameInterval()
                     self.lastError = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
                     // Back to the shoot that was open, if there was one, rather than to Welcome.
                     self.phase = self.allPhotos.isEmpty ? .welcome : Self.restorable(previous)
@@ -230,6 +239,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
             let session = try sessionFactory(url)
             open(session, folderName: url.lastPathComponent)
         } catch {
+            endFrameInterval()
             lastError = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
             phase = allPhotos.isEmpty ? .welcome : Self.restorable(previous)
         }
@@ -411,12 +421,14 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// Everything that must reach the disk before the process ends: the debounced XMP queue
     /// (task.md §6.3, "flushed on batch change and on quit"), the settings and the recents list.
     public func prepareForQuit() {
+        endFrameInterval()
         recordRecent()
         backend.flush()
         flushSettings()
     }
 
     public func closeSession() {
+        endFrameInterval()
         folderWatcher?.stop()
         folderWatcher = nil
         visualSigWorker.cancel()
@@ -435,15 +447,85 @@ public final class AppModel: SessionListener, KeyRouterSource {
         phase = .welcome
     }
 
+    // MARK: - The frame the user actually sees
+    //
+    // todo.md §7.3's sharpest target is "arrow key → sharp photo ≤ 8 ms", and the only honest way to
+    // measure it is from the keystroke to the *presented frame* — not to the handler returning, and
+    // not to the decode finishing. So an interval opens here, in the command handler, and is closed by
+    // the view layer at the CATransaction that commits the new image.
+    //
+    // `pendingFrameInterval` holds the one that is open. Only one can be: two overlapping key-to-frame
+    // spans are not a measurement, and holding the latest keeps key repeat from accumulating a queue
+    // of intervals that will all be closed by the same frame.
+
+    private var pendingFrameInterval: SignpostInterval?
+    /// What the open span is waiting for, so the right end can be chosen. A `standIn` is not a
+    /// measurement of anything §7.3 claims, so those spans stay open until the display decode lands.
+    private var pendingFrameWaitsFor: FrameSpan.Accepts = .displayOnly
+    private var frameIntervalStart: ContinuousClock.Instant?
+
+    /// How long the last key-to-frame took, in milliseconds, for the debug HUD and for tests. Read
+    /// only after `frameDidPresent()`.
+    public private(set) var lastFrameLatencyMs: Double?
+    /// The worst key-to-frame since the folder opened, which is the number a photographer feels: a
+    /// cull is hundreds of arrow presses, so the p99 is a press, not a statistic.
+    public private(set) var worstFrameLatencyMs: Double?
+    /// How many spans have closed. A span that never closes is a `focusMisses` bug, and this is the
+    /// other half of that story: keys pressed versus frames delivered.
+    public private(set) var framesPresented = 0
+    /// Frames that reached the user as the 256 px stand-in rather than the display decode. Anything
+    /// above zero is §7.1 broken: the user saw a thumbnail where the photograph should have been.
+    public private(set) var standInFramesPresented = 0
+
+    /// Opens the span, replacing (and ending) any that is still open.
+    private func beginFrameInterval(_ name: StaticString, accepts: FrameSpan.Accepts = .displayOnly)
+    {
+      endFrameInterval()
+      pendingFrameInterval = SignpostInterval.begin(name)
+      pendingFrameWaitsFor = accepts
+      frameIntervalStart = .now
+    }
+
+    /// Called by the viewer once a frame has been committed. Public because the view layer is a
+    /// different type, and @testable would make the wiring look optional when it is not.
+    ///
+    /// A `standIn` does **not** close a span that is waiting for the display decode. The alternative
+    /// is a signpost reporting sub-millisecond key-to-frame over a soft picture, which is the exact
+    /// lie §7.3 is written to rule out.
+    public func frameDidPresent(_ frame: PresentedFrame = .display) {
+      if frame == .standIn {
+        // Counted even with no span open: this counter is "the user saw a thumbnail", and a frame
+        // that arrives outside a measurement is still a frame the user looked at.
+        standInFramesPresented += 1
+      }
+      guard let start = frameIntervalStart, pendingFrameInterval != nil else { return }
+      if frame == .standIn, pendingFrameWaitsFor != .anyFrame { return }
+      let elapsed = ContinuousClock.now - start
+      let milliseconds =
+        Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
+      lastFrameLatencyMs = milliseconds
+      worstFrameLatencyMs = max(worstFrameLatencyMs ?? 0, milliseconds)
+      framesPresented += 1
+      endFrameInterval()
+    }
+
+    /// Ends any open span without a frame arriving — the window closing, a folder changing, quit.
+    /// Leaving one open would put a permanently unclosed interval in every trace from that point on.
+    public func endFrameInterval() {
+      pendingFrameInterval?.end()
+      pendingFrameInterval = nil
+      frameIntervalStart = nil
+    }
+
     // MARK: - Commands
 
     /// The single entry point for every user action.
     public func perform(_ command: Command) {
         switch command {
-        case .photoPrevious: movePhoto(by: -1)
-        case .photoNext: movePhoto(by: 1)
-        case .batchPrevious: moveBatch(by: -1)
-        case .batchNext: moveBatch(by: 1)
+        case .photoPrevious: navigateForFrame(Signposts.keyToFrame) { movePhoto(by: -1) }
+        case .photoNext: navigateForFrame(Signposts.keyToFrame) { movePhoto(by: 1) }
+        case .batchPrevious: navigateForFrame(Signposts.batchToFrame) { moveBatch(by: -1) }
+        case .batchNext: navigateForFrame(Signposts.batchToFrame) { moveBatch(by: 1) }
 
         case .setStars(let stars): rateCurrent { $0.stars = UInt8(min(max(stars, 0), 5)) }
         case .setStarsAndAdvance(let stars):
@@ -474,12 +556,16 @@ public final class AppModel: SessionListener, KeyRouterSource {
                 viewer.zoomed = false
                 viewer.anchor = nil
             } else {
+                // §7.3's "100% zoom < 150 ms first time". The span opens on the click and closes on
+                // the frame that answers it, so a zoom that shows a stale bitmap cannot read as fast.
+                beginFrameInterval(Signposts.zoomToSharp)
                 viewer.zoomed = true
                 viewer.anchor = point ?? viewer.anchor
             }
             updatePipelineFocus()
         case .magnify(let factor, let point):
             if factor > 1.01 {
+                if !viewer.zoomed { beginFrameInterval(Signposts.zoomToSharp) }
                 viewer.zoomed = true
                 viewer.anchor = point ?? viewer.anchor
             } else if factor < 0.99, viewer.zoomed {
@@ -497,6 +583,19 @@ public final class AppModel: SessionListener, KeyRouterSource {
     }
 
     // MARK: - Navigation
+
+    /// Runs a navigation with its key-to-frame span around it, and closes the span immediately if the
+    /// navigation did not move.
+    ///
+    /// A → at the last photo of the shoot presents no new frame, and a span left open would then
+    /// report the time until the *next* keystroke — a slow number for a key that did nothing, which
+    /// is worse than no number because it is a wrong one.
+    private func navigateForFrame(_ name: StaticString, _ navigate: () -> Void) {
+      let before = (currentBatchIndex, currentPhotoIndex)
+      beginFrameInterval(name)
+      navigate()
+      if (currentBatchIndex, currentPhotoIndex) == before { endFrameInterval() }
+    }
 
     public func movePhoto(by delta: Int) {
         guard let batch = currentBatch, batch.count > 0 else { return }

@@ -98,3 +98,22 @@ public enum Signposts {
   public static let setFocus: StaticString = "setFocus"
   public static let evictions: StaticString = "evictions"
 }
+
+/// The four rows of todo.md §7.3 that only a **presented frame** can close, and what closes them.
+///
+/// They are grouped here rather than in `AppModel` because the distinction they turn on is a
+/// property of the measurement, not of the model: a `PresentedFrame.standIn` is a 256 px thumbnail,
+/// so a span that says "arrow key → *sharp* photo" must not end on one, while a span that says
+/// "folder open → a photograph on screen" legitimately can.
+public enum FrameSpan {
+  public enum Accepts: Equatable, Sendable {
+    /// Only the display decode. For `keyToFrame`, `batchToFrame` and `zoomToSharp`, whose rows are
+    /// written in terms of the sharp photograph. A stand-in closing one of these would report a fast
+    /// frame for a soft picture, which is the lie §7.3 exists to prevent.
+    case displayOnly
+
+    /// Either frame. For `openToFirstPhoto`: the row is a photograph being *there*, and the first
+    /// paint is frequently a thumbnail while the display decode is still running.
+    case anyFrame
+  }
+}

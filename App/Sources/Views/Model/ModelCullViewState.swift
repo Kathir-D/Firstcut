@@ -88,6 +88,11 @@ final class ModelCullViewState: CullViewState {
   /// The viewer's backing size, which is what T2 is decoded at — worth seeing in the HUD, because a
   /// stale zero here is why the viewer looks soft.
   var viewportPixelSize: CGSize { model.viewportPixelSize }
+  /// The measured key-to-frame, straight off the model: the intervals are opened by the command
+  /// handler and closed by the viewer's frame commit, so no view owns the number.
+  var lastFrameLatencyMs: Double? { model.lastFrameLatencyMs }
+  var worstFrameLatencyMs: Double? { model.worstFrameLatencyMs }
+  var standInFramesPresented: Int { model.standInFramesPresented }
   var showsAFOverlay: Bool { model.afOverlay }
   var showsClippingOverlay: Bool { model.clippingOverlay }
   var isZoomLocked: Bool { model.viewer.zoomLock }

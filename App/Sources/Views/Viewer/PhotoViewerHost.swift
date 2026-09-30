@@ -43,6 +43,30 @@ protocol PhotoViewerHost: AnyObject {
 
   /// Hosts that share a group zoom and pan together (Compare view, todo.md §9.6).
   var syncGroup: ViewerSyncGroup? { get set }
+
+  /// Called once the newly presented frame has been **committed**, not merely drawn into a layer.
+  ///
+  /// This is the closing end of todo.md §7.3's "arrow key → sharp photo" interval, and the distinction
+  /// is the whole measurement: the handler returning says nothing about what the user sees, and the
+  /// decode landing says nothing either if the commit has not happened. A `CATransaction` completion
+  /// is the closest synchronous signal AppKit offers, and it is what the signpost closes on.
+  ///
+  /// The argument matters as much as the call. §7.3 says *sharp* photo, and a stand-in is not one, so
+  /// a span that closed on `PresentedFrame.standIn` would report a fast frame for a soft picture.
+  var onFramePresented: ((PresentedFrame) -> Void)? { get set }
+}
+
+/// What the viewer just put on screen. The distinction is todo.md §7.1's whole promise: navigation
+/// never shows the stand-in, and the intervals that measure it are not allowed to pretend otherwise.
+public enum PresentedFrame: Equatable, Sendable {
+  /// The 256 px thumbnail standing in while a display decode is in flight. §7.1 says the user can
+  /// never reach one by navigating — a `standIn` between a keystroke and the photograph is a bug in
+  /// the prefetch, and the counter that shows it is `PipelineStats.focusMisses`.
+  case standIn
+
+  /// The display decode: T2 at the viewer's size, or the full-resolution bitmap when zoomed. This is
+  /// the "sharp photo" §7.3 measures to.
+  case display
 }
 
 /// Keeps several viewer hosts at the same zoom and the same spot, so two or more frames of a burst

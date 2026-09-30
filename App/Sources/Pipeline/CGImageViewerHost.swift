@@ -49,6 +49,10 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
   private var isZoomLocked = false
   private var presentation = ViewerPresentation.fit
 
+  /// See `PhotoViewerHost.onFramePresented`. Set by whoever builds the host; nil in previews and
+  /// tests, which is why every call site tolerates it.
+  var onFramePresented: ((PresentedFrame) -> Void)?
+
   /// Set by Compare: the other panes follow whatever the user does to this one.
   var syncGroup: ViewerSyncGroup?
 
@@ -158,7 +162,18 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     showsFullImage = decoded != nil
     guard next !== image else { return }
     image = next
+    // The transaction's completion block runs after this run loop turn's layer tree is committed,
+    // which is the "the user can see the new photo" moment that todo.md §7.3 is written against.
+    // Waiting for a display link instead would measure scan-out on a different schedule than the one
+    // the user pressed the key on.
+    let presented = onFramePresented
+    let kind: PresentedFrame = decoded != nil ? .display : .standIn
+    if let presented {
+      CATransaction.begin()
+      CATransaction.setCompletionBlock { presented(kind) }
+    }
     imageLayer.contents = next
+    if presented != nil { CATransaction.commit() }
     updateOverlays()
     layoutImage(animated: false)
   }

@@ -32,6 +32,13 @@ protocol CullViewState: AnyObject {
   var containerDecodes: Int { get }
   var memoryBudgetBytes: Int { get }
   var viewportPixelSize: CGSize { get }
+  /// The measured key-to-frame, in milliseconds: the last one and the worst since the folder opened.
+  /// These are the only numbers in the app that come from a stopwatch rather than a counter, and the
+  /// row they decide is todo.md §7.3's "arrow key → sharp photo ≤ 8 ms".
+  var lastFrameLatencyMs: Double? { get }
+  var worstFrameLatencyMs: Double? { get }
+  /// Frames that reached the user as the 256 px stand-in. Must stay 0; anything else is §7.1 broken.
+  var standInFramesPresented: Int { get }
   var showsAFOverlay: Bool { get }
   var showsClippingOverlay: Bool { get }
   var isZoomLocked: Bool { get }
@@ -190,4 +197,7 @@ extension CullViewState {
   public var containerDecodes: Int { 0 }
   public var memoryBudgetBytes: Int { 0 }
   public var viewportPixelSize: CGSize { .zero }
+  public var lastFrameLatencyMs: Double? { nil }
+  public var worstFrameLatencyMs: Double? { nil }
+  public var standInFramesPresented: Int { 0 }
 }

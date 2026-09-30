@@ -109,6 +109,7 @@ struct ViewerPresentationTests {
       var sizes: [CGSize] = []
       var presentedZoom: Double = 1
       var syncGroup: ViewerSyncGroup?
+      var onFramePresented: ((PresentedFrame) -> Void)?
 
       func applySynced(_ state: ViewerSyncGroup.State) {}
       func setPhoto(_ id: PhotoID, aspectRatio: Double) { photos.append((id, aspectRatio)) }

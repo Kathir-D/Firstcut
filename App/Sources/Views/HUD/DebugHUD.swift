@@ -30,6 +30,13 @@ struct DebugHUDView: View {
     let focusSize: Int
     let viewportPixels: CGSize
     let budgetBytes: Int
+    let lastFrameLatencyMs: Double?
+    let worstFrameLatencyMs: Double?
+    let standInFramesPresented: Int
+
+    /// todo.md §7.3: "arrow key → sharp photo ≤ 1 display frame (≤ 8 ms at 120 Hz)". 8 ms is the
+    /// budget because it is one frame of the display the machine actually has, not a round number.
+    private static let frameBudgetMs = 8.0
 
     var body: some View {
       VStack(alignment: .leading, spacing: 3) {
@@ -43,6 +50,12 @@ struct DebugHUDView: View {
           // A queue many times the focus window means the prefetch is not keeping up with the
           // navigation, which is the thing §7.1 promises cannot happen.
           tint: stats.queuedDecodes > focusSize * 4 ? .orange : nil)
+        Divider().opacity(0.4)
+        frameRow
+        row(
+          "stand-ins", "\(standInFramesPresented)",
+          note: standInFramesPresented == 0 ? "no soft frames" : "the user saw a thumbnail",
+          tint: standInFramesPresented == 0 ? .green : .red)
         Divider().opacity(0.4)
         row("thumbs", "\(stats.thumbnailDecodes) decoded · \(stats.thumbnailCacheHits) hits")
         row("display", "\(stats.displayDecodes) decoded · \(stats.displayCacheHits) hits")
@@ -78,6 +91,26 @@ struct DebugHUDView: View {
       .overlay(
         RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.12), lineWidth: 1)
       )
+    }
+
+    /// The measured key-to-frame. Last and worst, because a photographer arrows through a burst for
+    /// an hour and feels the worst one, not the mean — and because the signpost trace is what
+    /// settles p50/p95/p99 (this is the eyeball version of the same number).
+    private var frameRow: some View {
+      row(
+        "key→frame",
+        lastFrameLatencyMs.map { milliseconds($0) } ?? "—",
+        note: worstFrameLatencyMs.map { "worst \(milliseconds($0)) / \(milliseconds(Self.frameBudgetMs))" },
+        tint: tint(forLatency: lastFrameLatencyMs))
+    }
+
+    private func tint(forLatency latency: Double?) -> Color? {
+      guard let latency else { return .orange }
+      return latency <= Self.frameBudgetMs ? .green : .red
+    }
+
+    private func milliseconds(_ value: Double) -> String {
+      String(format: "%.1f ms", value)
     }
 
     /// A label, a value, and optionally a note and a colour. Four arguments rather than one

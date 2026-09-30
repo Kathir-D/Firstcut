@@ -79,7 +79,10 @@ struct RootView: View {
                   containerDecodes: state.containerDecodes,
                   focusSize: stats.focusSize,
                   viewportPixels: state.viewportPixelSize,
-                  budgetBytes: state.memoryBudgetBytes
+                  budgetBytes: state.memoryBudgetBytes,
+                  lastFrameLatencyMs: state.lastFrameLatencyMs,
+                  worstFrameLatencyMs: state.worstFrameLatencyMs,
+                  standInFramesPresented: state.standInFramesPresented
                 )
                 .frame(maxWidth: 260)
                 Spacer(minLength: 0)
