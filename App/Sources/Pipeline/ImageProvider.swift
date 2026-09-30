@@ -89,9 +89,14 @@ public struct PipelineStats: Equatable, Sendable {
 /// seam, `App/Sources/Session/PipelineMirror.swift`) and `CullImageSource` (ui's `images`,
 /// `App/Sources/Views/Model/CullViewState.swift`). One type satisfies both, so the focus the model
 /// reports and the pixels the views draw cannot come from two different caches.
+/// `@unchecked Sendable` because the shared-thumbnail seam hands it to the detached signature pass:
+/// every call that can reach it from another thread (`cachedThumbnail`, `offerThumbnail`) is a single
+/// `NSLock`-guarded operation on `engine`, which is itself `@unchecked Sendable` for the same
+/// reason. No mutable state on this type is touched off the main actor — `files`, `orientations`,
+/// `fullPreviewRanges` and `generation` are main-actor only, and nothing the worker calls reads them.
 @MainActor
 @Observable
-public final class ImageProvider: ImageProviding, CullImageSource {
+public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Sendable {
     /// `PhotoID` → file URL, filled in once when a folder is opened. The pipeline never walks the
     /// file system itself: core-meta owns identity, this owns pixels.
     private(set) var files: [PhotoID: URL] = [:]
@@ -295,6 +300,21 @@ public final class ImageProvider: ImageProviding, CullImageSource {
     func shedForMemoryPressure() {
         engine.shedToFocus()
         generation &+= 1
+    }
+
+    // MARK: - Sharing a decode with the visual-signature pass
+
+    /// A cached thumbnail, or nil. **Never schedules a decode and never blocks**, so the detached
+    /// signature pass can call it for every photo in the shoot without touching the main actor.
+    nonisolated public func cachedThumbnail(for id: PhotoID) -> CGImage? {
+        engine.cachedThumbnail(id)
+    }
+
+    /// Take a bitmap the signature pass already decoded, so the filmstrip does not decode it again.
+    nonisolated public func offerThumbnail(_ id: PhotoID, image: CGImage, fileSize: UInt64) {
+        guard engine.offerThumbnail(id, image: image, fileSize: fileSize) else { return }
+        // Same hop as a landed decode: a SwiftUI body that drew a placeholder has to be asked again.
+        Task { @MainActor in self.engineDidLand(id) }
     }
 
     // MARK: - Test hooks
@@ -794,6 +814,47 @@ final class DecodeEngine: @unchecked Sendable {
             if let entry = displays.removeValue(forKey: candidate.id) { bytes -= entry.bytes }
             histograms.removeValue(forKey: candidate.id)
         }
+    }
+
+    // MARK: - Sharing a decode with the visual-signature pass
+    //
+    // `VisualSigWorker` needs the same 256 px bitmap the filmstrip already has, and used to decode it
+    // a second time from the file URL. That is not a small duplicate: a CR3 costs ~300 ms to decode
+    // (measured, todo.md §3), so a 2,880-photo shoot was being decoded twice over — once for the
+    // focus window and once for the signatures, on the same 4 decode threads, fighting each other for
+    // the same disk.
+    //
+    // These two are deliberately *not* main-actor isolated. The worker runs detached at `.utility`
+    // and must not have to hop to the main actor to ask "do you already have this?", because the
+    // answer it would get on the main thread is "not yet" for every photo in the shoot.
+
+    /// The cached thumbnail for `id`, or nil. Never schedules anything and never blocks, so it is
+    /// safe from any thread: a lock-guarded dictionary read.
+    func cachedThumbnail(_ id: PhotoID) -> CGImage? {
+        lock.lock()
+        defer { lock.unlock() }
+        return thumbnails[id]?.image
+    }
+
+    /// Publish a bitmap that was decoded elsewhere, so it is not decoded again.
+    ///
+    /// Refused unless the id is still live **and** the caller is talking about the same file the
+    /// cache recorded, so a stale worker cannot overwrite a fresh decode with pixels from a file that
+    /// has since been replaced. Returns whether it was stored, which is what the caller's
+    /// `generation` bump is keyed on.
+    @discardableResult
+    func offerThumbnail(_ id: PhotoID, image: CGImage, fileSize: UInt64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard live.contains(id), knownSizes[id] == fileSize else { return false }
+        // A decode already in flight would land later and overwrite this with an equally good
+        // image, so the only case worth taking is one with nothing pending.
+        let key = Key(id: id, kind: .thumbnail)
+        guard !inFlight.contains(key) else { return false }
+        counters.thumbnailDecodes += 1
+        insert(&thumbnails, id, Entry(image: image, bytes: image.pixelBytes, stamp: clock))
+        evictLocked()
+        return true
     }
 
     // MARK: - Waiting (tests)

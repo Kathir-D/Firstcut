@@ -301,8 +301,13 @@ public final class AppModel: SessionListener, KeyRouterSource {
         guard backend.canRescan, !allPhotos.isEmpty else { return }
         let photos = allPhotos.map(\.meta)
         let index = currentBatch.map { $0.range.lowerBound + currentPhotoIndex } ?? 0
+        // The pipeline's cache is shared so the filmstrip and the signatures do not each decode the
+        // same photograph. `ImageProvider` satisfies it; without it the worker decodes the whole
+        // shoot from the file URLs, on top of the decodes the user is waiting for.
+        let shared = images as? any ThumbnailSource
         visualSigWorker.start(
-            photos: photos, folder: URL(fileURLWithPath: backend.data.folder), startingAt: index
+            photos: photos, folder: URL(fileURLWithPath: backend.data.folder), startingAt: index,
+            thumbnails: shared
         ) { [weak self] sigs in
             self?.backend.submitVisualSigs(sigs)
         }

@@ -135,6 +135,17 @@ Not blocking v0.1.0; an agent can do these.
   against both the epoch and the file's current size, so a file replaced under the same name cannot
   be served as the old one. Two new tests; the "added a photo" one fails if the reconcile is undone.
 
+- **Fixed — the shoot was decoded twice.** `VisualSigWorker` decoded every photograph from the file
+  URL to compute its visual signature, *in addition to* the pipeline decoding the focus window. At
+  ~300 ms per CR3 that is the whole 2,880-photo shoot read and decoded a second time, on the same
+  four threads, competing with the decodes the user is waiting for — and it is why the §7.3 "all
+  thumbnails + hashes < 20 s" row was hopeless as written. The two now share one decode: the
+  signature pass asks the cache first and publishes what it decodes, so each photo is decoded once
+  whichever pass gets there first, and the filmstrip gets a free thumbnail for everything the
+  signature pass touched. `ImageProvider` conforms to a `ThumbnailSource` seam (`cachedThumbnail` /
+  `offerThumbnail`, both `nonisolated` and both a single `NSLock` read, so the detached `.utility`
+  pass never has to touch the main actor). **The remaining decode timings are still unmeasured** —
+  this removes a duplicated decode, it does not by itself establish the 20 s number.
 - **Next, in order:**
   1. ~~Wire the keep threshold from the app.~~ Done above.
   2. ~~Check the cache on a folder change.~~ Done above.
@@ -618,7 +629,13 @@ and their rows in that file are still empty.
       native BGRA layout. Needs `ImageProvider.swift`.
 - [ ] App: first-photo fast path (header + `PRVW` of the resume photo before the full scan).
       Needs `AppModel.swift`.
-- [ ] App: one shared 256 px decode for the filmstrip and the visual signature.
+- [x] App: one shared 256 px decode for the filmstrip and the visual signature. **Done.** The pass
+      asked the pipeline's cache first and published whatever it decoded, so each photograph is
+      decoded once whichever pass gets there first, and the filmstrip gets a free thumbnail for every
+      photo the signature pass touched. This was the largest remaining cost in §7.3: a CR3 is ~300 ms
+      to decode, and the old code decoded the whole shoot from the file URLs *on top of* the focus
+      window, on the same 4 threads, fighting the decodes the user is waiting for. Four tests, and
+      both directions fail if the sharing is removed (checked by mutation).
 - [ ] App: T2 at the viewer's backing size through DCT scaling; re-decode on resize (§7.1).
 - [ ] App: speculative T3 for the current photo after a dwell; T2 upscale as the instant zoom.
 - [ ] Instrumentation: `os_signpost` intervals named after the rows above, plus the debug HUD

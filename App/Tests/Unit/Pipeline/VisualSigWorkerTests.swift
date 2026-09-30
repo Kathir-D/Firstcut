@@ -70,3 +70,101 @@ struct VisualSigWorkerTests {
     #expect(FirstcutCoreBridge.visualSig(rgba: [], width: 0, height: 0) == nil)
   }
 }
+
+// MARK: - One decode, two consumers
+//
+// The signature pass used to decode every photograph in the shoot from the file URL, on top of the
+// pipeline decoding the focus window. A CR3 costs ~300 ms (todo.md §3), so a 2,880-photo shoot was
+// read and decoded twice, fighting the decodes the user is waiting for. These tests pin that the
+// cache is consulted first and that a bitmap this pass decodes is published for the other one.
+
+/// A stand-in for the pipeline's cache that counts what it was asked for and what it was given.
+private final class CountingThumbnails: ThumbnailSource, @unchecked Sendable {
+  private let lock = NSLock()
+  private var cached: [PhotoID: CGImage] = [:]
+  private var offered: [(id: PhotoID, size: UInt64)] = []
+
+  func cachedThumbnail(for id: PhotoID) -> CGImage? {
+    lock.lock(); defer { lock.unlock() }
+    return cached[id]
+  }
+
+  func offerThumbnail(_ id: PhotoID, image: CGImage, fileSize: UInt64) {
+    lock.lock(); defer { lock.unlock() }
+    offered.append((id, fileSize))
+    cached[id] = image
+  }
+
+  func prefill(_ image: CGImage, for id: PhotoID) {
+    lock.lock(); defer { lock.unlock() }
+    cached[id] = image
+  }
+
+  var offeredSizes: [(id: PhotoID, size: UInt64)] {
+    lock.lock(); defer { lock.unlock() }
+    return offered
+  }
+}
+
+extension VisualSigWorkerTests {
+  @Test("A cached thumbnail is used instead of decoding the file again")
+  func cachedThumbnailIsReused() throws {
+    let url = try gradientJPEG(width: 64, height: 48)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let source = CountingThumbnails()
+    // The pipeline has already decoded this one.
+    let image = try #require(DecodeEngine.decodeThumbnail(url: url, maxPixel: 256))
+    source.prefill(image, for: 7)
+
+    let result = try #require(
+      VisualSigWorker.signature(for: (id: 7, url: url, fileSize: 1024), thumbnails: source))
+    #expect(result.0 == 7)
+    #expect(
+      source.offeredSizes.isEmpty,
+      "a cached bitmap must not be published back; that would be a second copy for nothing")
+  }
+
+  @Test("A thumbnail this pass decodes is published so the filmstrip need not decode it")
+  func decodedThumbnailIsPublished() throws {
+    let url = try gradientJPEG(width: 64, height: 48)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let source = CountingThumbnails()
+
+    let result = try #require(
+      VisualSigWorker.signature(for: (id: 9, url: url, fileSize: 4242), thumbnails: source))
+    #expect(result.0 == 9)
+    #expect(source.offeredSizes.count == 1, "the decode should be handed to the cache")
+    #expect(source.offeredSizes.first?.id == 9)
+    #expect(
+      source.offeredSizes.first?.size == 4242,
+      "the file size has to travel with it, or the cache cannot tell a replaced file from this one")
+  }
+
+  @Test("Both directions agree on the signature for the same photograph")
+  func sharedDecodeAgreesWithAFreshOne() throws {
+    let url = try gradientJPEG(width: 64, height: 48)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let fresh = try #require(
+      VisualSigWorker.signature(for: (id: 1, url: url, fileSize: 1), thumbnails: nil))
+
+    // Now the same photograph, but its bitmap comes from the cache instead.
+    let source = CountingThumbnails()
+    let image = try #require(DecodeEngine.decodeThumbnail(url: url, maxPixel: 256))
+    source.prefill(image, for: 1)
+    let shared = try #require(
+      VisualSigWorker.signature(for: (id: 1, url: url, fileSize: 1), thumbnails: source))
+
+    // A different dHash would mean the shared decode is a different image, which would quietly
+    // change where the batcher puts a boundary depending on cache timing.
+    #expect(shared.1.dhash == fresh.1.dhash)
+    #expect(shared.1.hist == fresh.1.hist)
+  }
+
+  @Test("A file that cannot be decoded yields no signature and publishes nothing")
+  func anUndecodableFilePublishesNothing() throws {
+    let source = CountingThumbnails()
+    let missing = URL(fileURLWithPath: "/tmp/firstcut-no-such-file-\(UUID().uuidString).jpg")
+    #expect(VisualSigWorker.signature(for: (id: 3, url: missing, fileSize: 1), thumbnails: source) == nil)
+    #expect(source.offeredSizes.isEmpty)
+  }
+}
