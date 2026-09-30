@@ -4,10 +4,11 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
-**Status (2026-09-30): feature complete for v0.1.0 and green on CI.** Everything that can be built
-and tested without a Mac, the test photos and a person looking at the screen is done. What is left is
-in [§0.2](#02-left-for-the-owner) (only you can do it) and [§0.3](#03-other-open-work) (can wait until
-after v0.1.0).
+**Status (2026-09-30): feature complete for v0.1.0 and green on CI.** The work logged in §0.5 was
+done on the Mac itself rather than in the cloud container, so the app builds here, the tests run
+against the real photos, and the metadata-scan and batching timings in §7.3 are measured rather than
+estimated. What is left is in [§0.2](#02-left-for-the-owner) (only a person can do it) and
+[§0.3](#03-other-open-work).
 
 ---
 
@@ -527,10 +528,27 @@ The single most important property of the app: **navigation never waits for deco
 | 100% zoom from embedded preview | < 150 ms first time, instant with zoom-lock prefetch |
 | Idle memory after full cull of 1,500 photos | within budget, no leaks |
 
-**Measured so far (2026-09-30, and only this):** `order()` + `batch()` on the metadata of a whole
-shoot take **0.4 ms for 1,500 photos** (release build, Linux x86_64, `firstcut bench`; the target is
-2 s). That is one step of "provisional batches ready", not the metadata scan, the decode or any of the
-interactive targets above, none of which has been measured.
+**Measured (2026-09-30, M1 Pro, macOS 27, internal SSD, `firstcut bench --folder`, release
+build).** The metadata scan and provisional batching are now measured on the real photos, cold and
+warm, and both are inside their targets with room to spare:
+
+| | measured (1,500 files, scaled) | target |
+| --- | --- | --- |
+| Metadata scan, headers only, **cold** (`sudo purge` first) | **0.54-0.59 s** | < 3 s |
+| Metadata scan, **warm** (best of 5) | **0.054-0.056 s** | - |
+| `order()` + `batch()` | **< 0.5 ms** | < 2 s (§5) |
+| Provisional batches ready, cold, end to end | **0.54-0.59 s** | < 3.5 s |
+
+Per-photo scan cost is 0.35-0.39 ms cold on all four games, so it is linear and I/O-bound; the ~9x
+cold/warm gap is the page cache and nothing else. The interesting consequence is that **the batching
+algorithm is not the bottleneck** - it is roughly 4,000x inside budget, so the remaining work on
+"folder open -> first photo" is decoding and first paint, not metadata.
+
+Full table, with the command used: [docs/qa/perf-baselines.md](docs/qa/perf-baselines.md).
+
+Still **unmeasured**, and so still not claimed: folder open -> first photo on screen, all thumbnails
++ hashes, arrow key -> sharp photo, batch switch, 100% zoom, and memory. Those need the running app,
+and their rows in that file are still empty.
 
 - [ ] Instrument with `os_signpost` + a hidden debug HUD (cache hits/misses, decode queue depth,
       memory by tier, frame times).
@@ -605,7 +623,10 @@ interactive targets above, none of which has been measured.
 - [ ] App: speculative T3 for the current photo after a dwell; T2 upscale as the instant zoom.
 - [ ] Instrumentation: `os_signpost` intervals named after the rows above, plus the debug HUD
       (§7.3).
-- [ ] `firstcut bench --folder <dir>`: scan (cold/warm), order, batch and DB insert, per phase.
+- [x] `firstcut bench --folder <dir>`: scan (cold/warm), order, batch, per phase. **Done**, and
+      **measured on the photos** - see [docs/qa/perf-baselines.md](docs/qa/perf-baselines.md).
+      The DB insert is not in it yet (that needs a sessions directory and the `Session`, not just the
+      scan), so that phase is still open.
 - [ ] **Owner:** run the perf suite and `firstcut bench` on the M1 Pro. Record the rows in
       `docs/qa/perf-baselines.md`. Pick by eye between the 3000 px DCT-scaled T2 and the
       full-decode-and-downscale T2 on a 16" screen.

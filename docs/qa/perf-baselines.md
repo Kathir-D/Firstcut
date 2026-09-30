@@ -42,8 +42,23 @@ fast everything else was.
 
 ## Baselines
 
-_Machine: Apple M1 Pro, 16 GB, macOS 26, internal SSD. First baseline run lands with the wave-2
-perf suite; every cell below is empty until then, on purpose._
+_Machine: Apple M1 Pro, 16 GB, macOS 27, internal SSD._
+
+**The scan and batching rows below were taken with `firstcut bench --folder`**, a release build of
+the Rust core, from a shell:
+
+```sh
+cargo build --release --manifest-path core/Cargo.toml
+core/target/release/firstcut bench --folder ~/Documents/testing/<Game> --repeat 5
+sudo purge && core/target/release/firstcut bench --folder ~/Documents/testing/<Game> --repeat 1
+```
+
+That is not the XCTest suite, and the difference matters: this command is a **cold, single process**
+over the real files, which is what "open this folder" actually is. The XCTest rows below that are
+still empty need the app, because they measure interaction (key to frame, zoom, memory) and a command
+line has no window. It is also why these rows carry both a **cold** and a **warm** number — `purge`
+first for cold, and the best of five re-runs for warm — while the interactive rows will carry a
+p50/p90/max.
 
 ### Open → first photo (§7.3, < 1 s)
 
@@ -61,22 +76,41 @@ a temp folder (no copying 42 GB, no modifying the originals). qa builds that fix
 
 ### Metadata scan, header reads only (§7.3, < 3 s)
 
-| Game | Photos | p50 | p90 | max | Budget |
+Measured 2026-09-30, `firstcut bench --folder`, 8 threads. **These are real.**
+
+| Game | Photos | Cold (`purge` first) | Warm (best of 5) | ms/photo cold | Budget |
 | --- | --- | --- | --- | --- | --- |
-| Game1JENKS | 708 | — | — | — | < 3.0 s |
-| Gane2NC | 529 | — | — | — | < 3.0 s |
-| Game3KC | 920 | — | — | — | < 3.0 s |
-| Game4VRE | 723 | — | — | — | < 3.0 s |
-| Synthetic 1,500-file shoot | 1500 | — | — | — | < 3.0 s |
+| Game1JENKS | 708 | 0.252 s | 0.026 s | 0.36 | < 3.0 s |
+| Gane2NC | 529 | 0.186 s | 0.020 s | 0.35 | < 3.0 s |
+| Game3KC | 920 | 0.343 s | 0.033 s | 0.37 | < 3.0 s |
+| Game4VRE | 723 | 0.283 s | 0.027 s | 0.39 | < 3.0 s |
+| **Scaled to 1,500** | 1500 | **0.535–0.587 s** | **0.054–0.056 s** | ~0.4 | < 3.0 s |
+
+**Inside the target with roughly 5× headroom**, cold, on every game. The spread across the four
+games (0.186–0.343 s cold) tracks the photo count, not the content: per-photo cost is 0.35–0.39 ms
+cold everywhere, so the scan is I/O-bound and linear.
+
+The cold/warm gap is ~9×, which is the page cache and nothing else: the same headers are re-read from
+RAM. A shoot on an internal SSD after the Finder preview has touched it is the warm case, and a card
+freshly copied is closer to the cold one. **The cold number is the one the §7.3 target should be
+judged against**, because "folder open → first photo" happens before any of it is cached.
 
 ### Provisional batches ready (§7.3, < 3.5 s)
 
-| Game | Photos | Batches (provisional) | p50 | Budget |
-| --- | --- | --- | --- | --- |
-| Game1JENKS | 708 | — | — | < 3.5 s |
-| Gane2NC | 529 | — | — | < 3.5 s |
-| Game3KC | 920 | — | — | < 3.5 s |
-| Game4VRE | 723 | — | — | < 3.5 s |
+Scan + `order()` + `batch()`. `order()` + `batch()` are a rounding error next to the scan, which is
+the useful finding: the batching *algorithm* is not what costs time, the header reads are.
+
+| Game | Photos | Batches (provisional) | Total cold | order | batch | Budget |
+| --- | --- | --- | --- | --- | --- | --- |
+| Game1JENKS | 708 | 157 | 0.252 s | 0.008 ms | 0.275 ms | < 3.5 s |
+| Gane2NC | 529 | 109 | 0.186 s | 0.006 ms | 0.248 ms | < 3.5 s |
+| Game3KC | 920 | 207 | 0.343 s | 0.008 ms | 0.324 ms | < 3.5 s |
+| Game4VRE | 723 | 152 | 0.283 s | 0.007 ms | 0.270 ms | < 3.5 s |
+| **Scaled to 1,500** | 1500 | — | **0.535–0.588 s** | ~0.01 ms | ~0.4 ms | < 3.5 s |
+
+`order()` + `batch()` together are **under 0.5 ms for 1,500 photos**, against a 2 s target in §5 and a
+3.5 s one here — so the algorithm is roughly 4,000× inside budget and the remaining work on "open →
+first photo" is decode and first paint, not metadata.
 
 ### All thumbnails + hashes, background (§7.3, < 20 s)
 
@@ -134,7 +168,8 @@ after a game" — the tier counters alone would call that clean.
 
 | Date | Commit | Machine | Games | Result | Notes |
 | --- | --- | --- | --- | --- | --- |
-| — | — | — | — | — | Wave-1 harness landed with no baselines; load average on the dev machine was ~30 with nine agents compiling, which is exactly what the quiet-machine guard is for. |
+| — | — | M1 Pro | — | no rows | Wave-1 harness landed with no baselines; load average on the dev machine was ~30 with nine agents compiling, which is exactly what the quiet-machine guard is for. |
+| 2026-09-30 | 5c5aa7d | M1 Pro, macOS 27, internal SSD | all four | scan + batches recorded | `firstcut bench --folder`, release build, cold (after `sudo purge`) and warm (best of 5). Interactive rows still empty: they need the app, and this session had no window measurement yet. |
 
 ## Notes
 

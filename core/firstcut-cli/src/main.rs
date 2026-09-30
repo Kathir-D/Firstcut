@@ -7,7 +7,7 @@
 //! - `order`      print capture order
 //! - `batch`      print the batches for a folder's metadata
 //! - `gaps`       the Δt histogram and every ambiguous-zone boundary, for tuning thresholds
-//! - `bench`      time `order()` + `batch()` on a folder's metadata
+//! - `bench`      time `order()` + `batch()` on a dump, or the whole pipeline with `--folder <dir>`
 //!
 //! Wave 2 adds `contact-sheet` (visual review of every boundary) and `eval` (boundary F1 against
 //! `tests/fixtures/ground-truth/<game>.json`).
@@ -86,6 +86,11 @@ COMMANDS
 
   bench <meta.json> [--repeat <n>]
         Time order() + batch() and compare against the 2 s / 1,500-file target.
+
+  bench --folder <dir> [--repeat <n>]
+        Time the phases that need real files: the header scan, then order() + batch(), then
+        the whole thing end to end. Cold and warm are reported separately and scaled to 1,500
+        files against the todo.md §7.3 targets. No metadata fixture is needed.
 "
     );
 }
@@ -366,6 +371,14 @@ fn cmd_ground_truth(args: &[String]) -> Result<(), String> {
 // -------------------------------------------------------------------- bench
 
 fn cmd_bench(args: &[String]) -> Result<(), String> {
+    // `--folder` times the phases that need real files: the header scan, then order + batch on what
+    // it returned, then the whole thing end to end. Without it, only order + batch are timed, which
+    // is what the committed metadata dumps allow in CI. It is read here rather than through
+    // `load_folder`, because a folder run has no metadata fixture to load.
+    if let Some((dir, repeat)) = bench_folder_args(args) {
+        return bench_folder(&dir, repeat);
+    }
+
     let (folder, opts) = load_folder(args)?;
     let params = BatchParams::default();
 
@@ -409,6 +422,147 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `--folder <dir>` and `--repeat <n>`, without needing a metadata fixture alongside them.
+fn bench_folder_args(args: &[String]) -> Option<(PathBuf, usize)> {
+    let dir = args
+        .iter()
+        .position(|a| a == "--folder")
+        .and_then(|i| args.get(i + 1))?;
+    let repeat = args
+        .iter()
+        .position(|a| a == "--repeat")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+        .max(1);
+    Some((PathBuf::from(dir), repeat))
+}
+
+/// Time the real pipeline on a folder of photographs, phase by phase.
+///
+/// This is the measurement todo.md §7.3 is written in, and the reason it exists separately from
+/// `bench` is that **only this touches the disk**. The committed metadata dumps let CI time
+/// `order()` + `batch()` forever, but the scan is where a 1,500-file shoot actually costs time, and
+/// it is the only phase that depends on the drive rather than on the algorithm.
+///
+/// Reported per phase, against the §7.3 targets:
+///
+/// | phase | target |
+/// | --- | --- |
+/// | header scan | < 3 s for 1,500 files |
+/// | order + batch | (already measured, sub-millisecond) |
+/// | total, folder open → batches ready | < 3.5 s |
+///
+/// `--repeat` re-runs the whole thing, which is how a warm-cache number is separated from a cold
+/// one. The first run is the honest one for "open this folder" and the best of the rest is the honest
+/// one for "re-open it", so both are printed rather than one being chosen for you.
+fn bench_folder(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
+    use firstcut_core::batch::batch_with;
+    use firstcut_core::order;
+
+    if !dir.is_dir() {
+        return Err(format!("{} is not a folder", dir.display()));
+    }
+
+    println!("folder: {}", dir.display());
+    println!(
+        "rust:   {} threads",
+        std::thread::available_parallelism().map_or(0, |n| n.get())
+    );
+    println!();
+
+    let mut scan_best = f64::MAX;
+    let mut total_best = f64::MAX;
+    let mut scan_cold = 0.0;
+    let mut total_cold = 0.0;
+    let mut photos = 0usize;
+    let mut batches = 0usize;
+
+    for run in 1..=repeat {
+        let started = std::time::Instant::now();
+
+        // Phase 1: the header scan. This is the whole cost of "open this folder" before any pixels.
+        let scan_start = std::time::Instant::now();
+        let scan =
+            firstcut_core::meta::scan_folder(dir).map_err(|e| format!("scan failed: {e}"))?;
+        let scan_secs = scan_start.elapsed().as_secs_f64();
+        photos = scan.photos.len();
+
+        // Phase 2 and 3: order, then batch. Sub-millisecond, but they are what the scan feeds.
+        let order_start = std::time::Instant::now();
+        let order = order::order(&scan.photos);
+        let order_secs = order_start.elapsed().as_secs_f64();
+        let batch_start = std::time::Instant::now();
+        let outcome = batch_with(&scan.photos, &HashMap::new(), &[], BatchParams::default());
+        let batch_secs = batch_start.elapsed().as_secs_f64();
+        batches = outcome.batches.len();
+        let total = started.elapsed().as_secs_f64();
+
+        std::hint::black_box(&order);
+        std::hint::black_box(&outcome);
+        // The first run is the one that pays for cold caches, so it is kept separately rather than
+        // averaged away: "open this folder" and "re-open it" are different questions, and the
+        // §7.3 target is written for the first.
+        if run == 1 {
+            scan_cold = scan_secs;
+            total_cold = total;
+        }
+        scan_best = scan_best.min(scan_secs);
+        total_best = total_best.min(total);
+
+        let tag = if run == 1 {
+            "run 1 (cold)"
+        } else {
+            "run N (warm)"
+        };
+        println!(
+            "{tag}: scan {scan_secs:.3} s  order {:.3} ms  batch {:.3} ms  total {total:.3} s",
+            order_secs * 1_000.0,
+            batch_secs * 1_000.0
+        );
+    }
+
+    if photos == 0 {
+        return Err("no photographs found; is this the right folder?".to_string());
+    }
+
+    println!();
+    println!("{photos} photos, {batches} batches");
+    println!(
+        "scan: {:.3} s cold, {:.3} s warm (best of {repeat} repeats)  ({:.2} ms/photo warm)",
+        scan_cold,
+        scan_best,
+        scan_best / photos as f64 * 1_000.0
+    );
+
+    // The targets are written for 1,500 files, so scale and say so. Cold and warm are both reported
+    // and the *cold* one is judged: "folder open -> batches ready" is a first-open number, and a
+    // best-of-N figure would flatter it.
+    let scale = 1500.0 / photos as f64;
+    println!();
+    println!("scaled to 1,500 photos (todo.md §7.3):");
+    println!(
+        "  metadata scan        cold {:>7.3} s  warm {:>7.3} s   target < 3.000 s  {}",
+        scan_cold * scale,
+        scan_best * scale,
+        verdict(scan_cold * scale < 3.0)
+    );
+    println!(
+        "  provisional batches  cold {:>7.3} s  warm {:>7.3} s   target < 3.500 s  {}",
+        total_cold * scale,
+        total_best * scale,
+        verdict(total_cold * scale < 3.5)
+    );
+    println!();
+    println!("todo.md §7.3. A number here is a measurement; the decode and the");
+    println!("interactive targets are not measured by this command.");
+    Ok(())
+}
+
+fn verdict(inside: bool) -> &'static str {
+    if inside { "OK" } else { "OVER TARGET" }
+}
+
 fn no_sigs() -> HashMap<PhotoId, firstcut_core::batch::VisualSig> {
     HashMap::new()
 }
@@ -422,6 +576,9 @@ struct Opts {
     repeat: usize,
     freeze_from: Option<usize>,
     freeze_to: Option<usize>,
+    /// `--folder <dir>`: a real folder of photographs to time the header scan on, as opposed to a
+    /// committed metadata dump. `bench` without it times `order()` + `batch()` only.
+    folder: Option<PathBuf>,
 }
 
 fn load_folder(args: &[String]) -> Result<(Folder, Opts), String> {
@@ -435,6 +592,7 @@ fn load_folder(args: &[String]) -> Result<(Folder, Opts), String> {
         match args[i].as_str() {
             "--json" => opts.json = true,
             "--sorted" => opts.sorted = true,
+            "--folder" => opts.folder = Some(PathBuf::from(flag(args, &mut i, "--folder")?)),
             "--repeat" => opts.repeat = flag(args, &mut i, "--repeat")?.parse().unwrap_or(5).max(1),
             "--freeze-from" => {
                 opts.freeze_from = Some(
