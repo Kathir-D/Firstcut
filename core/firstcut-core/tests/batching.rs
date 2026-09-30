@@ -379,6 +379,13 @@ fn boundary_f1_matches_the_visual_ground_truth() {
             &std::fs::read_to_string(&path).expect("reading the ground truth"),
         )
         .expect("parsing the ground truth");
+        // A file with no `verified` date is a template (or the batcher's output saved as-is), and
+        // scoring the batcher against itself proves nothing (REV-55).
+        assert!(
+            !truth.verified.trim().is_empty(),
+            "{game}: the ground truth has no `verified` date. It must come from a human looking at \
+             the photographs, not from `firstcut ground-truth` unchanged"
+        );
         let predicted = batch_names(game);
         let m = evaluate_names(&predicted, &truth);
 
