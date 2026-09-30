@@ -23,8 +23,10 @@ permissions:
 
 jobs:
   release:
-    # macos-15 is the arm64 (M1) image for public repos; Firstcut is Apple Silicon only.
-    runs-on: macos-15
+    # macos-26 is the arm64 image with Xcode 26, the toolchain that compiles the Liquid Glass path
+    # (`glassEffect`); a build on macos-15 / Xcode 16 would ship the material fallback on every Mac.
+    # The Xcode 16 build stays in ci.yml as the minimum-toolchain check (task.md §2).
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,6 +37,9 @@ jobs:
       - name: Stamp VERSION from the tag
         if: startsWith(github.ref, 'refs/tags/')
         run: echo "${GITHUB_REF_NAME#v}" > VERSION
+
+      - name: Third-party notices are current
+        run: ./scripts/third-party-notices.sh --check
 
       - name: Rust tests
         run: |
