@@ -193,7 +193,11 @@ public final class AppModel: SessionListener, KeyRouterSource {
     public func open(folder url: URL) {
         // The shipped app opens off the main thread, so the window stays alive and the loading
         // screen is drawn while the core reads the folder. Without an async factory (tests,
-        // previews) it is the synchronous path below.
+        // previews) it is the synchronous path below. A shoot already open is saved first: its
+        // pending sidecars and its place in the recents.
+        let previous = phase
+        recordRecent()
+        backend.flush()
         if let asyncSessionFactory {
             openTask?.cancel()
             phase = .loading(LoadProgress(title: "Opening \(url.lastPathComponent)", fraction: 0))
@@ -206,9 +210,10 @@ public final class AppModel: SessionListener, KeyRouterSource {
                     }
                     self.open(session, folderName: url.lastPathComponent)
                 } catch {
-                    guard !Task.isCancelled else { return }
-                    self?.lastError = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
-                    self?.phase = .welcome
+                    guard !Task.isCancelled, let self else { return }
+                    self.lastError = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
+                    // Back to the shoot that was open, if there was one, rather than to Welcome.
+                    self.phase = self.allPhotos.isEmpty ? .welcome : Self.restorable(previous)
                 }
             }
             return
@@ -218,7 +223,14 @@ public final class AppModel: SessionListener, KeyRouterSource {
             open(session, folderName: url.lastPathComponent)
         } catch {
             lastError = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
-            phase = .welcome
+            phase = allPhotos.isEmpty ? .welcome : Self.restorable(previous)
+        }
+    }
+
+    private static func restorable(_ phase: Phase) -> Phase {
+        switch phase {
+        case .culling, .finishing: phase
+        case .welcome, .loading: .culling
         }
     }
 

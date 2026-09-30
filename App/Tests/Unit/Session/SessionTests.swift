@@ -115,6 +115,17 @@ struct AppModelNavigationTests {
         #expect(model.batches.count == 4)
     }
 
+    @Test("A folder that fails to open leaves the shoot that was open on screen")
+    func failedOpenKeepsTheCurrentShoot() throws {
+        let (model, _) = Self.makeModel()
+        model.perform(.photoNext)
+        model.open(folder: URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)"))
+        #expect(model.lastError != nil)
+        #expect(model.phase == .culling)
+        #expect(model.allPhotos.count == 12)
+        #expect(model.currentPhotoIndex == 1)
+    }
+
     @Test("→ walks the batch and stops at the end by default (task.md §9.4)")
     func arrowStopsAtBatchEnd() throws {
         let (model, _) = Self.makeModel()
