@@ -10,7 +10,7 @@
 //!   same ids in the same sequence and a session database written from one scan matches the next.
 
 pub mod cr3;
-mod exif;
+pub(crate) mod exif;
 
 use std::fmt;
 use std::path::{Path, PathBuf};

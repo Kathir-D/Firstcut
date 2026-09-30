@@ -49,6 +49,10 @@ pub enum SessionError {
     #[error("cannot scan {path}: {reason}")]
     Scan { path: PathBuf, reason: String },
 
+    /// Undo Finish was asked for a run that cannot be reversed.
+    #[error("{0}")]
+    CannotUndo(String),
+
     /// The session database was written by a newer Firstcut. Refused rather than downgraded.
     #[error("session database is schema version {found}, this build only understands up to {max}")]
     NewerSchema { found: i64, max: i64 },
@@ -959,6 +963,177 @@ pub fn tier_counts(snapshot: &SessionSnapshot, mode: RatingMode) -> HashMap<Tier
     counts
 }
 
+// ─────────────────────────────────────────────────────────── finish cull (task.md §9.7)
+
+/// What a Finish run did, for the report the app shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinishRun {
+    /// Which run this was; `undo_finish` reverses the highest one.
+    pub finish_id: i64,
+    pub summary: crate::fileops::ExecutionSummary,
+    /// Every operation, in order, including the ones that failed and why.
+    pub executed: Vec<crate::fileops::ExecutedOp>,
+}
+
+/// What an Undo Finish did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinishUndo {
+    pub finish_id: Option<i64>,
+    pub summary: crate::fileops::ExecutionSummary,
+    /// True when there has been no Finish run to undo.
+    pub nothing_to_undo: bool,
+}
+
+impl Session {
+    /// The dry run: what Finish *would* do, without touching anything.
+    ///
+    /// The rating mode is the session's own, not the caller's, so the preview cannot disagree with
+    /// the filmstrip about what a keep is (REV-78). Every "kept" decision goes through
+    /// [`Rating::tier`], the same function the rings and the tier counts use.
+    pub fn plan_finish(
+        &self,
+        options: &crate::fileops::FinishOptions,
+    ) -> Result<crate::fileops::FinishPlan> {
+        // Queued sidecar writes are flushed first: a plan is built from, and then moves, the files
+        // the writer is about to touch.
+        self.writer.flush();
+        let state = self.state();
+        let rows: Vec<PhotoRow> = records::photos_in_order(&state.db)?
+            .into_iter()
+            .filter(|row| row.present)
+            .collect();
+        let ratings = records::ratings(&state.db)?;
+        let visited = records::visited_batch_ids(&state.db)?;
+        let unvisited = state
+            .batches
+            .iter()
+            .filter(|batch| !visited.contains(&batch.id.0))
+            .count();
+        let options = crate::fileops::FinishOptions {
+            rating_mode: state.rating_mode,
+            ..options.clone()
+        };
+        Ok(crate::fileops::plan_finish(
+            &self.folder,
+            &rows,
+            &ratings,
+            &options,
+            unvisited,
+        ))
+    }
+
+    /// Does what the plan says and logs every operation, so it can be undone even after a
+    /// relaunch: the log is in the session database, not in memory.
+    ///
+    /// The plan is not re-decided here. It is walked one operation at a time and the only judgement
+    /// made is the safety one: a destination that has become occupied fails that operation instead
+    /// of overwriting the file that is there.
+    pub fn execute_finish(&self, plan: &crate::fileops::FinishPlan) -> Result<FinishRun> {
+        self.writer.flush();
+        let executed = crate::fileops::execute_ops(&plan.ops);
+        let finish_id = {
+            let state = self.state();
+            let finish_id = records::last_finish_id(&state.db)?.unwrap_or(0) + 1;
+            let now = crate::store::now_ms();
+            for (seq, op) in executed.iter().enumerate() {
+                records::log_file_op(
+                    &state.db,
+                    &records::FileOpRow {
+                        id: 0,
+                        finish_id,
+                        seq: seq as i64,
+                        kind: op.kind.as_str().to_string(),
+                        src: op.src.clone(),
+                        dst: op.dst.clone(),
+                        size_bytes: op.size_bytes,
+                        status: op.status.to_string(),
+                        error: op.error.clone(),
+                        at_ms: now,
+                    },
+                )?;
+            }
+            finish_id
+        };
+        self.after_files_moved();
+        Ok(FinishRun {
+            finish_id,
+            summary: crate::fileops::summarize(&executed),
+            executed,
+        })
+    }
+
+    /// Walks the last Finish run backwards.
+    ///
+    /// Reads the log from the database rather than from anything held in memory, so "Undo Finish"
+    /// still works after the app has been quit and reopened, which is when somebody who has just
+    /// moved a shoot actually reaches for it.
+    pub fn undo_finish(&self) -> Result<FinishUndo> {
+        self.writer.flush();
+        let (finish_id, rows) = {
+            let state = self.state();
+            let Some(finish_id) = records::last_finish_id(&state.db)? else {
+                return Ok(FinishUndo {
+                    finish_id: None,
+                    summary: crate::fileops::ExecutionSummary::default(),
+                    nothing_to_undo: true,
+                });
+            };
+            (finish_id, records::file_ops(&state.db, finish_id)?)
+        };
+
+        // Only operations that happened can be reversed, and the log's `dst` is where the file is
+        // now, which is exactly what has to be put back.
+        let executed: Vec<crate::fileops::ExecutedOp> = rows
+            .iter()
+            .filter_map(|row| {
+                Some(crate::fileops::ExecutedOp {
+                    kind: crate::fileops::FileOpKind::parse(&row.kind)?,
+                    src: row.src.clone(),
+                    dst: row.dst.clone(),
+                    size_bytes: row.size_bytes,
+                    status: if row.status == "done" {
+                        "done"
+                    } else {
+                        "failed"
+                    },
+                    error: row.error.clone(),
+                })
+            })
+            .collect();
+        if executed
+            .iter()
+            .any(|op| op.is_done() && !op.kind.is_undoable())
+        {
+            return Err(SessionError::CannotUndo(
+                "the last Finish run included a permanent delete, which cannot be undone"
+                    .to_string(),
+            ));
+        }
+
+        let undone = crate::fileops::undo_ops(&executed);
+        {
+            // The run is consumed, so a second "Undo Finish" reverses the one before it instead
+            // of trying the same files again.
+            let state = self.state();
+            records::clear_file_ops(&state.db, finish_id)?;
+        }
+        self.after_files_moved();
+        Ok(FinishUndo {
+            finish_id: Some(finish_id),
+            summary: crate::fileops::summarize(&undone),
+            nothing_to_undo: false,
+        })
+    }
+
+    /// Re-reads the folder after files have moved: the session's idea of where things are is
+    /// wrong, and a second plan built on it would move files that are not there. A Finish run can
+    /// empty the folder, which is the run succeeding rather than the folder breaking, so a failed
+    /// re-read is not an error here.
+    fn after_files_moved(&self) {
+        let _ = self.rescan();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1713,5 +1888,140 @@ mod tests {
         let third = session.undo().unwrap();
         assert!(first.id < second.id);
         assert!(second.id < third.id, "an undo is itself a change");
+    }
+
+    // ─────────────────────────────────────────────── Finish Cull, on real files (task.md §9.7)
+
+    /// Six JPEGs one second apart in a temp folder: real files, so Finish really moves things.
+    fn six_jpegs() -> tempfile::TempDir {
+        use crate::meta::exif::fixtures::{jpeg, tiff};
+        let dir = tempfile::tempdir().unwrap();
+        for n in 1..=6 {
+            let stamp = format!("2026:08:27 10:00:{n:02}");
+            fs::write(
+                dir.path().join(format!("IMG_{n:04}.JPG")),
+                jpeg(&tiff(&stamp, "", 100, "TEST", None), 600, 400),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut out: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.ends_with(".xmp"))
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn finish_moves_the_unkept_photos_and_undo_puts_them_back() {
+        let folder = six_jpegs();
+        let sessions = tempfile::tempdir().unwrap();
+        let session =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        assert_eq!(session.snapshot().photos.len(), 6);
+
+        // Keep 1 and 2 (4 and 5 stars), call 3 "good"; leave 4-6 unrated.
+        let id = |n: u32| crate::batch::photo_id(&format!("IMG_{n:04}.JPG"));
+        session.set_rating(id(1), Rating::stars(5)).unwrap();
+        session.set_rating(id(2), Rating::stars(4)).unwrap();
+        session.set_rating(id(3), Rating::stars(3)).unwrap();
+
+        let options = crate::fileops::FinishOptions {
+            unkept: crate::fileops::UnkeptAction::MoveToSubfolder("_Not kept".to_string()),
+            ..Default::default()
+        };
+        let plan = session.plan_finish(&options).unwrap();
+        // Dry run: nothing moved yet.
+        assert_eq!(names(folder.path()).len(), 6);
+        assert!(plan.ops.len() >= 4, "{:?}", plan.ops);
+
+        let run = session.execute_finish(&plan).unwrap();
+        assert!(run.summary.is_clean(), "{:?}", run.summary.failed);
+        // Stars mode: 4 and 5 stars are the Keep tier. 3 stars is "Good", which Finish also
+        // disposes of, because only the Keep tier is kept (task.md §9.7).
+        assert_eq!(names(folder.path()), vec!["IMG_0001.JPG", "IMG_0002.JPG"]);
+        assert_eq!(
+            names(&folder.path().join("_Not kept")),
+            vec![
+                "IMG_0003.JPG",
+                "IMG_0004.JPG",
+                "IMG_0005.JPG",
+                "IMG_0006.JPG"
+            ]
+        );
+
+        let undo = session.undo_finish().unwrap();
+        assert!(!undo.nothing_to_undo);
+        assert!(undo.summary.is_clean(), "{:?}", undo.summary.failed);
+        assert_eq!(names(folder.path()).len(), 6, "every file is back");
+
+        // A second undo has nothing left to reverse.
+        assert!(session.undo_finish().unwrap().nothing_to_undo);
+    }
+
+    #[test]
+    fn finish_never_moves_a_photo_the_filmstrip_shows_as_kept_in_either_mode() {
+        // REV-78 at the level that moves files: a keep made in keep mode is 5 stars in stars mode.
+        for mode in [RatingMode::Stars, RatingMode::KeepNotKeep] {
+            let folder = six_jpegs();
+            let sessions = tempfile::tempdir().unwrap();
+            let session =
+                Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+            session.set_rating_mode(mode).unwrap();
+            let id = |n: u32| crate::batch::photo_id(&format!("IMG_{n:04}.JPG"));
+            let keep = match mode {
+                RatingMode::Stars => Rating::stars(4),
+                RatingMode::KeepNotKeep => Rating::keep(),
+            };
+            session.set_rating(id(2), keep).unwrap();
+
+            let options = crate::fileops::FinishOptions {
+                unkept: crate::fileops::UnkeptAction::MoveToTrash,
+                ..Default::default()
+            };
+            let plan = session.plan_finish(&options).unwrap();
+            assert!(
+                plan.ops.iter().all(|op| !op.from.ends_with("IMG_0002.JPG")),
+                "{mode}: the kept photo is in the plan: {:?}",
+                plan.ops
+            );
+            assert_eq!(
+                crate::store::rating::display_tier(&keep, mode),
+                Tier::Keep,
+                "{mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_permanent_delete_run_cannot_be_undone() {
+        let folder = six_jpegs();
+        let sessions = tempfile::tempdir().unwrap();
+        let session =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        let id = |n: u32| crate::batch::photo_id(&format!("IMG_{n:04}.JPG"));
+        session.set_rating(id(1), Rating::stars(5)).unwrap();
+        let plan = session
+            .plan_finish(&crate::fileops::FinishOptions {
+                unkept: crate::fileops::UnkeptAction::DeletePermanently,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!plan.is_undoable());
+        assert!(plan.warnings.iter().any(|w| w.contains("cannot be undone")));
+        let run = session.execute_finish(&plan).unwrap();
+        assert!(!run.summary.undoable);
+        assert_eq!(names(folder.path()), vec!["IMG_0001.JPG"]);
+        assert!(matches!(
+            session.undo_finish(),
+            Err(SessionError::CannotUndo(_))
+        ));
     }
 }

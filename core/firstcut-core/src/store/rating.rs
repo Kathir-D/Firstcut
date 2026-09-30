@@ -244,7 +244,7 @@ pub fn map_rating(rating: &Rating, from: RatingMode, to: RatingMode) -> Rating {
 
 /// The tier to show, in the one call ui needs.
 pub fn display_tier(rating: &Rating, mode: RatingMode) -> Tier {
-    display_rating(rating, mode).tier(mode)
+    rating.tier(mode)
 }
 
 impl Rating {
@@ -286,25 +286,32 @@ impl Rating {
         self.flag == Flag::Reject
     }
 
-    /// The tier this rating falls into, per mode (task.md §6.1 / §6.2). Drives the Finish summary
-    /// and the "split by tier" folders.
+    /// The tier this rating falls into, per mode (task.md §6.1 / §6.2). Drives the Finish summary,
+    /// the "split by tier" folders, and the keep-or-trash decision.
+    ///
+    /// **This is the mapped answer, the same one the filmstrip draws** (REV-78). It reads the
+    /// [`display_rating`] view, not the raw fields, so a 4-star photo in keep mode is a Keep and a
+    /// keep made in keep mode is a Keep in stars mode. An earlier version read the raw fields: the
+    /// UI showed a green Keep ring and Finish then moved the photo to the trash.
     pub fn tier(&self, mode: RatingMode) -> Tier {
+        display_rating(self, mode).mode_tier(mode)
+    }
+
+    /// The tier of a rating that is already a view for `mode`. Private on purpose: everything
+    /// outside this module asks [`Rating::tier`], so there is exactly one rule.
+    fn mode_tier(&self, mode: RatingMode) -> Tier {
+        if self.flag == Flag::Reject {
+            return Tier::Rejected;
+        }
         match mode {
-            RatingMode::Stars => {
-                if self.flag == Flag::Reject {
-                    return Tier::Rejected;
-                }
-                match self.stars {
-                    4 | 5 => Tier::Keep,
-                    3 => Tier::Good,
-                    1 | 2 => Tier::Maybe,
-                    _ => Tier::Unrated,
-                }
-            }
+            RatingMode::Stars => match self.stars {
+                4 | 5 => Tier::Keep,
+                3 => Tier::Good,
+                1 | 2 => Tier::Maybe,
+                _ => Tier::Unrated,
+            },
             RatingMode::KeepNotKeep => {
-                if self.flag == Flag::Reject {
-                    Tier::Rejected
-                } else if self.keep {
+                if self.keep {
                     Tier::Keep
                 } else {
                     Tier::Unrated
@@ -418,8 +425,10 @@ mod tests {
         let mixed = Rating::new(4, Flag::None, None, true);
         assert_eq!(mixed.tier(mode), Tier::Keep);
         assert_eq!(mixed.tier(RatingMode::Stars), Tier::Keep);
-        // In stars mode a keep alone is not a keep.
-        assert_eq!(Rating::keep().tier(RatingMode::Stars), Tier::Unrated);
+        // A keep made in keep mode is a keep in stars mode too: task.md §6 maps it to 5 stars. The
+        // old assertion here said Unrated, which is REV-78: the user's keeps vanished on a mode
+        // switch and Finish would have trashed them.
+        assert_eq!(Rating::keep().tier(RatingMode::Stars), Tier::Keep);
     }
 
     #[test]
