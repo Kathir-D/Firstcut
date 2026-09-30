@@ -495,7 +495,8 @@ impl Session {
         // current mode: a keep with no stars is 5 stars to Lightroom (task.md §6). What is stored
         // stays as the user gave it — the display is a projection and writing it back would
         // persist a mode the user is not in (`store::rating::display_rating`).
-        let shown = crate::store::rating::display_rating(&rating, state.rating_mode);
+        let shown =
+            crate::store::rating::display_rating_at(&rating, state.rating_mode, state.keep_stars);
         let values = state.mapping.values_for(shown, state.rating_mode);
         let row = records::write_rating(
             &state.db,
@@ -562,7 +563,8 @@ impl Session {
             .ok()
             .flatten()
             .map_or_else(Rating::neutral, |row| row.rating);
-        let shown = crate::store::rating::display_rating(&after, state.rating_mode);
+        let shown =
+            crate::store::rating::display_rating_at(&after, state.rating_mode, state.keep_stars);
         let values = state.mapping.values_for(shown, state.rating_mode);
         records::write_rating(
             &state.db,
@@ -1811,6 +1813,29 @@ mod tests {
 
         session.set_rating_mode(RatingMode::Stars).unwrap();
         assert_eq!(session.snapshot().ratings[&meta.id.0], Rating::stars(5));
+    }
+
+    #[test]
+    fn the_sidecar_follows_the_keep_threshold() {
+        // "Only 5 stars" in keep mode: a 4-star photo is shown as not kept, so the sidecar must
+        // not tell Lightroom it is a keep.
+        let (_s, folder, session) = empty_session();
+        session.set_rating_mode(RatingMode::KeepNotKeep).unwrap();
+        session.set_keep_stars(5);
+        let photos = session.snapshot().photos;
+        session.set_rating(photos[0].id, Rating::stars(4)).unwrap();
+        session.set_rating(photos[1].id, Rating::stars(5)).unwrap();
+        session.flush();
+        let read = |meta: &PhotoMeta| {
+            crate::xmp::read_sidecar(&folder.path().join(format!("{}.xmp", meta.rel_path)))
+                .unwrap()
+                .unwrap()
+        };
+        assert_ne!(
+            read(&photos[0]),
+            read(&photos[1]),
+            "4 and 5 stars are no longer the same tier"
+        );
     }
 
     #[test]

@@ -118,7 +118,9 @@ Not blocking v0.1.0; an agent can do these.
   recognition** (rescan): a new photo no longer inherits a deleted one's rating through a reused inode
   number or a same-size file without a shutter count, and one vanished photo is claimed at most once.
   **Undo Finish** keeps reversals that failed (a file back at the old path) in the log, so the next
-  Undo retries them instead of skipping to an older run.
+  Undo retries them instead of skipping to an older run. **Sidecars** follow the keep threshold ("only 5 stars" in keep
+  mode no longer writes a 4-star photo as a keep). Sidecars already written are not rewritten when
+  the threshold changes; they update the next time that photo's rating changes.
 - **Next, in order:**
   1. Wire the keep threshold from the app: `AppModel` must call `session.setKeepThreshold(...)` after
      a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.
