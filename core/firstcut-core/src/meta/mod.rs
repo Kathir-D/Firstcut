@@ -335,7 +335,7 @@ impl crate::batch::view::Photo for PhotoMeta {
 
 /// Scans `folder` recursively and returns one `PhotoMeta` per photo.
 ///
-/// Reads headers only, one file at a time. A file that cannot be parsed appears in `skipped` with
+/// Reads headers only, several files at a time. A file that cannot be parsed appears in `skipped` with
 /// the parser's own message, so a user can be told *why* rather than just losing a photo.
 pub fn scan_folder(folder: &Path) -> Result<ScanResult, ScanError> {
     let root = std::fs::canonicalize(folder).map_err(|source| {
@@ -377,7 +377,10 @@ pub fn scan_folder(folder: &Path) -> Result<ScanResult, ScanError> {
         }
     }
 
-    let mut photos = Vec::new();
+    // First decide each group's primary file and companions (cheap, sequential), then read the
+    // headers of the primaries in parallel: the header read is the only part that touches the
+    // disk per photo, and an SSD serves several small reads at once far faster than one by one.
+    let mut jobs: Vec<(usize, Vec<String>)> = Vec::with_capacity(groups.len());
     let mut skipped = Vec::new();
     for members in groups {
         // The RAW is the primary file; otherwise the first member in path order, which is what
@@ -402,28 +405,6 @@ pub fn scan_folder(folder: &Path) -> Result<ScanResult, ScanError> {
         }
         companions.sort();
 
-        let primary_file = &candidates[primary];
-        let (rel, path, kind, size) = (
-            &primary_file.rel_path,
-            &primary_file.path,
-            primary_file.kind,
-            primary_file.size,
-        );
-        match meta_for(
-            rel,
-            path,
-            kind,
-            size,
-            companions,
-            primary_file.device,
-            primary_file.ino,
-        ) {
-            Ok(meta) => photos.push(meta),
-            Err(reason) => skipped.push(Skipped {
-                rel_path: rel.clone(),
-                reason,
-            }),
-        }
         // Every other member is reported. A second RAW in the same group is not a companion — a
         // `Sat.1/IMG_2.CR3` and a `Sat.1/IMG_2.NEF` are two different photos, and the contract
         // says a file is never dropped silently — so it is listed as skipped with the reason
@@ -442,11 +423,67 @@ pub fn scan_folder(folder: &Path) -> Result<ScanResult, ScanError> {
                 });
             }
         }
+        jobs.push((primary, companions));
+    }
+
+    let results = parallel_map(jobs, |(primary, companions)| {
+        let file = &candidates[primary];
+        meta_for(
+            &file.rel_path,
+            &file.path,
+            file.kind,
+            file.size,
+            companions,
+            file.device,
+            file.ino,
+        )
+        .map_err(|reason| Skipped {
+            rel_path: file.rel_path.clone(),
+            reason,
+        })
+    });
+    let mut photos = Vec::with_capacity(results.len());
+    for result in results {
+        match result {
+            Ok(meta) => photos.push(meta),
+            Err(skip) => skipped.push(skip),
+        }
     }
 
     photos.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     skipped.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     Ok(ScanResult { photos, skipped })
+}
+
+/// Maps `work` through `f` on a few threads and returns the results in input order.
+///
+/// Header reads are small and mostly waiting on the disk, so a handful of threads is enough; more
+/// only adds contention. Falls back to the calling thread for tiny inputs.
+fn parallel_map<T: Send, R: Send>(work: Vec<T>, f: impl Fn(T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 8);
+    if threads == 1 || work.len() < 32 {
+        return work.into_iter().map(f).collect();
+    }
+    let len = work.len();
+    let queue = std::sync::Mutex::new(work.into_iter().enumerate());
+    let mut out: Vec<Option<R>> = (0..len).map(|_| None).collect();
+    let results = std::sync::Mutex::new(&mut out);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let next = queue.lock().unwrap_or_else(|e| e.into_inner()).next();
+                    let Some((index, item)) = next else { break };
+                    let value = f(item);
+                    results.lock().unwrap_or_else(|e| e.into_inner())[index] = Some(value);
+                }
+            });
+        }
+    });
+    out.into_iter().flatten().collect()
 }
 
 /// Walks `dir` collecting image files, sorted so the scan is reproducible (REV-17).
@@ -720,6 +757,46 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_map_keeps_input_order() {
+        for len in [0, 1, 31, 32, 1_000] {
+            let input: Vec<usize> = (0..len).collect();
+            let output = parallel_map(input.clone(), |n| n * 3);
+            assert_eq!(output, input.iter().map(|n| n * 3).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn a_large_folder_scans_to_the_same_result_every_time() {
+        // Above the parallel threshold, including unreadable files, so a race in collecting the
+        // results would show up as a different or shorter list.
+        let dir = std::env::temp_dir().join(format!("firstcut-par-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..80 {
+            std::fs::write(dir.join(format!("IMG_{i:04}.JPG")), b"not a jpeg").unwrap();
+        }
+        let first = scan_folder(&dir).unwrap();
+        assert_eq!(first.photos.len() + first.skipped.len(), 80);
+        for _ in 0..3 {
+            let again = scan_folder(&dir).unwrap();
+            let names = |r: &ScanResult| {
+                (
+                    r.photos
+                        .iter()
+                        .map(|p| p.rel_path.clone())
+                        .collect::<Vec<_>>(),
+                    r.skipped
+                        .iter()
+                        .map(|s| s.rel_path.clone())
+                        .collect::<Vec<_>>(),
+                )
+            };
+            assert_eq!(names(&first), names(&again));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn extensions_map_to_kinds_case_insensitively() {

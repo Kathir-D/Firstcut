@@ -4,136 +4,91 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
-**Status (2026-09-30): feature complete for v0.1.0, and green on CI.** What remains is measurement and
-sign-off that need a Mac, the test photos and a human: batching ground truth, the §7.3 timings, a
-visual check of every screen, and the `v0.1.0` tag. Read [§0](#0-where-we-left-off) first.
+**Status (2026-09-30): feature complete for v0.1.0 and green on CI.** Everything that can be built
+and tested without a Mac, the test photos and a person looking at the screen is done. What is left is
+in [§0.2](#02-left-for-the-owner) (only you can do it) and [§0.3](#03-other-open-work) (can wait until
+after v0.1.0).
 
 ---
 
-## 0. Where we left off
+## 0. Where we are
 
 > Every session starts by reading this section, then `AGENTS.md`.
 
-### 0.1 How the project is run now
+### 0.1 Done
 
-**One agent, one branch, no reviewer.** Work on `main` directly or on short branches merged straight
-into it. Commit and push after every meaningful change (the owner's global rule). Never force-push.
-The nine-agent arrangement (roster, worktrees, review board, per-agent charters) is gone; its history
-is in git only:
-
-```sh
-git show 4d4e43d:docs/review.md            # the senior-dev review board, 74+ findings (REV-n)
-git show 4d4e43d:docs/agents/worker.md     # the last worker charter and status
-git show 4d4e43d:docs/agents/archive/      # the original eight area charters
-```
-
-Because there is no reviewer any more, the discipline is: **a task is not done until something
-asserts it, and a performance number is not done until it is measured.** For anything visual, build,
-launch, `screencapture`, *look at the image*, compare with Finder, fix, repeat (see §0.5).
-
-### 0.2 State of the tree (2026-09-30)
-
-| Check | Result |
+| Area | State |
 | --- | --- |
-| `cargo test --manifest-path core/Cargo.toml` | **green**: 300+ tests; runs on Linux and macOS |
-| `cargo fmt --check`, `cargo clippy --all-targets -D warnings` | **green** |
-| CI Swift job (Xcode 16.4 / macOS 15 SDK): build and unit tests | **green** on `main` |
-| `Xcode 26` workflow (the shipping toolchain, `.github/workflows/xcode26.yml`, manual) | **green** (build and tests) on `086443f` / `main` |
-| `release.yml` rehearsal (dispatch, no tag, macos-26) | **green**: notices check, Rust tests, Release build, ad-hoc sign, zip and SHA-256 (`Firstcut-0.0.0.zip`, 5.7 MB); the tap bump and GitHub release steps are skipped without a tag or secret |
-| Boundary F1 (batching) | **UNMEASURED**. No visually verified ground truth exists (§5.4), and none may be synthesised. The suite prints a loud SKIPPED |
-| §7.3 performance targets | **UNMEASURED**. Nothing here runs on a Mac with the test photos |
-| The app launched and looked at | **Not by this agent.** The last session had no macOS: everything Swift is compiled and unit-tested by CI, and nothing has been visually checked (§15 B) |
-| `swift-format` in CI | advisory, not enforced (the tree is not formatted yet, and cannot be formatted from Linux) |
+| Rust core (`core/`) | CR3 reader (verified against exiftool on all 2,880 files), other formats from their specs, ordering, batching (metadata then visual signature), session DB, XMP read/write, Finish plan/execute/undo, rename reconciliation. 300+ tests, fmt and clippy clean |
+| App | Welcome with recents and resume; loupe with pinch/click zoom, pan, zoom lock, AF and clipping overlays; filmstrip; grid; 2/3/4-up compare with synced zoom; info panel with histogram; progress HUD with the current rating; both rating modes; undo/redo; Finish Cull sheet (summary → options → dry run → typed confirmation for delete → report → undo); Settings (General, Keyboard with recorder/import/export, Viewer, Metadata, Performance); menus; error alerts; live folder watching; flush on quit |
+| Pipeline | Concurrent decode engine with a priority queue (current photo, its batch, next, previous), cancellation when the user moves on, memory budget with LRU eviction, memory-pressure shedding, visual signatures in the background |
+| CI | `ci.yml` (Xcode 16.4: Rust + Swift build and tests) green; `xcode26.yml` (shipping toolchain) green; `release.yml` rehearsed (ad-hoc signed zip + SHA-256 + cask stamping); `screenshots.yml` renders every screen on macOS 26 |
+| Distribution | Homebrew cask template, curl and build-from-source paths in the README, GPL-3.0, third-party notices, issue templates |
 
-What the 2026-09-30 session did, in order: made the Rust core build on Linux; fixed the Swift build
-(two compile errors, the `glassEffect` guard for older toolchains); **restored the Finish executor and
-undo that the merge dropped** and fixed REV-78 (Finish trashed photos the filmstrip showed as kept);
-exported Finish, metadata settings and the visual signature over UniFFI; wrote the Finish sheet, Grid,
-Compare, Settings, Welcome/recents, real zoom (pinch, click to 100%, pan, lock) with AF and clipping
-overlays; wired the visual signatures, XMP import, live folder watching and flush-on-quit that were
-specified but not connected; read metadata for every non-CR3 format; grouped single frames (owner's
-decision); deleted `parked/`.
+History of how it got here: `git log`. The retired multi-agent process: `git show 4d4e43d:docs/review.md`,
+`git show 4d4e43d:docs/agents/`.
 
-### 0.3 The parked code
+### 0.2 Left for the owner
 
-Deleted on 2026-09-30, as decided. `git show 4d4e43d:` still has the worker branch's versions.
-Everything worth keeping from them (the Finish executor and undo, the REV-78 rating fix) was ported;
-the rest duplicated code that shipped or targeted an older FFI. Still open from the merge: three
-Swift files hold hand-written stand-ins for types the Rust core also defines
-(`Shared/CoreTypes.swift`, `Session/PipelineMirror.swift`, `Session/SessionTypes.swift`); they are used
-everywhere and were left alone, so the "one definition of each type" rule (REV-72/73) is not yet met.
+Only a person with the Mac, the test photos, the apps or the repo settings can do these. In order:
 
-### 0.4 Known open issues
+1. **Look at the app.** `scripts/build-app.sh --open`, cull part of a real game in both rating modes,
+   run Finish on a *copy* and undo it. Compare each screen with Finder's gallery view (§9) and write
+   down what looks wrong; the screenshots from the `Screenshots` workflow are a starting point.
+2. **Ground truth for batching.** `firstcut contact-sheet --game <g>`, look at each ambiguous boundary
+   (~210 across the four games), write `tests/fixtures/ground-truth/<g>.json` (file names only). This
+   is what makes the ≥ 98% boundary-F1 claim measurable; an agent must not synthesise it.
+3. **Game1JENKS re-press pauses** (`IMG_6117`–`IMG_6164`): one play or several? Decide by eye.
+4. **Timings (§7.3)** on the M1 Pro with the photos: folder open → first photo, metadata scan,
+   thumbnails, arrow → sharp photo, 100% zoom. `scripts/test-with-photos.sh` runs the opt-in tests.
+5. **Lightroom / Capture One** read the sidecars (ratings and keep labels survive an import) on a copy
+   of a few photos.
+6. **Tap secret** on `Kathir-D/Firstcut`: `HOMEBREW_TAP_DEPLOY_KEY` (deploy key with write access on
+   `Kathir-D/homebrew-tap`) or `HOMEBREW_TAP_TOKEN`. Do not add `Casks/firstcut.rb` to the tap by hand
+   before the first release: its checksum is a placeholder until then and breaks the tap.
+7. **README screenshots / GIF**, then **tag `v0.1.0`** (`git tag v0.1.0 && git push origin v0.1.0`):
+   the release workflow builds, signs, zips, publishes and bumps the cask.
 
-- **Ground truth (blocker for a measured M1).** `tests/fixtures/ground-truth/<game>.json` for all four
-  games, built by *looking at the photographs*. `firstcut ground-truth` prints the ambiguous
-  boundaries as a checklist so a human only has to confirm or flip about 100 of them.
-- The Game1JENKS re-press pauses (`IMG_6117`–`IMG_6164`): one play or several? Not built as an eye
-  test (§15 A); needs a human's eyes and a UI for the variants.
-- `docs/contracts/*.md` predate the merge: pipeline-api.md still says `CALayer.contents =
-  IOSurfaceRef` (REV-38; the host uses a `CGImage`).
-- CI enforcement: Swift warnings-as-errors and `swift-format` (REV-12, REV-59).
-- Settings that exist in the model but are not honored, and are therefore not shown: the T4 "Exact
-  RAW" decode, decode thread count, debug HUD, clipping thresholds, confirmation toggles.
-- Release: `HOMEBREW_TAP_DEPLOY_KEY` (or `HOMEBREW_TAP_TOKEN`) secret, then the `v0.1.0` tag (§15 B).
+### 0.3 Other open work
 
-### 0.5 Working practices
+Not blocking v0.1.0; an agent can do these.
+
+- **One definition per type (REV-72/73):** `Shared/CoreTypes.swift`, `Session/PipelineMirror.swift`
+  and `Session/SessionTypes.swift` hand-mirror types the Rust core also defines.
+- **Strict CI:** Swift warnings as errors and `swift-format` enforced (REV-12, REV-59); the tree is
+  not formatted yet.
+- **Pipeline refinements (§7.1, §7.2):** a display-sized (T2) decode per window size instead of the
+  full image scaled by the layer; thumbnails at `.utility`; the embedded-preview vs `CIRAWFilter`
+  quality comparison; the "Exact RAW" (T4) decode; `os_signpost` and a debug HUD.
+- **Settings in the model but not shown** because nothing honours them yet: decode thread count,
+  clipping thresholds, confirmation toggles.
+- **Tests that need the photos or a person (§12):** performance baselines, the hold-→ stress test,
+  a full manual QA pass, macOS 15 (only 26 is tested).
+- **Contracts** in `docs/contracts/` predate the merge (pipeline-api.md still describes an IOSurface
+  layer).
+- **Later:** Sparkle updates, folder bookmarks for a sandboxed build.
+
+### 0.4 Working practices
 
 - **Read first:** this section, `AGENTS.md`, [build.md](docs/contracts/build.md), then the contract for
   whatever you touch. Contracts: [build](docs/contracts/build.md),
   [photo-meta](docs/contracts/photo-meta.md), [batching](docs/contracts/batching.md),
   [session-api](docs/contracts/session-api.md), [pipeline-api](docs/contracts/pipeline-api.md),
   [app-model](docs/contracts/app-model.md). Add a changelog line when a surface changes.
-- **Local checks before every push** (until CI is strict): `cargo fmt --check`,
-  `cargo clippy --all-targets -- -D warnings`, `cargo test` (all from `core/`),
-  then `scripts/generate-project.sh` and the `xcodebuild … test` command above.
-- **Seeing the app:** `scripts/build-app.sh --open`, then
-  `osascript -e 'tell application "System Events" to tell process "Firstcut" to get {position, size} of window 1'`,
-  `screencapture -x -o -R<x>,<y>,<w>,<h> docs/ui/shot-<what>.png`, and read the PNG back. Compare with the
-  Finder reference in `docs/ui/` and §9. Close the app when done; a running copy gets killed by rebuilds
-  and macOS reports "Firstcut quit unexpectedly" (`defaults write com.kathird.firstcut
-  NSQuitAlwaysKeepsWindows -bool false` stops the reopen).
-- **The app must only get folder access through `NSOpenPanel`.** A hosted test app reading `~/Documents`
-  raises a TCC prompt that blocks forever; real-photo tests are opt-in behind
-  `FIRSTCUT_ALLOW_PHOTO_TESTS=1` (`scripts/test-with-photos.sh`).
+- **A task is not done until something asserts it, and a performance number is not done until it is
+  measured.**
+- **Local checks before every push:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo test` (all from `core/`), then `scripts/generate-project.sh` and `xcodebuild … test`.
+- **Seeing the app:** `scripts/build-app.sh --open`, then `screencapture` and read the PNG back; or run
+  the `Screenshots` workflow. The launch flags `-FirstcutMockShoot 1`, `-FirstcutFolder <path>`,
+  `-FirstcutViewMode grid|compare2|…`, `-FirstcutFinish 1`, `-FirstcutSettings 1` and
+  `-FirstcutSnapshot <png>` put the app in any screen. Close the app before rebuilding
+  (`defaults write com.kathird.firstcut NSQuitAlwaysKeepsWindows -bool false` stops the reopen).
+- **Folder access only through `NSOpenPanel`.** A hosted test reading `~/Documents` raises a TCC prompt
+  that blocks forever; real-photo tests are opt-in behind `FIRSTCUT_ALLOW_PHOTO_TESTS=1`.
 - **Test photos** are in `~/Documents/testing` (Canon R8 C-RAW, 4 games); never copy them into the repo.
-- **Git:** work on `main`, `git pull` before you start, commit small, push right after committing.
-
-### 0.6 Schedule
-
-A priority order, not a calendar. Work the critical path (§0.7) top to bottom.
-
-| Wave | Goal | What "done" means |
-| --- | --- | --- |
-| **1. Foundations** | Everything compiles and is tested | `cargo test` and `xcodebuild test` green on `main`; CI enforcing fmt, clippy, warnings-as-errors, swift-format |
-| **2. Real data** | It runs on the test games | CR3 parser matches exiftool on all 2,880 files; `order()`+`batch()` measured ≥ 98% boundary F1 against visually checked ground truth; the app opens a real folder through the real `Session` |
-| **3. Features** | Feature complete | Finish Cull end to end with undo, both rating modes, Settings, keymap editor, every §9 screen |
-| **4. Polish & ship** | v0.1.0 | Liquid Glass pass, macOS 15 fallback, accessibility, README screenshots, `v*` tag published, cask live |
-
-Waves 1–2 are partly done: the CR3 reader and a real-folder session exist and the Rust suite is green;
-the Swift suite, ground truth and measurements are what remain.
-
-### 0.7 The critical path
-
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Swift builds and tests on CI | **done** |
-| 2 | One `PhotoMeta`/`Batch`/`Session` type each; delete stand-ins | open (§0.3); parked code deleted |
-| 3 | CR3 parser verified against exiftool on all 2,880 files | done (`FIRSTCUT_CR3_FULL=1`) |
-| 4 | Ground truth and F1 for `order()` + `batch()` | **open: needs a human looking at photos** |
-| 5 | `Session`, XMP, undo, resume, renames (REV-68), XMP import | **done**, with tests |
-| 6 | Thumbnails, visual signatures from the Rust reference, decode, scheduler | **done**, unmeasured |
-| 7 | `AppModel` on the real `Session` and pipeline; viewer layer | done, **never launched by an agent** |
-| 8 | Every §7.3 target measured | open: needs a Mac and the photos |
-| 9 | Finish Cull, Settings, keymap editor, every screen | **done** |
-| 10 | Liquid Glass, macOS 15, accessibility, then the release | code done; visual sign-off and the tag are the owner's |
-
-### 0.8 Git and CI
-
-- Everything lives on `main`. CI (`.github/workflows/ci.yml`) runs fmt/clippy/test and the Swift build on
-  every push; if the Swift job reports "pending" for a long time it is macOS runner queueing.
-- Release: pushing a `v*` tag runs the release workflow (zip + SHA-256 + cask bump). Rehearsed on a test
-  tag; the real `v0.1.0` waits on the tap secret and README screenshots.
+- **Git:** one agent, work on `main` (or a short branch merged straight in), commit small, push right
+  after committing, never force-push. CI runs on every push; release on a `v*` tag.
 
 ---
 
@@ -376,7 +331,7 @@ data is preserved and mapped (a keep ↔ 5 stars by default).
 | P (pick flag) | Supported for Lightroom parity; independent of stars | (no effect on tier) |
 
 - [x] Filmstrip shows stars under/over each thumbnail (small, Finder-like), flags as badges.
-- [ ] Viewer HUD shows the current photo's stars/flag/color label.
+- [x] Viewer HUD shows the current photo's stars/flag/color label.
 
 ### 6.2 Keep / Not keep mode
 
@@ -418,17 +373,21 @@ The single most important property of the app: **navigation never waits for deco
 | T3 | Decoded full-resolution (6000×4000) bitmaps for 100% zoom | Current frame ±N in the current batch, only while zoomed / zoom-locked | ~96 MB each |
 | T4 | True RAW decode (`CIRAWFilter`) | Only when "Exact RAW" is toggled | on demand + neighbours |
 
-- [ ] **Memory budget**: default = 40% of physical RAM (≈6.4 GB on 16 GB), configurable in Settings
+- [x] **Memory budget**: default = 40% of physical RAM (≈6.4 GB on 16 GB), configurable in Settings
       → Performance. Respond to `DispatchSource` memory-pressure warnings by shedding T3 → T1 far
-      batches → T2 beyond ±1 batch, never the current batch.
+      batches → T2 beyond ±1 batch, never the current batch. *Built:* LRU eviction to the budget;
+      a pressure warning sheds everything outside the focus set (current photo, its batch, next and
+      previous windows).
 - [ ] **No lazy loading anywhere reachable**: nothing in the previous, current, or next batch is ever
       decoded on demand. If a cache miss does happen, it is a bug: log it in the debug HUD and count it
       in the stress test.
-- [ ] **Priority scheduler** (not FIFO): current frame > rest of current batch > next batch >
+- [x] **Priority scheduler** (not FIFO): current frame > rest of current batch > next batch >
       previous batch > further batches. Re-prioritize instantly on every navigation. Cancel work
-      for batches that fell out of range.
+      for batches that fell out of range. *Built:* pending work is re-ranked or dropped on every
+      move, and decodes that land after the folder changed are discarded.
 - [ ] Decode concurrency = performance-core count; decode work runs at `.userInitiated`, thumbnail
-      generation at `.utility` so it never competes with the current batch.
+      generation at `.utility` so it never competes with the current batch. *Partly:* 4 concurrent
+      decodes at `.userInitiated`, thumbnails ranked below the current batch but on the same QoS.
 - [ ] Pre-upload decoded bitmaps to the GPU (IOSurface-backed) so display = pointer swap, < 1 frame.
 - [ ] Re-decode T2 when the window/screen size changes (debounced), keeping old bitmaps visible
       until new ones are ready.
@@ -439,7 +398,7 @@ The single most important property of the app: **navigation never waits for deco
       pixel size (Retina aware) — no double resampling, no GPU minification blur.
 - [ ] Downscale with a high-quality filter (Lanczos / area average via ImageIO's DCT scaling +
       vImage) — never nearest/bilinear.
-- [ ] Never re-encode to JPEG/HEIC for caching; cache decoded pixels or the camera's original
+- [x] Never re-encode to JPEG/HEIC for caching; cache decoded pixels or the camera's original
       compressed bytes only.
 - [ ] Preserve color: honor the embedded ICC profile, render in the display's color space
       (Display P3), 8-bit is fine for previews; consider 10-bit for T3.
@@ -474,8 +433,8 @@ interactive targets above, none of which has been measured.
 
 ### 7.4 Metadata scan
 
-- [ ] Read only file headers (CR3 `moov`/`CMT*` boxes, TIFF IFDs) with parallel `pread`, not whole
-      files — target < 2 ms/file.
+- [x] Read only file headers (CR3 `moov`/`CMT*` boxes, TIFF IFDs), several files in parallel, not
+      whole files — target < 2 ms/file (not yet measured on the photos).
 - [x] Extract: capture time + sub-sec + offset, shutter count, file number, camera model/serial,
       lens, focal length, shutter/aperture/ISO/exposure comp, orientation, dimensions, AF area mode +
       AF points (for overlay), embedded preview offset/length (so Swift can read the JPEG bytes
@@ -793,123 +752,34 @@ Same setup as [Sonar](https://github.com/Kathir-D/Sonar#install): three install 
 
 ## 14. Milestones
 
-Each milestone ends with something runnable and measured.
-
-### M0 — Repo & toolchain
-
-- [x] Project name chosen (**Firstcut**), public repo `Kathir-D/Firstcut` created and pushed.
-- [x] `task.md`, `README.md`, `AGENTS.md`, GPL-3.0 `LICENSE`, `.gitignore` (excludes all RAW
-      extensions and `.xmp`), `.gitattributes`, `.editorconfig`.
-- [x] Xcode 27 selected as the active developer directory (`xcode-select`).
-- [x] Rust stable (1.98.1) installed via rustup; `~/.cargo/env` sourced from `~/.zprofile`.
-- [x] `exiftool` installed (Homebrew) for checking the metadata parser.
-- [x] Test data measured (§3).
-- [x] Install `xcodegen` and `swift-format` (Homebrew).
-- [x] Rust workspace skeleton (`core/`: `firstcut-core`, `firstcut-cli`, every module declared).
-- [x] exiftool fixtures for all four games (`tests/fixtures/exiftool/`).
-- [x] Shared Swift stand-in types (`App/Sources/Shared/CoreTypes.swift`).
-- [x] UniFFI set up.
-- [x] `project.yml` + placeholder app and three test targets (builds, tests pass).
-- [x] The app calls one Rust function through UniFFI ("hello") — `FirstcutCoreBridge.greeting`,
-      asserted by `App/Tests/Unit/Core/CoreBridgeTests.swift`; ui asked to show it in the
-      placeholder window (REQ-infra-1).
-- [x] `scripts/build-core.sh`, `scripts/build-app.sh`, `VERSION`.
-- [x] CI skeleton (fmt, clippy, tests, app build).
-
-### M1 — Core scan + order + batch (CLI)
-
-- [x] CR3 header parser complete (all fields in §7.4), verified against exiftool on all four games.
-- [x] `firstcut-cli batch <folder>` prints batches; `contact-sheet` output for visual review.
-- [ ] Ground truth for all four games; batching F1 measured and ≥ 98%.
-
-### M2 — Pipeline spike
-
-- [ ] Minimal window that arrows through a whole game from the cache with zero misses.
-- [ ] Memory budget + priority scheduler; embedded-preview vs RAW quality benchmark (§7.2).
-- [ ] All §7.3 targets measured and recorded here.
-
-### M3 — Core UX
-
-- [x] Finder-style window, toolbar, viewer, filmstrip, batch navigation.
-- [x] Both rating modes, XMP + DB, undo, resume, welcome window.
-
-### M4 — Inspection tools
-
-- [x] Pinch/click zoom, zoom lock, AF overlay, info panel, histogram, clipping, grid, compare, HUD.
-
-### M5 — Finish flow, settings, keymap editor
-
-- [x] Finish Cull flow (§9.7), all Settings tabs (§9.8), keyboard shortcut editor.
-
-### M6 — Formats
-
-- [x] Sony next, then all others (spec-based, untested beyond Canon); RAW + JPEG/HEIF pairs;
-      JPEG/HEIF-only folders.
-
-### M7 — Polish
-
-- [ ] Liquid Glass fidelity pass vs Finder, macOS 15 fallback, accessibility (VoiceOver labels,
-      Reduce Transparency / Reduce Motion). App icon done 2026-09-29 (`logo/`).
-
-### M8 — Release
-
-- [ ] CI release pipeline, zip release, `firstcut.rb` in the Homebrew tap, README screenshots, v0.1.0.
-      (Pipeline, zip and cask done and rehearsed on a test tag; left open for the tap secret, the
-      README screenshots from ui, and the v0.1.0 tag itself.)
+| Milestone | State | What is left |
+| --- | --- | --- |
+| M0 Repo & toolchain | Done | |
+| M1 Core scan + order + batch | Built | Ground truth and the boundary-F1 number (§0.2) |
+| M2 Pipeline | Built | The §7.3 timings on the photos; embedded-preview vs RAW comparison (§7.2) |
+| M3 Core UX | Done | |
+| M4 Inspection tools | Done | |
+| M5 Finish flow, settings, keymap | Done | |
+| M6 Formats | Built | Only Canon R8 CR3 is verified (§8) |
+| M7 Polish | Built | Visual sign-off against Finder on macOS 26 (§0.2); macOS 15 is untested |
+| M8 Release | Rehearsed | Tap secret, README screenshots, the `v0.1.0` tag (§0.2) |
 
 ---
 
 ## 15. Open questions & things to know
 
-> Written at the 2026-09-29 merge. Part A needs a decision from the owner (Kathir); the agent should
-> ask rather than guess. Part B is work only a human can do. Part C is context that is not obvious from
-> the code. Tick or strike items as they are settled, and record the answer in §2 (Decisions).
+Decisions the owner has made are in §2. Work only the owner can do is in §0.2.
 
-### A. Decisions
+### A. Open decision
 
-Answered by the owner on 2026-09-29 and recorded in §2 unless noted.
+- **The high-speed pauses at the end of Game1JENKS** (`IMG_6117`–`IMG_6164`, ~11 fps with 0.2–0.8 s
+  re-press pauses): one play or several? Build it as an eye test: show the owner "one batch" versus
+  "split at each re-press pause" side by side, narrow until they pick, and ship only the winner.
 
-- [x] **Arrow at the end of a batch:** a setting, **default roll into the next batch** (off = stop).
-- [x] **Single frames a few seconds apart:** **group them into one batch.** Tune the window from ground truth.
-- [x] **Ordering key (REV-65):** time + sub-second + shutter count first; camera serial only breaks ties.
-- [x] **Duplicate implementations (§0.3):** keep the consolidated tree. Diff `parked/` and
-      `core/firstcut-core/tests/parked/` for anything worth porting, then **delete them**. Not done yet.
-- [x] **App icon:** chosen and in the app (§2, `logo/`).
-- [x] **CI toolchain (REV-58):** keep Xcode 16.2 in CI as the minimum-toolchain check.
-- [x] **macOS support:** minimum macOS 15, best effort; **only macOS 26+ is tested** and the README says so.
-      Apple Silicon only, no Intel.
-- [x] **Old branches:** the `agent/*` branches and `integrate/consolidate` were deleted, local and remote,
-      on 2026-09-29 (everything was already in `main`).
-- [ ] **The high-speed pauses at the end of Game1JENKS** (`IMG_6117`–`IMG_6164`, ~11 fps with 0.2–0.8 s
-      re-press pauses): one play or several? **Build it as an eye test:** add a batching option for "one
-      batch" versus "split at each re-press pause" (and other candidate thresholds), then show the owner
-      the variants side by side on these photos, one pair at a time, narrowing until they pick the best.
-      Keep the losing variants out of the shipped app once one is chosen.
-- [x] ~~40 fps test shoot~~ → Game1JENKS covers high-speed bursts (~11 fps recorded, see §3).
-- [x] ~~Sony samples~~ → not available; only Canon is tested (see §8).
-
-### B. Work only a human can do
-
-- [ ] **Ground truth for batching (blocks M1).** Run `firstcut contact-sheet --game <g>` (Core Text
-      renderer in `tools/contact-sheet/`), look at every ambiguous-zone boundary (~210 across the four
-      games), and write `tests/fixtures/ground-truth/<g>.json` (file names only). An agent must not
-      synthesise this; self-certified ground truth proves nothing, and the ≥ 98% boundary-F1 claim
-      depends on it.
-- [ ] **A tap credential as a repo secret** on `Kathir-D/Firstcut`: `HOMEBREW_TAP_DEPLOY_KEY` (a deploy
-      key with write access on `Kathir-D/homebrew-tap` only, which is how the tap's other projects
-      publish) or `HOMEBREW_TAP_TOKEN`. Without one, the release workflow attaches the cask to the
-      release instead of pushing it to the tap. **Do not add `Casks/firstcut.rb` to the tap by hand
-      before the first release:** its checksum is a placeholder until then, and an invalid cask stops
-      the whole tap from loading.
-- [ ] **Confirm Lightroom / Capture One read the XMP sidecars** (ratings survive) on a copy of a few
-      photos; this needs the apps, which the agent does not have.
-- [ ] **Visual sign-off** of each §9 screen against Finder's gallery view, on macOS 26+ (15 is untested).
-- [ ] **The `v0.1.0` tag** and the README screenshots/GIF, once the UI is right.
-
-### C. Things to know
+### B. Things to know
 
 - **The tree is green on CI** (2026-09-30). `RealRawDecodeTests` compiles; the real-photo tests are
-  still opt-in. See §0.2.
+  still opt-in. See §0.2 for what is left.
 - **Nothing about accuracy or speed is measured yet.** Boundary F1 is unmeasured (no ground truth) and
   none of the §7.3 targets has a recorded number. Do not claim either.
 - **Ad-hoc signing means TCC re-prompts on every rebuild.** With no paid Apple Developer account there
@@ -923,9 +793,9 @@ Answered by the owner on 2026-09-29 and recorded in §2 unless noted.
   the reconciliation carries the rating across.
 - **Ratings must reach the sidecar.** A 4-star photo was once exported as `xmp:Rating="0"` (fixed in
   `5c98cf8`); keep an end-to-end test on it. Likewise keep/trash must be decided from the *mapped* tier,
-  and unkeeping must clear the 5 stars it invented (§0.3).
+  and unkeeping must clear the 5 stars it invented.
 - **Rebuilding kills a running app.** Concurrent builds replace the binary under a running process and
-  macOS reports "Firstcut quit unexpectedly". Close the app before building; §0.5 has the
+  macOS reports "Firstcut quit unexpectedly". Close the app before building; §0.4 has the
   `NSQuitAlwaysKeepsWindows` fix for the phantom relaunch.
 - **Dev environment is cleaned.** All worktrees, `core/target`, generated Xcode project and DerivedData
   were removed at the end of the merge; run `scripts/generate-project.sh` first (needs `xcodegen`,
