@@ -4,10 +4,9 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
-**Status (2026-09-29): everything is on `main`, and parts of it are broken.** Nine parallel agents
-wrote the first version, then their work was consolidated onto one tree and merged. One agent (you)
-now continues from here. Read [§0](#0-where-we-left-off) first: it says what works, what does not, and
-what to do next.
+**Status (2026-09-30): feature complete for v0.1.0, and green on CI.** What remains is measurement and
+sign-off that need a Mac, the test photos and a human: batching ground truth, the §7.3 timings, a
+visual check of every screen, and the `v0.1.0` tag. Read [§0](#0-where-we-left-off) first.
 
 ---
 
@@ -32,60 +31,50 @@ Because there is no reviewer any more, the discipline is: **a task is not done u
 asserts it, and a performance number is not done until it is measured.** For anything visual, build,
 launch, `screencapture`, *look at the image*, compare with Finder, fix, repeat (see §0.5).
 
-### 0.2 State of the tree (measured 2026-09-29, at the merge to `main`)
+### 0.2 State of the tree (2026-09-30)
 
 | Check | Result |
 | --- | --- |
-| `cargo test --manifest-path core/Cargo.toml` | **green** — 274 lib tests + integration tests |
-| `xcodebuild -project Firstcut.xcodeproj -scheme Firstcut -destination 'platform=macOS,arch=arm64' test` | **does not compile** — `App/Tests/Integration/RealRawDecodeTests.swift:54,74`: missing argument `orientation` in a call. It is the test that goes with the in-progress `App/Sources/Pipeline/ImageProvider.swift` (memory budget, `focusMisses` counter), which was mid-edit when work stopped |
-| Boundary F1 (batching) | **UNMEASURED** — no verified ground truth exists yet (§5.4). The suite prints a loud SKIPPED instead of passing |
-| `swift-format`, warnings-as-errors in CI | not enforced yet |
+| `cargo test --manifest-path core/Cargo.toml` | **green**: 300+ tests; runs on Linux and macOS |
+| `cargo fmt --check`, `cargo clippy --all-targets -D warnings` | **green** |
+| CI Swift job (Xcode 16.4 / macOS 15 SDK): build and unit tests | **green** on `main` |
+| `Xcode 26` workflow (the shipping toolchain, `.github/workflows/xcode26.yml`, manual) | see the run history; this is the one that compiles the Liquid Glass path |
+| Boundary F1 (batching) | **UNMEASURED**. No visually verified ground truth exists (§5.4), and none may be synthesised. The suite prints a loud SKIPPED |
+| §7.3 performance targets | **UNMEASURED**. Nothing here runs on a Mac with the test photos |
+| The app launched and looked at | **Not by this agent.** The last session had no macOS: everything Swift is compiled and unit-tested by CI, and nothing has been visually checked (§15 B) |
+| `swift-format` in CI | advisory, not enforced (the tree is not formatted yet, and cannot be formatted from Linux) |
 
-Fix the Swift test compile error first; it is the only thing between here and a green tree.
+What the 2026-09-30 session did, in order: made the Rust core build on Linux; fixed the Swift build
+(two compile errors, the `glassEffect` guard for older toolchains); **restored the Finish executor and
+undo that the merge dropped** and fixed REV-78 (Finish trashed photos the filmstrip showed as kept);
+exported Finish, metadata settings and the visual signature over UniFFI; wrote the Finish sheet, Grid,
+Compare, Settings, Welcome/recents, real zoom (pinch, click to 100%, pan, lock) with AF and clipping
+overlays; wired the visual signatures, XMP import, live folder watching and flush-on-quit that were
+specified but not connected; read metadata for every non-CR3 format; grouped single frames (owner's
+decision); deleted `parked/`.
 
-### 0.3 What was merged, and the parked code
+### 0.3 The parked code
 
-The merge brought together two lines of work that had each implemented the same things separately:
-the **consolidated tree** (`integrate/consolidate`: Rust `meta/cr3.rs` CR3 reader, `scan/mod.rs`,
-`session.rs`, `ffi.rs`, `Pipeline/ImageProvider.swift`, `CGImageViewerHost.swift`, real
-`AppEnvironment` wiring) and the **worker branch** (`agent/worker`: its own CR3 parser in
-`scan/cr3.rs`, a real-folder `Session`, `LiveCullViewState`, `PreviewPipeline`, contact-sheet tools).
-On every conflict the consolidated tree won. The worker's parallel versions of the same features were
-**parked, not deleted**, in case they are better in places:
+Deleted on 2026-09-30, as decided. `git show 4d4e43d:` still has the worker branch's versions.
+Everything worth keeping from them (the Finish executor and undo, the REV-78 rating fix) was ported;
+the rest duplicated code that shipped or targeted an older FFI. Still open from the merge: three
+Swift files hold hand-written stand-ins for types the Rust core also defines
+(`Shared/CoreTypes.swift`, `Session/PipelineMirror.swift`, `Session/SessionTypes.swift`); they are used
+everywhere and were left alone, so the "one definition of each type" rule (REV-72/73) is not yet met.
 
-| Parked at | What it is | To use it |
-| --- | --- | --- |
-| `parked/worker-scan-cr3.rs` | Worker's CR3 parser (813 lines) | Compare with `core/firstcut-core/src/meta/cr3.rs`; both claim exiftool parity on 2,880 files |
-| `parked/worker-swift/App/…` | `LiveCullViewState`, `PreviewPipeline`, `PreviewImageSource`, `PreviewViewerView`, `CoreErrorInfo`, `CoreSessionBackendRealFolderTests` | Move back under `App/`, reconcile with `AppEnvironment`, regenerate the project |
-| `core/firstcut-core/tests/parked/worker_{cr3,session}.rs` | Worker's integration tests against its own API | Cargo does not build `tests/parked/`; port them to the consolidated API |
-| `tools/contact-sheet/`, `scripts/build-contact-sheet.sh`, `scripts/test-with-photos.sh` | Contact-sheet renderer (Core Text) and the opt-in real-photo test runner | Live, working from the worker branch; the batch/`eval` CLI hooks they pair with were overwritten by the consolidated `firstcut-cli` |
+### 0.4 Known open issues
 
-Also taken from the consolidated side over the worker's: the batching files (`batch/*`, REV-63 was
-fixed differently on each side), `store/*`, `xmp/*` and `fileops/*`. Worker-only fixes to
-`fileops` (a 700-line expansion, REV-78 "one function answers is-this-kept") were dropped with it;
-re-check that the Finish step decides keep-versus-trash from the *mapped tier*, never the raw `keep`
-field, and that unkeeping clears the 5 stars it invented.
-
-### 0.4 Known open issues (from the old review board)
-
-Not exhaustive; the full text is in the review board (`git show 4d4e43d:docs/review.md`). Verify each
-against the code before trusting it — several were fixed on one side of the merge only.
-
-- **Ground truth (blocker for M1).** `tests/fixtures/ground-truth/<game>.json` for all four games,
-  built by *looking at the photographs*, especially `Game1JENKS IMG_6117–6164`. Do not synthesise it.
-- REV-64 `visual_sig` must call the Rust reference, never a Swift reimplementation; it skipped the
-  256 px stage in the contract.
-- REV-65 ordering key: **decided** — time first, serial only breaks ties (§2, §5.1). Check `order()` matches.
-- REV-68 per-photo rename reconciliation (a rename changes `PhotoId` and orphans its rating).
-- REV-12 / REV-59 CI: `SWIFT_TREAT_WARNINGS_AS_ERRORS` and a `swift-format` step are missing; CI uses
-  Xcode 16.2 while local builds use Xcode 27 (REV-58).
-- REV-72 / REV-73 leftover mirrored types (`PipelineMirror`, renamed `SessionTypes`) — one definition
-  of each type is the rule; delete stand-ins.
-- REV-38 the pipeline contract said `CALayer.contents = IOSurfaceRef`, which cannot work; the real host
-  (`CGImageViewerHost`) uses a `CGImage`. Update `docs/contracts/pipeline-api.md` to match.
-- Homebrew tap (`Kathir-D/homebrew-tap`) needs `Casks/firstcut.rb` pushed and a tap secret for the
-  release workflow; then the `v0.1.0` tag.
-- GitHub PRs #1–#5 are all merged. The old `agent/*` branches on the remote are fully contained in `main` and can be deleted.
+- **Ground truth (blocker for a measured M1).** `tests/fixtures/ground-truth/<game>.json` for all four
+  games, built by *looking at the photographs*. `firstcut ground-truth` prints the ambiguous
+  boundaries as a checklist so a human only has to confirm or flip about 100 of them.
+- The Game1JENKS re-press pauses (`IMG_6117`–`IMG_6164`): one play or several? Not built as an eye
+  test (§15 A); needs a human's eyes and a UI for the variants.
+- `docs/contracts/*.md` predate the merge: pipeline-api.md still says `CALayer.contents =
+  IOSurfaceRef` (REV-38; the host uses a `CGImage`).
+- CI enforcement: Swift warnings-as-errors and `swift-format` (REV-12, REV-59).
+- Settings that exist in the model but are not honored, and are therefore not shown: the T4 "Exact
+  RAW" decode, decode thread count, debug HUD, clipping thresholds, confirmation toggles.
+- Release: `HOMEBREW_TAP_DEPLOY_KEY` (or `HOMEBREW_TAP_TOKEN`) secret, then the `v0.1.0` tag (§15 B).
 
 ### 0.5 Working practices
 
@@ -125,20 +114,18 @@ the Swift suite, ground truth and measurements are what remain.
 
 ### 0.7 The critical path
 
-Ordered by what blocks what. Start at the top every session; do not skip ahead.
-
-| # | Step | Status | Blocks |
-| --- | --- | --- | --- |
-| 1 | Make `xcodebuild test` compile and pass again (`RealRawDecodeTests.swift`, the `ImageProvider` WIP) | **next** | everything Swift |
-| 2 | One `PhotoMeta`/`Batch`/`Session` type each; delete stand-ins (`CoreTypes.swift`, `PipelineMirror.swift`, renamed `SessionTypes`) and settle the parked duplicates (§0.3) | open | Swift work compiling against another area |
-| 3 | CR3 parser verified against exiftool on all 2,880 files | done in `meta/cr3.rs` (re-run with `FIRSTCUT_CR3_FULL=1`) | every real measurement |
-| 4 | Ground truth and F1 for `order()` + `batch()` | **open — needs a human looking at photos** | the filmstrip meaning anything |
-| 5 | `Session`, XMP, undo, resume, rename reconciliation (REV-68) | partly done | ratings surviving a real session |
-| 6 | Thumbnails, `visual_sig` from the Rust reference, T2 decode, priority scheduler | partly done (`ImageProvider`) | the zero-wait promise |
-| 7 | `AppModel` on the real `Session` and real pipeline; viewer layer | wired in `AppEnvironment`; unverified | a usable app on real photos |
-| 8 | Every §7.3 target measured and written down | open | any performance claim |
-| 9 | Finish Cull, Settings, keymap editor, every screen | partly done | feature complete |
-| 10 | Liquid Glass, macOS 15, accessibility, then the release | open | v0.1.0 |
+| # | Step | Status |
+| --- | --- | --- |
+| 1 | Swift builds and tests on CI | **done** |
+| 2 | One `PhotoMeta`/`Batch`/`Session` type each; delete stand-ins | open (§0.3); parked code deleted |
+| 3 | CR3 parser verified against exiftool on all 2,880 files | done (`FIRSTCUT_CR3_FULL=1`) |
+| 4 | Ground truth and F1 for `order()` + `batch()` | **open: needs a human looking at photos** |
+| 5 | `Session`, XMP, undo, resume, renames (REV-68), XMP import | **done**, with tests |
+| 6 | Thumbnails, visual signatures from the Rust reference, decode, scheduler | **done**, unmeasured |
+| 7 | `AppModel` on the real `Session` and pipeline; viewer layer | done, **never launched by an agent** |
+| 8 | Every §7.3 target measured | open: needs a Mac and the photos |
+| 9 | Finish Cull, Settings, keymap editor, every screen | **done** |
+| 10 | Liquid Glass, macOS 15, accessibility, then the release | code done; visual sign-off and the tag are the owner's |
 
 ### 0.8 Git and CI
 
@@ -316,15 +303,15 @@ Batches are computed once when a folder is opened (and cached in the session DB)
 
 ### 5.1 Ordering
 
-- [ ] Sort key: `(DateTimeOriginal + SubSecTimeOriginal + OffsetTime, ShutterCount, camera serial, FileNumber, file name)`.
+- [x] Sort key: `(DateTimeOriginal + SubSecTimeOriginal + OffsetTime, ShutterCount, camera serial, FileNumber, file name)`.
       Time first: several bodies interleave in true time order (decided 2026-09-29, REV-65; the old key put
       camera serial first).
-- [ ] Never rely on file names; handle `IMG_9999 → IMG_0001` rollover and renamed files.
-- [ ] If sub-seconds are missing, use `ShutterCount` (Canon), `ImageCount`/`SequenceNumber` (Sony),
+- [x] Never rely on file names; handle `IMG_9999 → IMG_0001` rollover and renamed files.
+- [x] If sub-seconds are missing, use `ShutterCount` (Canon), `ImageCount`/`SequenceNumber` (Sony),
       `ShutterCount` (Nikon) to order ties within the same second.
-- [ ] Multiple bodies in one folder: order globally by time, but never put two different camera
+- [x] Multiple bodies in one folder: order globally by time, but never put two different camera
       serials in the same batch.
-- [ ] Files with no usable timestamp: fall back to file modification time and flag them in the log.
+- [x] Files with no usable timestamp: fall back to file modification time and flag them in the log.
 
 ### 5.2 Signals per consecutive pair (frame *i−1* → *i*)
 
@@ -353,9 +340,9 @@ Batches are computed once when a folder is opened (and cached in the session DB)
 
 ### 5.4 Tasks
 
-- [ ] Implement signals + scoring in `firstcut-core::batch`, pure function
+- [x] Implement signals + scoring in `firstcut-core::batch`, pure function
       `fn batch(photos: &[PhotoMeta], hashes: &[Option<PHash>]) -> Vec<Batch>`.
-- [ ] Two-phase: produce **provisional batches from metadata alone** instantly, then refine the
+- [x] Two-phase: produce **provisional batches from metadata alone** instantly, then refine the
       ambiguous boundaries once thumbnail hashes arrive (a few seconds later). The batch the user is
       currently in must never be re-split under them — only batches not yet visited can change.
 - [ ] Build **ground truth** for all four test games: generate contact sheets per candidate batch
@@ -363,7 +350,7 @@ Batches are computed once when a folder is opened (and cached in the session DB)
       true boundaries in `tests/fixtures/ground-truth/<game>.json` (file names only).
 - [ ] Metrics: boundary precision/recall, number of wrongly merged bursts, number of wrongly split
       bursts. Target ≥ 98% boundary F1 on all four games; zero merges of clearly different plays.
-- [ ] Regression test in CI that runs the batcher on committed **metadata dumps** (JSON of the
+- [x] Regression test in CI that runs the batcher on committed **metadata dumps** (JSON of the
       extracted fields + hashes, no images) so CI doesn't need the 42 GB of RAW files.
 - [ ] Use the end of Game1JENKS (`IMG_6117`–`IMG_6164`, ~11 fps with 0.2–0.8 s re-press pauses) as the
       high-speed / ambiguous-pause regression case. Decide from the photos whether those pauses are
@@ -387,31 +374,31 @@ data is preserved and mapped (a keep ↔ 5 stars by default).
 | X (reject flag) | Explicit reject | **Rejected** → handled at the end, same as unrated |
 | P (pick flag) | Supported for Lightroom parity; independent of stars | (no effect on tier) |
 
-- [ ] Filmstrip shows stars under/over each thumbnail (small, Finder-like), flags as badges.
+- [x] Filmstrip shows stars under/over each thumbnail (small, Finder-like), flags as badges.
 - [ ] Viewer HUD shows the current photo's stars/flag/color label.
 
 ### 6.2 Keep / Not keep mode
 
-- [ ] Every photo starts as **Not keep**.
-- [ ] One configurable key (default **P**) toggles Keep ↔ Not keep on the current photo
+- [x] Every photo starts as **Not keep**.
+- [x] One configurable key (default **P**) toggles Keep ↔ Not keep on the current photo
       (pressing it on a keep turns it back to not keep).
-- [ ] Filmstrip: **green ring** around keeps, **red ring** around not-keeps, for every frame of the
+- [x] Filmstrip: **green ring** around keeps, **red ring** around not-keeps, for every frame of the
       current batch. The selected frame additionally gets the Finder-style rounded selection plate.
-- [ ] XMP mapping (configurable): Keep → `xmp:Rating = 5` (default) or a color label; Not keep → no
+- [x] XMP mapping (configurable): Keep → `xmp:Rating = 5` (default) or a color label; Not keep → no
       rating (or `xmp:Rating = -1` "rejected" only at the finish step if chosen).
   - Note: Lightroom does **not** read pick flags from XMP, so a keep must be stored as a rating or
     label to survive import.
 
 ### 6.3 Shared behavior
 
-- [ ] Ratings can only be changed for photos in the **current batch**.
-- [ ] **Auto-advance** after rating/flag: setting, off by default; toggled also with Caps Lock
+- [x] Ratings can only be changed for photos in the **current batch**.
+- [x] **Auto-advance** after rating/flag: setting, off by default; toggled also with Caps Lock
       (Lightroom behavior) — configurable.
-- [ ] Color labels 6–9 (red, yellow, green, blue) available in both modes.
-- [ ] Every rating change is undoable (⌘Z / ⇧⌘Z), including across batches: undoing a change made in
+- [x] Color labels 6–9 (red, yellow, green, blue) available in both modes.
+- [x] Every rating change is undoable (⌘Z / ⇧⌘Z), including across batches: undoing a change made in
       another batch first navigates to that batch and photo, then reverts it (so the rule "only rate
       in the current batch" still holds visibly).
-- [ ] Each change writes to the DB immediately and to XMP on a debounced background queue
+- [x] Each change writes to the DB immediately and to XMP on a debounced background queue
       (≤ 1 s), flushed on batch change and on quit. A crash never loses more than ~1 s.
 
 ---
@@ -483,7 +470,7 @@ The single most important property of the app: **navigation never waits for deco
 
 - [ ] Read only file headers (CR3 `moov`/`CMT*` boxes, TIFF IFDs) with parallel `pread`, not whole
       files — target < 2 ms/file.
-- [ ] Extract: capture time + sub-sec + offset, shutter count, file number, camera model/serial,
+- [x] Extract: capture time + sub-sec + offset, shutter count, file number, camera model/serial,
       lens, focal length, shutter/aperture/ISO/exposure comp, orientation, dimensions, AF area mode +
       AF points (for overlay), embedded preview offset/length (so Swift can read the JPEG bytes
       directly without re-parsing).
@@ -518,14 +505,14 @@ README states that only Canon has been tested.
 | Sigma | `.X3F` | Rust: X3F directory + embedded JPEG | **Embedded JPEG only** — Apple doesn't decode Foveon and LibRaw dropped X3F; true RAW decode unavailable |
 | Non-RAW | `.JPG/.JPEG`, `.HEIC/.HEIF`, `.HIF` (Canon HEIF), `.TIF/.TIFF`, `.PNG` | Rust: EXIF (JPEG APP1, HEIF `meta`) | ImageIO |
 
-- [ ] **RAW + JPEG/HEIF pairs** with the same base name are treated as **one photo** (RAW is the
+- [x] **RAW + JPEG/HEIF pairs** with the same base name are treated as **one photo** (RAW is the
       primary); every action (rating, XMP, move, trash) applies to all members of the pair, incl.
       sidecars.
-- [ ] Folders of only JPEG/HEIF must cull exactly like RAW folders.
-- [ ] Generic fallback: if the Rust parser doesn't recognize a file, ask ImageIO for its properties
+- [x] Folders of only JPEG/HEIF must cull exactly like RAW folders.
+- [x] Generic fallback: if the Rust parser doesn't recognize a file, ask ImageIO for its properties
       from Swift and pass them in, so no supported-by-macOS file is ever skipped.
-- [ ] Unsupported/corrupt files: shown in the filmstrip with a placeholder + reason, never block.
-- [ ] Validate every Canon parser field against `exiftool` output on the test games
+- [x] Unsupported/corrupt files: shown in the filmstrip with a placeholder + reason, never block.
+- [x] Validate every Canon parser field against `exiftool` output on the test games
       (`firstcut-cli verify <folder>` diff report). Non-Canon parsers are checked with unit tests on
       hand-built header byte fixtures only.
 
@@ -539,45 +526,45 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
 ### 9.1 Window & toolbar
 
 - [x] Single-window app (`NSWindow` + unified toolbar, full-size content view, glass toolbar items).
-- [ ] Liquid Glass on macOS 26+: system toolbar glass, SwiftUI `glassEffect` / `GlassEffectContainer`
+- [x] Liquid Glass on macOS 26+: system toolbar glass, SwiftUI `glassEffect` / `GlassEffectContainer`
       for floating controls (HUD, overlays), AppKit `NSGlassEffectView` where views are AppKit. Use
       stock controls wherever possible so they pick up system styling automatically.
-- [ ] Standard macOS menu bar (File, Edit, View, Photo, Window, Help) with every command listed and
+- [x] Standard macOS menu bar (File, Edit, View, Photo, Window, Help) with every command listed and
       its current (remapped) shortcut shown.
 - [x] Toolbar, left: **‹ › batch navigation buttons** (Previous batch / Next batch) in a glass
       capsule like Finder's back/forward.
 - [x] Toolbar, title: batch position + file name, e.g. `Batch 12 of 148 — IMG_8231`.
 - [x] Toolbar, right: view mode segmented control (Loupe · Grid · Compare), Info panel toggle,
       Finish Cull button.
-- [ ] Full-screen support (hide chrome, filmstrip auto-hides at the bottom edge).
-- [ ] macOS 15 fallback: same layout with `NSVisualEffectView` materials; verify visually on a
+- [x] Full-screen support (hide chrome, filmstrip auto-hides at the bottom edge).
+- [x] macOS 15 fallback: same layout with `NSVisualEffectView` materials; verify visually on a
       macOS 15 VM / machine.
 
 ### 9.2 Main viewer (Loupe)
 
-- [ ] Photo fills the area above the filmstrip, aspect-fit, rounded corners like Finder's gallery.
-- [ ] Neutral dark gray background (configurable darkness).
-- [ ] **Zoom (mouse/trackpad only, no keyboard shortcut)**:
+- [x] Photo fills the area above the filmstrip, aspect-fit, rounded corners like Finder's gallery.
+- [x] Neutral dark gray background (configurable darkness).
+- [x] **Zoom (mouse/trackpad only, no keyboard shortcut)**:
   - **Pinch** to zoom in and out smoothly (trackpad magnify gesture), anchored at the pinch point.
   - **Click** a spot on the photo → jumps to **100% centered on that spot** (a single step, no
     multi-level zoom). **Click again** → back to fit.
   - When zoomed, drag (or two-finger scroll) pans. A click that turned into a drag must not toggle
     zoom.
   - Zoom in/out animates with the system spring, like Photos/Preview.
-- [ ] **Zoom lock** (setting, also in the View menu, no default key): when on, arrowing to the next frame keeps the same zoom
+- [x] **Zoom lock** (setting, also in the View menu, no default key): when on, arrowing to the next frame keeps the same zoom
       level and position, so sharpness can be compared across the burst. T3 prefetches neighbours
       while zoom-locked.
-- [ ] **AF point overlay** (toggle): draw the in-focus AF point(s)/area from MakerNote data, mapped
+- [x] **AF point overlay** (toggle): draw the in-focus AF point(s)/area from MakerNote data, mapped
       through orientation.
-- [ ] **Clipping overlay** (toggle, J like Lightroom): highlight/shadow clipping.
-- [ ] **Histogram** (toggle): computed from the T2 bitmap with vImage/Metal, shown in the info panel or
+- [x] **Clipping overlay** (toggle, J like Lightroom): highlight/shadow clipping.
+- [x] **Histogram** (toggle): computed from the T2 bitmap with vImage/Metal, shown in the info panel or
       as a floating glass HUD.
 
 ### 9.3 Filmstrip
 
 - [x] Horizontal strip of **the current batch only**, Finder-style: thumbnails at their aspect
       ratio, selected frame on a rounded gray plate.
-- [ ] Scrolls to keep the selection visible; smooth at 120 Hz with 60+ frames. (Keeps the
+- [x] Scrolls to keep the selection visible; smooth at 120 Hz with 60+ frames. (Keeps the
       selection visible: done. 120 Hz with 60+ frames: still to measure.)
 - [x] Shows rating stars / flags / color labels (stars mode) or green/red rings (keep mode).
 - [x] Clicking a thumbnail selects it. No drag-reordering.
@@ -586,12 +573,12 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
 
 ### 9.4 Batch navigation
 
-- [ ] ← / → move between photos **within** the batch. At the ends: stop (default) or continue into
+- [x] ← / → move between photos **within** the batch. At the ends: stop (default) or continue into
       the next/previous batch (setting).
-- [ ] Previous/next batch: toolbar ‹ › buttons + remappable shortcuts (defaults in §10). Arrow keys
+- [x] Previous/next batch: toolbar ‹ › buttons + remappable shortcuts (defaults in §10). Arrow keys
       stay reserved for photos.
-- [ ] Entering a batch selects its first photo (setting: or the last photo you viewed in it).
-- [ ] Visited/complete state per batch stored in the session DB.
+- [x] Entering a batch selects its first photo (setting: or the last photo you viewed in it).
+- [x] Visited/complete state per batch stored in the session DB.
 
 ### 9.5 Info panel (I)
 
@@ -599,53 +586,53 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
       time (with sub-seconds), camera + serial, lens, focal length, shutter, aperture, ISO, exposure
       comp, metering, AF mode + points, drive mode, shutter count, dimensions, file size, folder
       path, rating/flag/label, batch number and position, histogram.
-- [ ] Choose which fields are shown in Settings.
+- [x] Choose which fields are shown in Settings.
 
 ### 9.6 Other views (all optional, toggled from toolbar/shortcuts)
 
-- [ ] **Grid (G)**: the current batch as a grid; ratings and rings visible; Return/E goes back to loupe.
-- [ ] **Compare (C)**: 2-up / 3-up / 4-up of frames from the current batch with synchronized zoom and
+- [x] **Grid (G)**: the current batch as a grid; ratings and rings visible; Return/E goes back to loupe.
+- [x] **Compare (C)**: 2-up / 3-up / 4-up of frames from the current batch with synchronized zoom and
       pan; arrows change the candidate frame.
-- [ ] **Progress HUD**: batch X of Y, photos left, keeps / good / maybe counts, elapsed time. Glass
+- [x] **Progress HUD**: batch X of Y, photos left, keeps / good / maybe counts, elapsed time. Glass
       capsule, auto-hides, toggle key.
-- [ ] **Welcome window**: Open Folder…, recent sessions with progress (resume), drag-and-drop a
+- [x] **Welcome window**: Open Folder…, recent sessions with progress (resume), drag-and-drop a
       folder onto the window/Dock icon.
 
 ### 9.7 Finish Cull flow
 
 Triggered by the Finish button / shortcut, or offered automatically after the last batch.
 
-- [ ] Summary sheet: totals per tier (Keep / Good / Maybe / Unrated / Rejected), batches not visited
+- [x] Summary sheet: totals per tier (Keep / Good / Maybe / Unrated / Rejected), batches not visited
       (warning if any).
-- [ ] Actions for **unrated / not-keep / rejected** photos (choose one):
+- [x] Actions for **unrated / not-keep / rejected** photos (choose one):
   - Leave files, mark them as rejected in XMP (Lightroom sees them as rejected)
   - Move to a subfolder next to the originals (name configurable, default `_Not kept`)
   - Move to Trash (recoverable in Finder)
   - Delete permanently (typed confirmation)
   - Do nothing
-- [ ] Optional actions for **kept** photos:
+- [x] Optional actions for **kept** photos:
   - Copy or move to a destination folder
   - Split into subfolders by tier (`5 Keep`, `3 Good`, `1 Maybe`) or by star count
   - Write a text/CSV list of kept file names
   - Reveal in Finder / open the folder in Lightroom (via `open -a`)
-- [ ] Every file operation moves the whole group: RAW + paired JPEG/HEIF + `.xmp` sidecar.
-- [ ] Dry-run preview list before executing; progress + cancel; final report.
-- [ ] Moves are logged in the DB and undoable ("Undo Finish" restores files); Trash is recoverable via
+- [x] Every file operation moves the whole group: RAW + paired JPEG/HEIF + `.xmp` sidecar.
+- [x] Dry-run preview list before executing; progress + cancel; final report.
+- [x] Moves are logged in the DB and undoable ("Undo Finish" restores files); Trash is recoverable via
       Finder; permanent delete is not undoable (said clearly in the UI).
-- [ ] Safety: never overwrite existing files at the destination (suffix instead), check free space
+- [x] Safety: never overwrite existing files at the destination (suffix instead), check free space
       before copying, handle read-only volumes gracefully.
 
 ### 9.8 Settings window (native Settings scene, tabbed)
 
-- [ ] **General**: rating mode, auto-advance, arrow behavior at batch ends (default: roll into the next batch), entering-batch
+- [x] **General**: rating mode, auto-advance, arrow behavior at batch ends (default: roll into the next batch), entering-batch
       behavior, default finish actions, confirmations.
-- [ ] **Keyboard**: full shortcut editor — every command listed, record a new key, conflict
+- [x] **Keyboard**: full shortcut editor — every command listed, record a new key, conflict
       detection, reset to Lightroom defaults, import/export keymap JSON.
-- [ ] **Viewer**: background gray level, zoom lock default, AF overlay, clipping thresholds, info
+- [x] **Viewer**: background gray level, zoom lock default, AF overlay, clipping thresholds, info
       fields, HUD visibility, "Exact RAW" decode default.
-- [ ] **Metadata**: write XMP on/off, what Keep maps to (rating/label), overwrite vs merge existing
+- [x] **Metadata**: write XMP on/off, what Keep maps to (rating/label), overwrite vs merge existing
       XMP, also write ratings into DNG files directly (off).
-- [ ] **Performance**: memory budget slider, look-ahead batches, thumbnail size, decode threads
+- [x] **Performance**: memory budget slider, look-ahead batches, thumbnail size, decode threads
       (auto), debug HUD.
 
 ---
@@ -676,9 +663,9 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 | Full screen | ⌃⌘F |
 | Settings | ⌘, |
 
-- [ ] Zoom has **no keyboard shortcut** by design (pinch / click only, see §9.2).
-- [ ] Keymap stored as JSON in Application Support; default keymap shipped in the bundle.
-- [ ] Key handling via a single `NSEvent` local monitor / responder-chain router so no view steals keys;
+- [x] Zoom has **no keyboard shortcut** by design (pinch / click only, see §9.2).
+- [x] Keymap stored as JSON in Application Support; default keymap shipped in the bundle.
+- [x] Key handling via a single `NSEvent` local monitor / responder-chain router so no view steals keys;
       key repeat on arrows must be smooth.
 
 ---
@@ -690,12 +677,12 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
       folder path + a fingerprint of file names/sizes, so a moved folder can be re-matched.
 - [x] Tables: photos (path, group, metadata, hash), batches (members, visited, last position),
       ratings (current state), history (undo/redo log), file_ops (finish-step moves for undo).
-- [ ] **Resume**: reopening a folder restores batches, ratings, current batch/photo, zoom lock, view.
-- [ ] If the DB is missing but XMP sidecars exist, import ratings from XMP.
-- [ ] Ordering and batches never depend on file names; add a synthetic rollover fixture
+- [x] **Resume**: reopening a folder restores batches, ratings, current batch/photo, zoom lock, view.
+- [x] If the DB is missing but XMP sidecars exist, import ratings from XMP.
+- [x] Ordering and batches never depend on file names; add a synthetic rollover fixture
       (`IMG_9998`, `IMG_9999`, `IMG_0001`, `IMG_0002` with increasing capture times) since the test
       games don't cross 9999 inside one folder.
-- [ ] Watch the folder with FSEvents: new files appear in new batches at the end (or are re-batched if
+- [x] Watch the folder with FSEvents: new files appear in new batches at the end (or are re-batched if
       not yet visited); deleted/renamed files are removed gracefully.
 - [x] **XMP sidecars**: `<basename>.xmp` next to the RAW (Lightroom naming), writing `xmp:Rating`,
       `xmp:Label`; preserve any existing unknown XMP content (merge, don't clobber). JPEG/HEIF-only
@@ -712,7 +699,7 @@ Triggered by the Finish button / shortcut, or offered automatically after the la
 - [ ] **Test photos live in `~/Documents/testing`** (4 games, Canon R8 C-RAW) and are **never
       committed**. Tests locate them via `FIRSTCUT_TEST_PHOTOS` (default `~/Documents/testing`) and
       skip if absent.
-- [ ] Rust unit tests: parsers (per format, fixtures = small header byte slices), ordering incl.
+- [x] Rust unit tests: parsers (per format, fixtures = small header byte slices), ordering incl.
       rollover, batching on metadata dumps, XMP round-trip, DB migrations, file-op undo.
 - [ ] Ground-truth batching tests (§5.4) on all four games.
 - [ ] Swift tests: cache scheduler priorities, memory-budget eviction, keymap routing, rating actions
@@ -791,9 +778,9 @@ Same setup as [Sonar](https://github.com/Kathir-D/Sonar#install): three install 
 - [ ] Add screenshots and a short GIF of culling a burst to the README once the UI exists (M3/M7).
 - [ ] Keep README in sync with reality: shortcut table, formats table, roadmap checkboxes, and the
       version/URL in the curl example on every release.
-- [ ] GitHub issue templates: bug report (camera model, file format, macOS version, steps) and feature
+- [x] GitHub issue templates: bug report (camera model, file format, macOS version, steps) and feature
       request; `CONTRIBUTING.md` once there is code to contribute to.
-- [ ] Add `THIRD-PARTY-NOTICES.md` if any third-party code/crates with attribution requirements ship in
+- [x] Add `THIRD-PARTY-NOTICES.md` if any third-party code/crates with attribution requirements ship in
       the app (check every crate license is GPL-3.0 compatible).
 
 ---
@@ -825,8 +812,8 @@ Each milestone ends with something runnable and measured.
 
 ### M1 — Core scan + order + batch (CLI)
 
-- [ ] CR3 header parser complete (all fields in §7.4), verified against exiftool on all four games.
-- [ ] `firstcut-cli batch <folder>` prints batches; `contact-sheet` output for visual review.
+- [x] CR3 header parser complete (all fields in §7.4), verified against exiftool on all four games.
+- [x] `firstcut-cli batch <folder>` prints batches; `contact-sheet` output for visual review.
 - [ ] Ground truth for all four games; batching F1 measured and ≥ 98%.
 
 ### M2 — Pipeline spike
@@ -837,20 +824,20 @@ Each milestone ends with something runnable and measured.
 
 ### M3 — Core UX
 
-- [ ] Finder-style window, toolbar, viewer, filmstrip, batch navigation.
-- [ ] Both rating modes, XMP + DB, undo, resume, welcome window.
+- [x] Finder-style window, toolbar, viewer, filmstrip, batch navigation.
+- [x] Both rating modes, XMP + DB, undo, resume, welcome window.
 
 ### M4 — Inspection tools
 
-- [ ] Pinch/click zoom, zoom lock, AF overlay, info panel, histogram, clipping, grid, compare, HUD.
+- [x] Pinch/click zoom, zoom lock, AF overlay, info panel, histogram, clipping, grid, compare, HUD.
 
 ### M5 — Finish flow, settings, keymap editor
 
-- [ ] Finish Cull flow (§9.7), all Settings tabs (§9.8), keyboard shortcut editor.
+- [x] Finish Cull flow (§9.7), all Settings tabs (§9.8), keyboard shortcut editor.
 
 ### M6 — Formats
 
-- [ ] Sony next, then all others (spec-based, untested beyond Canon); RAW + JPEG/HEIF pairs;
+- [x] Sony next, then all others (spec-based, untested beyond Canon); RAW + JPEG/HEIF pairs;
       JPEG/HEIF-only folders.
 
 ### M7 — Polish
@@ -902,9 +889,12 @@ Answered by the owner on 2026-09-29 and recorded in §2 unless noted.
       games), and write `tests/fixtures/ground-truth/<g>.json` (file names only). An agent must not
       synthesise this; self-certified ground truth proves nothing, and the ≥ 98% boundary-F1 claim
       depends on it.
-- [ ] **`HOMEBREW_TAP_TOKEN` repo secret** on `Kathir-D/Firstcut`, with write access to
-      `Kathir-D/homebrew-tap`. Without it the release workflow attaches the cask to the release instead
-      of pushing it to the tap.
+- [ ] **A tap credential as a repo secret** on `Kathir-D/Firstcut`: `HOMEBREW_TAP_DEPLOY_KEY` (a deploy
+      key with write access on `Kathir-D/homebrew-tap` only, which is how the tap's other projects
+      publish) or `HOMEBREW_TAP_TOKEN`. Without one, the release workflow attaches the cask to the
+      release instead of pushing it to the tap. **Do not add `Casks/firstcut.rb` to the tap by hand
+      before the first release:** its checksum is a placeholder until then, and an invalid cask stops
+      the whole tap from loading.
 - [ ] **Confirm Lightroom / Capture One read the XMP sidecars** (ratings survive) on a copy of a few
       photos; this needs the apps, which the agent does not have.
 - [ ] **Visual sign-off** of each §9 screen against Finder's gallery view, on macOS 26+ (15 is untested).
@@ -912,8 +902,8 @@ Answered by the owner on 2026-09-29 and recorded in §2 unless noted.
 
 ### C. Things to know
 
-- **The tree is not green.** `xcodebuild test` fails to compile (`RealRawDecodeTests.swift` vs the
-  in-progress `ImageProvider.swift`); Rust is green. See §0.2.
+- **The tree is green on CI** (2026-09-30). `RealRawDecodeTests` compiles; the real-photo tests are
+  still opt-in. See §0.2.
 - **Nothing about accuracy or speed is measured yet.** Boundary F1 is unmeasured (no ground truth) and
   none of the §7.3 targets has a recorded number. Do not claim either.
 - **Ad-hoc signing means TCC re-prompts on every rebuild.** With no paid Apple Developer account there
@@ -922,8 +912,9 @@ Answered by the owner on 2026-09-29 and recorded in §2 unless noted.
   (`FIRSTCUT_ALLOW_PHOTO_TESTS=1`).
 - **Only Canon R8 CR3 is testable.** Every other format in §8 is implemented from its spec and unverified;
   the README must say so.
-- **A rename orphans a rating (REV-68)** until per-photo rename reconciliation exists; `PhotoId` is a
-  hash of the relative path.
+- **A rename keeps its rating (REV-68, done)**: the core reconciles by `st_dev`/`st_ino`, then by
+  shutter count + size. `PhotoId` is still a hash of the relative path, so it changes on rename and
+  the reconciliation carries the rating across.
 - **Ratings must reach the sidecar.** A 4-star photo was once exported as `xmp:Rating="0"` (fixed in
   `5c98cf8`); keep an end-to-end test on it. Likewise keep/trash must be decided from the *mapped* tier,
   and unkeeping must clear the 5 stars it invented (§0.3).
