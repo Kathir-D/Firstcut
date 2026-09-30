@@ -1,6 +1,6 @@
 // Owner: qa.
 //
-// The performance suite skeleton (task.md §7.3). The real measurements land in wave 2, once the
+// The performance suite skeleton (todo.md §7.3). The real measurements land in wave 2, once the
 // pipeline exists; what has to exist in wave 1 is the harness and the baseline format, so the
 // numbers are recorded the same way every time from the first run.
 //

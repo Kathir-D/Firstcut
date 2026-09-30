@@ -1,7 +1,7 @@
 //! A byte-offset scanner for the XML that XMP sidecars actually contain.
 //!
 //! Why not a parser: writing a sidecar means changing `xmp:Rating` and `xmp:Label` and leaving
-//! **every other byte alone** (task.md §11: "preserve any existing unknown XMP content (merge,
+//! **every other byte alone** (todo.md §11: "preserve any existing unknown XMP content (merge,
 //! don't clobber)"). Round-tripping a document through a DOM re-serialises it: attribute order,
 //! self-closing style, entity spellings and whitespace all move. So this module produces spans —
 //! offsets into the original text — and [`super::document`] splices new text into them.

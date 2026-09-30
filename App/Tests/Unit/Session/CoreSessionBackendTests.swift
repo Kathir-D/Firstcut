@@ -332,7 +332,7 @@ struct CoreSessionBackendTests {
         #expect(backend.undoFinish().undoable == false)
     }
 
-    @Test("Close flushes first: the debounced XMP queue goes out on the way (task.md §6.3)")
+    @Test("Close flushes first: the debounced XMP queue goes out on the way (todo.md §6.3)")
     func closeFlushes() {
         let (backend, core, _) = Self.makeBackend()
         backend.close()

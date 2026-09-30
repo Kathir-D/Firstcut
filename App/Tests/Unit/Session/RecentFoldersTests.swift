@@ -3,7 +3,7 @@ import Testing
 
 @testable import Firstcut
 
-@Suite("Recent folders (task.md §9.6)")
+@Suite("Recent folders (todo.md §9.6)")
 struct RecentFoldersTests {
   private func entry(_ name: String, total: Int = 100, rated: Int = 0) -> RecentFolder {
     RecentFolder(

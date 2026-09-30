@@ -1,10 +1,10 @@
-//! How Firstcut's ratings map onto XMP, and back (task.md §6).
+//! How Firstcut's ratings map onto XMP, and back (todo.md §6).
 //!
 //! Ratings live in two places: the session database, which is what the app reads, and the XMP
 //! sidecar, which is what Lightroom reads. The rules for translating between them are all here, in
 //! one configurable place, because they are the part a user can argue with.
 //!
-//! Two things are worth knowing (both from task.md §6.2):
+//! Two things are worth knowing (both from todo.md §6.2):
 //!
 //! * A **keep has to be stored as a rating or a label**, because Lightroom does not read pick flags
 //!   from XMP. The pick flag (`P`) therefore has no XMP representation at all and lives only in the
@@ -20,7 +20,7 @@ use super::document::{SidecarValues, XmpValues};
 pub const REJECTED: i64 = -1;
 
 /// How ratings are written to sidecars. All of it is a setting the app exposes; the defaults are
-/// the ones task.md §6.2 describes.
+/// the ones todo.md §6.2 describes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XmpMapping {
     /// What a keep becomes in keep mode. 5 by default. Also the threshold on import: a sidecar
@@ -89,7 +89,7 @@ impl XmpMapping {
         }
     }
 
-    /// Rebuilds a rating from a sidecar, for the "no database, import from XMP" path (task.md §11).
+    /// Rebuilds a rating from a sidecar, for the "no database, import from XMP" path (todo.md §11).
     ///
     /// Returns `None` when the sidecar says nothing Firstcut understands, so an untouched photo
     /// does not get a row.
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn the_pick_flag_has_no_xmp_form() {
-        // Lightroom cannot read it, so it is not written; the database keeps it (task.md §6.2).
+        // Lightroom cannot read it, so it is not written; the database keeps it (todo.md §6.2).
         let values = XmpMapping::default()
             .values_for(Rating::new(3, Flag::Pick, None, false), RatingMode::Stars);
         assert_eq!(values.rating, Some(3));

@@ -131,7 +131,7 @@ import Foundation
         }
     }
 
-    /// A `.xmp` or paired JPEG belongs to the RAW with the same base name (task.md §8).
+    /// A `.xmp` or paired JPEG belongs to the RAW with the same base name (todo.md §8).
     private static func attach(companion name: String, to photos: inout [PhotoMeta]) {
         let base = (name as NSString).deletingPathExtension
         guard let index = photos.lastIndex(where: { ($0.relPath as NSString).deletingPathExtension == base })
@@ -207,7 +207,7 @@ import Foundation
 
     /// Re-batches unvisited batches using the visual signatures, the way the real two-phase batcher
     /// does: a boundary is only *added*, never removed, and only where the timing was ambiguous
-    /// (0.2 s … 2 s), and never inside a batch the user has already been in (task.md §5.4).
+    /// (0.2 s … 2 s), and never inside a batch the user has already been in (todo.md §5.4).
     public func submitVisualSigs(_ sigs: [(PhotoID, VisualSig)]) {
         let hashes = Dictionary(sigs.map { ($0.0, $0.1.dhash) }, uniquingKeysWith: { first, _ in first })
         guard !hashes.isEmpty else { return }
@@ -283,7 +283,7 @@ import Foundation
     }
 }
 
-/// Turns a session's ratings into the file operations Finish would perform (task.md §9.7).
+/// Turns a session's ratings into the file operations Finish would perform (todo.md §9.7).
 /// Split out from `MockSession` because qa and ui want to test the *plan* on its own.
 public struct FinishPlanner {
     public let photos: [PhotoMeta]

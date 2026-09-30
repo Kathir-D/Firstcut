@@ -22,13 +22,13 @@ public struct NormalizedPoint: Hashable, Sendable, Codable {
 }
 
 public enum Command: Hashable, Sendable {
-    // Navigation (task.md §9.4)
+    // Navigation (todo.md §9.4)
     case photoPrevious
     case photoNext
     case batchPrevious
     case batchNext
 
-    // Rating (task.md §6)
+    // Rating (todo.md §6)
     case setStars(Int)  // 0...5; 0 clears
     case setStarsAndAdvance(Int)  // 1...5, ⇧1…⇧5 in Lightroom
     case togglePickFlag
@@ -51,7 +51,7 @@ public enum Command: Hashable, Sendable {
     case showGrid
     case showCompare(Int)  // 2, 3 or 4
 
-    // Zoom: gestures only, no default key (task.md §2, §9.2, §10)
+    // Zoom: gestures only, no default key (todo.md §2, §9.2, §10)
     case toggleZoom(at: NormalizedPoint?)
     case magnify(by: Double, at: NormalizedPoint?)
 
@@ -176,7 +176,7 @@ extension Command {
 }
 
 extension ColorLabel {
-    /// 6…9 in task.md §10, or nil for "no label".
+    /// 6…9 in todo.md §10, or nil for "no label".
     public var ordinal: Int? {
         switch self {
         case .red: 6

@@ -1,5 +1,5 @@
 //! Opening the session database: where it lives, which one belongs to a folder, and the pragmas
-//! that make it safe to write from a background thread (task.md §11).
+//! that make it safe to write from a background thread (todo.md §11).
 //!
 //! Layout: `~/Library/Application Support/Firstcut/Sessions/<hash>.sqlite`, one file per shoot.
 //! See [`crate::store::identity`] for how the name is derived and how a moved folder is re-matched.

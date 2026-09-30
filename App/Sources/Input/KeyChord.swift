@@ -1,7 +1,7 @@
 // Owner: app-logic.
 //
 // Physical keys, modifier combinations and the "chord" that the keymap maps to commands
-// (docs/contracts/app-model.md, task.md §10).
+// (docs/contracts/app-model.md, todo.md §10).
 //
 // `Key` raw values are ASCII identifiers so `keymap.json` is readable and diffable; `symbol` is
 // what menus and the keymap editor show. `keyCode` is the ANSI (US) hardware code macOS reports in

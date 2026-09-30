@@ -76,7 +76,7 @@ COMMANDS
 
   gaps <meta.json> [--sorted]
         Print the Δt histogram and every boundary in the ambiguous zone with its
-        score. This is how the thresholds in task.md §5 are tuned.
+        score. This is how the thresholds in todo.md §5 are tuned.
 
   ground-truth <meta.json> --out <template.json>
         Writes the batcher's current batches as a ground-truth TEMPLATE, and prints the
@@ -248,7 +248,7 @@ fn cmd_gaps(args: &[String]) -> Result<(), String> {
 
     if opts.sorted {
         println!(
-            "\n(the ambiguous boundaries are in capture order; see the task.md §5 thresholds)"
+            "\n(the ambiguous boundaries are in capture order; see the todo.md §5 thresholds)"
         );
     }
     Ok(())
@@ -400,7 +400,7 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
         "scaled to 1,500 photos: order+batch {:.1} ms",
         (order_best + batch_best) * 1500.0 / n as f64 * 1_000.0
     );
-    println!("task.md §5 target: all 1,500 files batched in < 2,000 ms");
+    println!("todo.md §5 target: all 1,500 files batched in < 2,000 ms");
     if scaled > 2.0 {
         println!("FAIL: over the target");
     } else {

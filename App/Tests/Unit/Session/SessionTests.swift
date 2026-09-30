@@ -4,11 +4,11 @@ import Testing
 
 @testable import Firstcut
 
-// MARK: - Rating rules (task.md §6)
+// MARK: - Rating rules (todo.md §6)
 
 @Suite("Rating rules")
 struct RatingRulesTests {
-    @Test("Stars mode tiers (task.md §6.1)")
+    @Test("Stars mode tiers (todo.md §6.1)")
     func starTiers() {
         func tier(_ stars: UInt8, reject: Bool = false) -> Tier {
             var rating = Rating()
@@ -26,7 +26,7 @@ struct RatingRulesTests {
         #expect(tier(5, reject: true) == .rejected)  // an explicit reject wins
     }
 
-    @Test("Keep mode has two tiers only (task.md §6.2)")
+    @Test("Keep mode has two tiers only (todo.md §6.2)")
     func keepTiers() {
         #expect(RatingRules.tier(of: Rating(keep: true), mode: .keep) == .keep)
         #expect(RatingRules.tier(of: Rating(), mode: .keep) == .unrated)
@@ -76,7 +76,7 @@ struct RatingRulesTests {
         let kept = RatingRules.applying(to: Rating(), mode: .keep) { $0.keep = true }
         #expect(kept.keep)
         #expect(kept.stars == 0, "the stars field belongs to stars mode only")
-        // Displayed in stars mode, a keep is the 5 stars it means (task.md §6).
+        // Displayed in stars mode, a keep is the 5 stars it means (todo.md §6).
         #expect(RatingRules.displayStars(kept, mode: .stars) == 5)
     }
 
@@ -142,7 +142,7 @@ struct AppModelNavigationTests {
         #expect(model.currentPhotoIndex == 1)
     }
 
-    @Test("→ walks the batch and stops at the end by default (task.md §9.4)")
+    @Test("→ walks the batch and stops at the end by default (todo.md §9.4)")
     func arrowStopsAtBatchEnd() throws {
         let (model, _) = Self.makeModel()
         model.perform(.photoNext)
@@ -197,7 +197,7 @@ struct AppModelNavigationTests {
         #expect(model.currentPhotoIndex == 0)
     }
 
-    @Test("Entering a batch can resume the last photo viewed (task.md §11)")
+    @Test("Entering a batch can resume the last photo viewed (todo.md §11)")
     func enteringLastViewed() throws {
         let (model, _) = Self.makeModel()
         model.updateSettings { $0.general.enteringBatchBehavior = .firstPhoto }
@@ -244,7 +244,7 @@ struct AppModelNavigationTests {
         #expect(last.batch == model.currentBatch?.id)
     }
 
-    @Test("Changing batch flushes the debounced XMP queue (task.md §6.3)")
+    @Test("Changing batch flushes the debounced XMP queue (todo.md §6.3)")
     func flushOnBatchChange() throws {
         let (model, session) = Self.makeModel()
         let before = session.flushCount
@@ -254,7 +254,7 @@ struct AppModelNavigationTests {
         #expect(session.flushCount == before + 1)  // same batch: nothing to flush
     }
 
-    @Test("Every navigation re-reports the focus window to the pipeline (task.md §7.3)")
+    @Test("Every navigation re-reports the focus window to the pipeline (todo.md §7.3)")
     func focusOnEveryNavigation() throws {
         let images = MockImageProvider()
         let session = MockSession(photos: FixturePhotos.syntheticPhotos(count: 12, burstSize: 3))
@@ -334,7 +334,7 @@ struct AppModelNavigationTests {
         #expect(model.clippingOverlay)
     }
 
-    @Test("Click zooms to 100% at that spot, clicking again returns to fit (task.md §9.2)")
+    @Test("Click zooms to 100% at that spot, clicking again returns to fit (todo.md §9.2)")
     func clickToZoom() throws {
         let (model, _) = Self.makeModel()
         #expect(model.viewer.zoomed == false)
@@ -379,7 +379,7 @@ struct AppModelRatingTests {
         return (model, session)
     }
 
-    @Test("Stars mode: 3 stars is Good, 5 is Keep, 0 is Unrated (task.md §6.1)")
+    @Test("Stars mode: 3 stars is Good, 5 is Keep, 0 is Unrated (todo.md §6.1)")
     func starRatings() throws {
         let (model, _) = Self.makeModel()
         model.perform(.setStars(3))
@@ -451,7 +451,7 @@ struct AppModelRatingTests {
         #expect(model.currentPhotoIndex == 0)
     }
 
-    @Test("P is the pick flag in Stars mode and the keep toggle in Keep mode (task.md §6)")
+    @Test("P is the pick flag in Stars mode and the keep toggle in Keep mode (todo.md §6)")
     func pickAndKeep() throws {
         let (model, _) = Self.makeModel()
         model.perform(.togglePickFlag)
@@ -487,7 +487,7 @@ struct AppModelRatingTests {
         #expect(try currentFlag(model) == .none)
     }
 
-    @Test("Colour labels 6–9 work in both modes (task.md §6.3)")
+    @Test("Colour labels 6–9 work in both modes (todo.md §6.3)")
     func labels() throws {
         let (model, _) = Self.makeModel()
         model.perform(.setLabel(.red))
@@ -506,7 +506,7 @@ struct AppModelRatingTests {
         #expect(model.progress.ratedPhotos == 1)
     }
 
-    @Test("Rating only ever touches the current photo (task.md §6.3)")
+    @Test("Rating only ever touches the current photo (todo.md §6.3)")
     func onlyCurrentBatchIsRateable() throws {
         let (model, session) = Self.makeModel()
         model.perform(.setStars(5))
@@ -545,7 +545,7 @@ struct AppModelRatingTests {
         #expect(model.summary.unkeptCount == 11)
     }
 
-    @Test("Switching mode mid-session keeps the data and re-derives the tiers (task.md §6)")
+    @Test("Switching mode mid-session keeps the data and re-derives the tiers (todo.md §6)")
     func modeSwitch() throws {
         let (model, _) = Self.makeModel()
         // Auto-advance, so these land on three different photos.
@@ -619,7 +619,7 @@ struct AppModelUndoTests {
         #expect(model.currentPhoto?.rating.stars == 5)
     }
 
-    @Test("Undoing a change made in another batch goes there first (task.md §6.3)")
+    @Test("Undoing a change made in another batch goes there first (todo.md §6.3)")
     func undoNavigatesToTheOtherBatch() throws {
         let (model, _) = Self.makeModel()
         model.perform(.setStars(5))
@@ -679,7 +679,7 @@ struct BatchesChangedTests {
         return (model, session)
     }
 
-    @Test("Refined boundaries never move the batch the user is in (task.md §5.4)")
+    @Test("Refined boundaries never move the batch the user is in (todo.md §5.4)")
     func currentBatchIsFrozen() throws {
         let (model, session) = Self.makeModel()
         let stayingID = try #require(model.currentBatch?.id)
@@ -763,7 +763,7 @@ struct FinishFlowTests {
         return (model, session)
     }
 
-    @Test("The summary counts every tier and warns about unvisited batches (task.md §9.7)")
+    @Test("The summary counts every tier and warns about unvisited batches (todo.md §9.7)")
     func summary() throws {
         let (model, _) = Self.makeModel()
         model.updateSettings { $0.general.autoAdvance = true }
@@ -989,7 +989,7 @@ struct FixturePhotosTests {
         #expect(batches.count < photos.count)
         #expect(batches.flatMap(\.photoIds).count == photos.count)
         #expect(batches.allSatisfy { $0.provisional })
-        // Deterministic: the same input always gives the same batches (task.md §5.3).
+        // Deterministic: the same input always gives the same batches (todo.md §5.3).
         #expect(FixturePhotos.batches(for: photos) == batches)
     }
 

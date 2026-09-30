@@ -32,7 +32,7 @@ protocol PhotoViewerHost: AnyObject {
   func setViewerState(_ state: ViewerPresentation)
 
   /// The viewer's own frame changed, so the implementation can re-decode for the new backing size
-  /// (task.md §7.1) while keeping the old image visible.
+  /// (todo.md §7.1) while keeping the old image visible.
   func setViewportSize(_ size: CGSize)
 
   /// The zoom level currently presented, for the HUD. Read on demand, not pushed.
@@ -41,7 +41,7 @@ protocol PhotoViewerHost: AnyObject {
   /// Takes a zoom and spot from a peer in the same sync group. Must not broadcast again.
   func applySynced(_ state: ViewerSyncGroup.State)
 
-  /// Hosts that share a group zoom and pan together (Compare view, task.md §9.6).
+  /// Hosts that share a group zoom and pan together (Compare view, todo.md §9.6).
   var syncGroup: ViewerSyncGroup? { get set }
 }
 

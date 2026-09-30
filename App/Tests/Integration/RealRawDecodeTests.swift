@@ -5,7 +5,7 @@
 // will actually decode a CR3 on this machine, whether the decode is fast enough to prefetch a
 // batch, or whether the app shows something.
 //
-// Skipped when the folder is absent (task.md §12), so CI stays green.
+// Skipped when the folder is absent (todo.md §12), so CI stays green.
 //
 // What this asserts, and why it is worth a minute of wall clock:
 //   1. `CGImageSourceCreateThumbnailAtIndex` on a CR3 returns pixels, from the embedded preview,
@@ -137,7 +137,7 @@ final class RealRawDecodeTests: XCTestCase {
                 images.thumbnail(for: id, size: CGSize(width: 74, height: 74)),
                 "\(id) was not decoded")
         }
-        XCTAssertEqual(images.stats.focusMisses, 0, "task.md §7.1: this must stay 0")
+        XCTAssertEqual(images.stats.focusMisses, 0, "todo.md §7.1: this must stay 0")
         XCTAssertEqual(images.thumbnailProgress, 1.0)
         XCTAssertEqual(images.stats.decodeFailures, 0, "not one of 708 CR3s failed to decode")
         XCTAssertGreaterThan(images.stats.thumbnailDecodes, 0)

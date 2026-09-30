@@ -1,6 +1,6 @@
 //! Which folder a session belongs to, and which file in the sessions directory holds it.
 //!
-//! task.md §11: the session database is "keyed by volume UUID + folder path + a fingerprint of
+//! todo.md §11: the session database is "keyed by volume UUID + folder path + a fingerprint of
 //! file names/sizes, so a moved folder can be re-matched". This module produces those three
 //! pieces and the database file name derived from them.
 //!

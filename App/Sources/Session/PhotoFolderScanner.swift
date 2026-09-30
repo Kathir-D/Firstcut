@@ -203,7 +203,7 @@ public enum PhotoFolderScanner {
 
     private struct Listing {
         var photoURLs: [URL] = []
-        /// Base name (no extension) → the companions that travel with that RAW (task.md §8).
+        /// Base name (no extension) → the companions that travel with that RAW (todo.md §8).
         var companions: [String: [String]] = [:]
 
         init(of folder: URL) throws {

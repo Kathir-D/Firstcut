@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// Compare (C, task.md §9.6): 2-, 3- or 4-up of consecutive frames from the current batch, at the same
+// Compare (C, todo.md §9.6): 2-, 3- or 4-up of consecutive frames from the current batch, at the same
 // zoom and the same spot. Click a frame to jump every pane to 100% on that detail, and the others
 // follow, which is the whole point: is the shutter frame sharper than the one after it?
 //

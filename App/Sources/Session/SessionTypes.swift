@@ -41,7 +41,7 @@ public struct PhotoVM: Identifiable, Equatable, Sendable {
         self.isKeep = RatingRules.isKeep(rating, mode: mode, keepThreshold: keepThreshold)
     }
 
-    /// The companions that travel with the RAW on a move (task.md §8, §9.7).
+    /// The companions that travel with the RAW on a move (todo.md §8, §9.7).
     public var sidecars: [String] { meta.companions }
 
     public var captureDate: Date? {
@@ -125,7 +125,7 @@ public enum Phase: Hashable, Sendable {
     case finishing
 }
 
-/// The Finish sheet's state machine (task.md §9.7). Logic only — the sheet itself is ui's.
+/// The Finish sheet's state machine (todo.md §9.7). Logic only — the sheet itself is ui's.
 public enum FinishStage: Hashable, Sendable {
     case hidden
     case summary(FinishSummary)
@@ -353,7 +353,7 @@ public struct FileOpFailure: Hashable, Sendable {
     }
 }
 
-/// A file that couldn't be parsed, kept in the filmstrip with a placeholder (task.md §8).
+/// A file that couldn't be parsed, kept in the filmstrip with a placeholder (todo.md §8).
 public struct SkippedFile: Hashable, Sendable {
     public var path: String
     public var reason: String
@@ -381,7 +381,7 @@ public enum Tier: String, Hashable, Sendable, CaseIterable {
         }
     }
 
-    /// What Finish does with this tier by default (task.md §9.7).
+    /// What Finish does with this tier by default (todo.md §9.7).
     public var countsAsKept: Bool { self == .keep }
 }
 
@@ -443,7 +443,7 @@ public struct CullProgress: Hashable, Sendable {
         return Double(ratedPhotos) / Double(totalPhotos)
     }
 
-    // Display accessors for the HUD (task.md §9.6). The single type carries both the raw counts
+    // Display accessors for the HUD (todo.md §9.6). The single type carries both the raw counts
     // and the shaped values the views read, so a view never recomputes a count from the photos —
     // which is the mistake REV-53 exists to prevent.
     /// 0-based, for the HUD's own arithmetic. `batchNumber` is the 1-based display value.

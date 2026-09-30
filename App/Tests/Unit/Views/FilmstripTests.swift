@@ -19,7 +19,7 @@ struct RatingVisualsTests {
     #expect(RatingVisuals.showsFlag(Rating(flag: .reject)) == true)
   }
 
-  @Test("Keep rings are green for keeps and red for not-keeps (task.md §6.2)")
+  @Test("Keep rings are green for keeps and red for not-keeps (todo.md §6.2)")
   func keepRings() {
     #expect(RatingVisuals.keepRingColor(Rating(keep: true), mode: .keep) == NSColor.systemGreen)
     #expect(RatingVisuals.keepRingColor(Rating(), mode: .keep) == NSColor.systemRed)

@@ -1,7 +1,7 @@
 //! Metadata for every file that is not a CR3: JPEG, HEIF, PNG, TIFF, and the TIFF-shaped RAW
 //! formats (CR2, ARW, NEF, DNG, ORF, PEF, …), plus Fujifilm's RAF wrapper.
 //!
-//! task.md §8: only Canon files were available for testing, so this reader is written from the
+//! todo.md §8: only Canon files were available for testing, so this reader is written from the
 //! published container specs (TIFF 6.0, EXIF 2.32, JPEG/JFIF, ISO-BMFF, PNG) and checked with
 //! synthetic files. The rule that matters most is the one in `meta/mod.rs`: **a file macOS can read
 //! is never skipped.** Whatever this reader cannot understand comes back as a `Cr3` that is mostly
@@ -175,7 +175,7 @@ fn exif_ifd_at(tiff: &Tiff<'_>, offset: usize, meta: &mut Cr3) {
 }
 
 /// Canon (CR2) and Nikon MakerNotes. Sony and the rest are not decoded: their useful fields are
-/// encrypted or undocumented, and ordering falls back to time plus sub-seconds (task.md §5.1).
+/// encrypted or undocumented, and ordering falls back to time plus sub-seconds (todo.md §5.1).
 fn maker_note_at(tiff: &Tiff<'_>, at: usize, len: usize, meta: &mut Cr3) {
     let make = meta.make.as_deref().unwrap_or("").to_ascii_lowercase();
     if make.starts_with("canon") {

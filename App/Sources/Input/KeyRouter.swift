@@ -1,6 +1,6 @@
 // Owner: app-logic.
 //
-// The single key router (task.md §10): one `NSEvent` local monitor for the whole app, so no view
+// The single key router (todo.md §10): one `NSEvent` local monitor for the whole app, so no view
 // can swallow a shortcut. Keys, menus, toolbar buttons and gestures all end up in the same
 // `AppModel.perform(_:)`, which is why the UI is optional for every test.
 //

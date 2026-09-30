@@ -336,7 +336,7 @@ fn the_cr3_parser_agrees_with_exiftool() {
                 &expected_capture,
             );
 
-            // The AF grid, which task.md §9.2 draws an overlay from.
+            // The AF grid, which todo.md §9.2 draws an overlay from.
             let af = parsed
                 .af
                 .as_ref()
@@ -401,7 +401,7 @@ fn the_cr3_parser_agrees_with_exiftool() {
 
 #[test]
 fn the_shutter_count_increases_across_a_whole_game() {
-    // The batcher treats a shutter-count jump as frames deleted in camera (task.md §5.2), so a
+    // The batcher treats a shutter-count jump as frames deleted in camera (todo.md §5.2), so a
     // count that is present but not monotonic would invent boundaries out of nothing. Checked
     // across every photo of one game rather than a sample: this is the one field whose *shape*
     // matters, not just its value on a given file.
@@ -444,7 +444,7 @@ fn the_shutter_count_increases_across_a_whole_game() {
 
 #[test]
 fn a_whole_shoot_parses_and_orders_without_a_single_skip() {
-    // task.md §8: never skip a file macOS can read. A CR3 that failed to parse here would be a
+    // todo.md §8: never skip a file macOS can read. A CR3 that failed to parse here would be a
     // file the user can open in Preview and Firstcut cannot see.
     let Some(root) = photos_root() else {
         return;

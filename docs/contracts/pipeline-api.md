@@ -69,7 +69,7 @@ overlays. **ui** embeds it and styles the space around it; **app-logic** tells i
 - v0.1: initial draft.
 - v0.2 (2026-09-30): **REV-38 corrected.** `CALayer.contents` cannot take an `IOSurfaceRef`, so the
   viewer holds a `CGImage` (`CGImageViewerHost`) and display is a layer-contents swap. The IOSurface
-  path would need a `CAMetalLayer` and buys nothing for v0.1: the cost in task.md §7.1 is the decode,
+  path would need a `CAMetalLayer` and buys nothing for v0.1: the cost in todo.md §7.1 is the decode,
   which `ImageProvider` does ahead of time. `DisplayImage.image` replaces `DisplayImage.surface`. The
   host owns zoom (pinch, click to 100%, pan, zoom lock across photos, synced groups for Compare) and
   the AF and clipping overlays.

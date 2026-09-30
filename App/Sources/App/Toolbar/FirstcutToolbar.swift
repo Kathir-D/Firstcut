@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// Unified toolbar (task.md §9.1): ‹ › batch navigation in a glass capsule on the left, batch
+// Unified toolbar (todo.md §9.1): ‹ › batch navigation in a glass capsule on the left, batch
 // position + file name as the title, view-mode control, info toggle and Finish on the right.
 
 import SwiftUI

@@ -1,4 +1,4 @@
-//! XMP sidecars: reading them, merging into them, and writing them (task.md §11, §6).
+//! XMP sidecars: reading them, merging into them, and writing them (todo.md §11, §6).
 //!
 //! Firstcut never modifies a photo. Everything it knows about a photo's rating is written to
 //! `<basename>.xmp` next to the file, the way Lightroom does it, so the same ratings show up in
@@ -6,7 +6,7 @@
 //! the sidecar is the mirror.
 //!
 //! * [`XmpDocument`] reads and merges one sidecar without disturbing a byte it does not own.
-//! * [`XmpMapping`] decides what a rating looks like in XMP (task.md §6.2).
+//! * [`XmpMapping`] decides what a rating looks like in XMP (todo.md §6.2).
 //! * [`XmpWriter`] is the debounced background queue, so a keystroke never waits for a file write.
 //! * [`read_sidecar`], [`write_sidecar`] and [`write_values`] are the file-level entry points.
 //!

@@ -3,7 +3,7 @@
 -- This file is the whole state needed to resume a shoot: which files are in it, how they were
 -- batched, every rating, the undo/redo log, where the cursor was, which batches were seen, and
 -- every file operation the Finish step performed. XMP sidecars are the interoperability copy; this
--- database is the source of truth for the app (task.md §11).
+-- database is the source of truth for the app (todo.md §11).
 --
 -- Conventions, so the Rust side stays simple:
 --   * timestamps are Unix milliseconds in an INTEGER column;
@@ -73,7 +73,7 @@ CREATE INDEX batch_photos_photo ON batch_photos (photo_id);
 
 -- Current rating per photo, and what still has to reach the sidecar. `xmp_pending` is cleared
 -- only after the sidecar has been written (or deliberately skipped), so a crash can lose at most
--- the writes still in the debounce window (task.md §6.3, §11).
+-- the writes still in the debounce window (todo.md §6.3, §11).
 CREATE TABLE ratings (
     photo_id      INTEGER PRIMARY KEY REFERENCES photos (id) ON DELETE CASCADE,
     stars         INTEGER NOT NULL DEFAULT 0 CHECK (stars BETWEEN 0 AND 5),
@@ -110,7 +110,7 @@ CREATE INDEX history_undone_seq ON history (undone, seq);
 CREATE INDEX history_photo ON history (photo_id);
 
 -- Every file operation the Finish step performed, grouped by run so one "Undo Finish" can walk it
--- back in reverse (task.md §9.7). Permanent deletes are logged with kind = 'delete' and are not
+-- back in reverse (todo.md §9.7). Permanent deletes are logged with kind = 'delete' and are not
 -- undoable.
 CREATE TABLE file_ops (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +127,7 @@ CREATE TABLE file_ops (
 
 CREATE INDEX file_ops_finish ON file_ops (finish_id, seq);
 
--- Where the user was (task.md §11: resume restores batch, photo and view).
+-- Where the user was (todo.md §11: resume restores batch, photo and view).
 CREATE TABLE cursor (
     id             INTEGER PRIMARY KEY CHECK (id = 1),
     batch_id       INTEGER,

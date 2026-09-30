@@ -1,6 +1,6 @@
 // Owner: app-logic.
 //
-// The settings model behind Settings → General / Viewer / Metadata / Performance (task.md §9.8), and
+// The settings model behind Settings → General / Viewer / Metadata / Performance (todo.md §9.8), and
 // the `InfoField` values the info panel renders (§9.5).
 //
 // A plain `Codable` value rather than an observable object: it is mutated through
@@ -28,7 +28,7 @@ public enum ArrowBehavior: String, Codable, Equatable, Sendable, CaseIterable {
 
 public enum EnteringBatchBehavior: String, Codable, Equatable, Sendable, CaseIterable {
     case firstPhoto
-    /// Resume where you left off in that batch (task.md §11, resume).
+    /// Resume where you left off in that batch (todo.md §11, resume).
     case lastViewed
 
     public var title: String {
@@ -41,7 +41,7 @@ public enum EnteringBatchBehavior: String, Codable, Equatable, Sendable, CaseIte
 
 public struct GeneralSettings: Codable, Equatable, Sendable {
     public var ratingMode: RatingMode = .stars
-    /// Off by default (task.md §6.3); Caps Lock toggles it for a session.
+    /// Off by default (todo.md §6.3); Caps Lock toggles it for a session.
     public var autoAdvance: Bool = false
     public var arrowBehaviorAtBatchEnd: ArrowBehavior = .stop
     public var enteringBatchBehavior: EnteringBatchBehavior = .firstPhoto
@@ -50,7 +50,7 @@ public struct GeneralSettings: Codable, Equatable, Sendable {
     public var confirmBeforeFinish: Bool = true
     public var confirmPermanentDelete: Bool = true
     public var confirmDiscardRatings: Bool = true
-    /// 5 or 4 stars counts as a keep (task.md §6.1).
+    /// 5 or 4 stars counts as a keep (todo.md §6.1).
     public var keepThreshold: Int = RatingRules.defaultKeepThreshold
 
     public init() {}
@@ -62,7 +62,7 @@ public struct ViewerSettings: Codable, Equatable, Sendable {
     public var backgroundGray: Double = 0.12
     public var zoomLock: Bool = false
     public var afOverlay: Bool = false
-    /// 0…1 clip thresholds for the J overlay (task.md §9.2).
+    /// 0…1 clip thresholds for the J overlay (todo.md §9.2).
     public var clippingShadowThreshold: Double = 0.0
     public var clippingHighlightThreshold: Double = 1.0
     public var infoFields: Set<InfoField> = InfoField.all
@@ -75,7 +75,7 @@ public struct ViewerSettings: Codable, Equatable, Sendable {
 
 // MARK: - Metadata
 
-/// What a Keep is written as in XMP (task.md §6.2). Lightroom does not read pick flags, so a keep has
+/// What a Keep is written as in XMP (todo.md §6.2). Lightroom does not read pick flags, so a keep has
 /// to be a rating or a label to survive an import — that's why this isn't a flag.
 public enum KeepMapping: Equatable, Sendable {
     case rating(Int)  // 1...5
@@ -119,7 +119,7 @@ extension KeepMapping: Codable {
 }
 
 public enum XmpWriteMode: String, Codable, Equatable, Sendable, CaseIterable {
-    /// Keep unknown XMP content (task.md §11). The default, and the only non-destructive option.
+    /// Keep unknown XMP content (todo.md §11). The default, and the only non-destructive option.
     case merge
     case overwrite
 
@@ -135,7 +135,7 @@ public struct MetadataSettings: Codable, Equatable, Sendable {
     public var writeXmp: Bool = true
     public var keepMapping: KeepMapping = .stars5
     public var xmpWriteMode: XmpWriteMode = .merge
-    /// Writing into DNG is off by default: it modifies the original file (task.md §11).
+    /// Writing into DNG is off by default: it modifies the original file (todo.md §11).
     public var writeRatingsIntoDng: Bool = false
     public var writeSidecarsForJpegs: Bool = true
 
@@ -145,7 +145,7 @@ public struct MetadataSettings: Codable, Equatable, Sendable {
 // MARK: - Performance
 
 public struct PerformanceSettings: Codable, Equatable, Sendable {
-    /// 40% of physical RAM, ≈ 6.4 GB on a 16 GB M1 Pro (task.md §7.1).
+    /// 40% of physical RAM, ≈ 6.4 GB on a 16 GB M1 Pro (todo.md §7.1).
     public var memoryBudgetFraction: Double = 0.40
     public var lookAheadBatches: Int = 2
     public var thumbnailPixels: Int = 256

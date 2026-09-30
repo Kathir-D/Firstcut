@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 use crate::batch::PhotoId;
 use crate::batch::view::{Photo, effective_time_ms, time_is_fallback};
 
-/// What `order()` had to do that is worth telling the user about (task.md §5.1: files with no
+/// What `order()` had to do that is worth telling the user about (todo.md §5.1: files with no
 /// usable timestamp must be flagged in the log).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OrderReport {
@@ -55,7 +55,7 @@ pub fn ordered_indices<P: Photo>(photos: &[P]) -> Vec<usize> {
 fn compare<P: Photo>(photos: &[P], a: usize, b: usize) -> Ordering {
     let (pa, pb) = (&photos[a], &photos[b]);
     cmp_optional_time(pa, pb)
-        // Within the same millisecond the shutter count is the real sequence (task.md §5.1).
+        // Within the same millisecond the shutter count is the real sequence (todo.md §5.1).
         .then_with(|| cmp_optional_num(pa.shutter_count(), pb.shutter_count()))
         .then_with(|| cmp_optional_num(pa.file_number(), pb.file_number()))
         // Bodies in one folder interleave by time; the serial only orders photos that are

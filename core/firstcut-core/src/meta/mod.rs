@@ -3,7 +3,7 @@
 //! Turning a folder on disk into a `Vec<PhotoMeta>` (docs/contracts/photo-meta.md). Two rules shape
 //! everything here:
 //!
-//! * **Never skip a file macOS can read** (task.md §8). A file the parser chokes on comes back in
+//! * **Never skip a file macOS can read** (todo.md §8). A file the parser chokes on comes back in
 //!   `ScanResult::skipped` with the reason attached, never silently dropped, because a photo the
 //!   user can see in Preview and Firstcut cannot is a bug they cannot work around.
 //! * **Deterministic order** (REV-17). Results are sorted by `rel_path`, so a rescan produces the
@@ -206,7 +206,7 @@ pub const IMAGE_EXTENSIONS: &[&str] = &[
 ];
 
 /// The RAW formats this build can name. A RAW we cannot name is still a photo; it is reported with
-/// a reason rather than being hidden, which is what task.md §8 asks for.
+/// a reason rather than being hidden, which is what todo.md §8 asks for.
 fn raw_format_of(extension: &str) -> Option<RawFormat> {
     Some(match extension {
         "cr3" => RawFormat::Cr3,
@@ -584,7 +584,7 @@ fn meta_for(
     let parsed = match kind {
         FileKind::Raw(RawFormat::Cr3) => Cr3::parse(path).map_err(|err| err.to_string())?,
         // Every other format goes through the generic reader, which never fails on a file it does
-        // not understand: the photo appears, ordered by file time, with a warning (task.md §8).
+        // not understand: the photo appears, ordered by file time, with a warning (todo.md §8).
         other => exif::read(path, other, size)?,
     };
 
@@ -637,7 +637,7 @@ fn meta_for(
 
 /// `IMG_0451.CR3` → 451. The number in the name, not its rank: it survives a rollover.
 ///
-/// Only ever a tie-breaker of last resort (task.md §5.1).
+/// Only ever a tie-breaker of last resort (todo.md §5.1).
 fn file_number_of(rel: &str) -> Option<u32> {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn a_file_the_parser_cannot_read_is_reported_with_a_reason() {
-        // task.md §8: never skip a file macOS can read. A truncated CR3 comes back in `skipped`
+        // todo.md §8: never skip a file macOS can read. A truncated CR3 comes back in `skipped`
         // with the parser's own message, so the user can be told what happened.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("IMG_0001.CR3"), b"not a real raw file").unwrap();
@@ -1024,7 +1024,7 @@ mod tests {
 
     #[test]
     fn a_jpeg_only_folder_scans_like_a_raw_folder() {
-        // task.md §8: "Folders of only JPEG/HEIF must cull exactly like RAW folders."
+        // todo.md §8: "Folders of only JPEG/HEIF must cull exactly like RAW folders."
         use exif::fixtures::{heic, jpeg, png, tiff};
         let dir = tempfile::tempdir().unwrap();
         let at = |sec: u32| format!("2026:08:27 10:00:{sec:02}");
@@ -1084,7 +1084,7 @@ mod tests {
     #[test]
     fn a_format_the_reader_cannot_parse_still_appears_with_a_warning() {
         // A Sony ARW is a real photo. Losing it, even into `skipped`, would leave a photo the user
-        // can see in Finder missing from the cull, which is what task.md §8 forbids. It comes back
+        // can see in Finder missing from the cull, which is what todo.md §8 forbids. It comes back
         // ordered by file time, flagged, with the reason in `warnings`.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("DSC00001.ARW"), vec![0u8; 32]).unwrap();

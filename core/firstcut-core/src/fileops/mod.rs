@@ -1,4 +1,4 @@
-//! Finish Cull: deciding what happens to every file, and then doing it (task.md §9.7).
+//! Finish Cull: deciding what happens to every file, and then doing it (todo.md §9.7).
 //!
 //! Split in two halves on purpose:
 //!
@@ -10,7 +10,7 @@
 //!   database, and can walk them backwards to undo. It is written in wave 3, once `Session` exists;
 //!   the plan it consumes is already final, which is what keeps the undo log honest.
 //!
-//! The rules the plan has to honour, all from task.md §9.7:
+//! The rules the plan has to honour, all from todo.md §9.7:
 //!
 //! * A photo is a **group**: RAW + paired JPEG/HEIF + `.xmp` sidecar always travel together.
 //! * **Never overwrite.** A destination that already exists gets a numeric suffix, and every member
@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use crate::store::rating::{Rating, RatingMode, Tier};
 use crate::store::records::PhotoRow;
 
-/// What to do with the photos that were not kept (task.md §9.7).
+/// What to do with the photos that were not kept (todo.md §9.7).
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum UnkeptAction {
     /// Leave the files, but write `xmp:Rating="-1"` so Lightroom shows them as rejected.
@@ -48,7 +48,7 @@ pub enum KeptAction {
     None,
     CopyTo(String),
     MoveTo(String),
-    /// One subfolder per tier, named `5 Keep`, `3 Good`, `1 Maybe` (task.md §9.7).
+    /// One subfolder per tier, named `5 Keep`, `3 Good`, `1 Maybe` (todo.md §9.7).
     SplitByTier(String),
     /// One subfolder per star count, named `5`, `4`, `3`, …
     SplitByStars(String),
@@ -219,7 +219,7 @@ fn file_name(path: &str) -> String {
 /// Builds the dry run. See the module docs for the rules it follows.
 ///
 /// `unvisited_batches` is how many batches the user never looked at; a non-zero count becomes a
-/// warning, because finishing a shoot with unseen bursts is usually a mistake (task.md §9.7).
+/// warning, because finishing a shoot with unseen bursts is usually a mistake (todo.md §9.7).
 pub fn plan_finish(
     folder: &Path,
     photos: &[PhotoRow],
@@ -669,7 +669,7 @@ pub struct ExecutedOp {
     pub size_bytes: u64,
     /// `done` or `failed`, as stored in `file_ops.status`.
     pub status: &'static str,
-    /// Why it failed, when it did. Never swallowed: the report shows every one (task.md §9.7).
+    /// Why it failed, when it did. Never swallowed: the report shows every one (todo.md §9.7).
     pub error: Option<String>,
 }
 
@@ -695,7 +695,7 @@ impl ExecutedOp {
 /// The plan is already final, so this half makes no decisions about *what* to do -- only about
 /// whether it is still safe to do it. The one decision it does make is the important one: if the
 /// destination is now taken, the operation fails rather than overwriting somebody's file. A dry run
-/// can be minutes old by the time it is agreed to, and "never overwrite" (task.md §9.7) has to hold
+/// can be minutes old by the time it is agreed to, and "never overwrite" (todo.md §9.7) has to hold
 /// at the moment of the write, not the moment of the preview.
 ///
 /// Nothing here is undoable on its own; call [`undo_ops`] with what comes back.
@@ -715,7 +715,7 @@ pub fn execute_ops_with_list(ops: &[FileOp], kept_names: &[String]) -> Vec<Execu
 pub struct ExecutionSummary {
     pub done: u32,
     pub failed: Vec<(String, String)>,
-    /// False as soon as a permanent delete ran, whatever else happened (task.md §9.7).
+    /// False as soon as a permanent delete ran, whatever else happened (todo.md §9.7).
     pub undoable: bool,
 }
 
@@ -834,7 +834,7 @@ fn transfer(op: &FileOp, source: &Path, how: Move) -> ExecutedOp {
     }
 }
 
-/// Moves a file into the Trash so Finder can recover it (task.md §9.7: "Trash is recoverable via
+/// Moves a file into the Trash so Finder can recover it (todo.md §9.7: "Trash is recoverable via
 /// Finder").
 ///
 /// The plan carries no destination for a trash op: which Trash, and which free name in it, can only
@@ -1047,7 +1047,7 @@ fn mark_rejected(op: &FileOp) -> ExecutedOp {
     }
 }
 
-/// Writes the kept-files list (task.md §9.7: "a text/CSV list of kept file names"), one name per
+/// Writes the kept-files list (todo.md §9.7: "a text/CSV list of kept file names"), one name per
 /// line, to the op's destination. The plan's `from` is the list's file name, for the preview.
 fn write_list(op: &FileOp, kept_names: &[String]) -> ExecutedOp {
     let Some(target) = op.to.as_deref().map(PathBuf::from) else {
@@ -1993,7 +1993,7 @@ mod tests {
 
     #[test]
     fn a_photo_outside_the_keep_tier_is_not_in_the_kept_split() {
-        // Only 4 and 5 stars are a "keep" in stars mode (task.md §6.1), so a 3-star photo never
+        // Only 4 and 5 stars are a "keep" in stars mode (todo.md §6.1), so a 3-star photo never
         // reaches a kept action. Whether "split into 5 Keep / 3 Good / 1 Maybe" should also spread
         // the unkept photos is a flow question for app-logic: see the proposal in
         // docs/contracts/session-api.md.

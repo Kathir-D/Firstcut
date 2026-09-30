@@ -204,7 +204,7 @@ look in `FIRSTCUT_TEST_PHOTOS` (default `~/Documents/testing`) and skip themselv
 | Image pipeline | ImageIO, Core Image, Metal | Preview and RAW decoding, tiered cache, GPU display |
 | Core | Rust (via UniFFI) | Metadata parsing, ordering, batching, SQLite session, XMP sidecars, file operations |
 
-Details, performance targets, and design decisions are in [`task.md`](task.md).
+Details, performance targets, and design decisions are in [`todo.md`](todo.md).
 
 ## Known limitations
 
@@ -215,14 +215,14 @@ Firstcut v0.1 is deliberately small, and honest about what it hasn't proven yet.
   not been scored against a hand-checked answer key, so no accuracy percentage is claimed. Batches
   are automatic: there is no manual split or merge.
 - **Speed is not benchmarked on a range of machines.** The design keeps the photos you can reach
-  already decoded; the timings in [`task.md`](task.md) are targets, not measurements.
+  already decoded; the timings in [`todo.md`](todo.md) are targets, not measurements.
 - **macOS 26 (Tahoe) is the tested system.** macOS 15 gets the closest native styling and should
   work, but hasn't been run.
 - **Apple Silicon only**, and the app is ad-hoc signed rather than notarized (there is no paid Apple
   Developer account), so a browser download needs a one-time approval; Homebrew and `curl` don't.
 - **No "exact RAW" decode.** Photos are shown from the full-size JPEG the camera embeds in every RAW.
   That is the same image the camera showed you, at full resolution, not a fresh RAW render.
-- **English only, one folder per session, no editing** — by design (see [`task.md`](task.md)).
+- **English only, one folder per session, no editing** — by design for v0.1 (see [`todo.md`](todo.md); manual batch split/merge and preset-based batch edits are planned for later, §16).
 
 ## Roadmap
 

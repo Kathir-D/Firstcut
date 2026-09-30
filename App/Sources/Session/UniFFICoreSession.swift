@@ -15,7 +15,7 @@
 // `markVisited`, `submitVisualSigs`, `tierCounts`, `rescan`, `flush`, `close`, and four listener
 // callbacks.
 //
-// Also present: `planFinish`, `executeFinish` and `undoFinish` (Finish Cull, task.md §9.7).
+// Also present: `planFinish`, `executeFinish` and `undoFinish` (Finish Cull, todo.md §9.7).
 //
 // Still missing, and the app is explicit about it rather than quietly substituting something:
 //   * **`ratings_imported`** — the listener has no XMP-import callback. Opening a folder with
@@ -139,7 +139,7 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
         session.submitVisualSigs(sigs: sigs.map { $0.1.ffiEntry(photo: $0.0) })
     }
 
-    // MARK: Finish (task.md §9.7)
+    // MARK: Finish (todo.md §9.7)
 
     /// The dry run. The session plans with its own rating mode, so the preview cannot disagree with
     /// the filmstrip about what is kept (REV-78); `options.ratingMode` is not sent.

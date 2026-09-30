@@ -2,7 +2,7 @@
 //
 // Test harness for the integration and performance suites.
 //
-// Two rules from task.md §12 drive everything here:
+// Two rules from todo.md §12 drive everything here:
 //   1. The 42 GB of test photos in ~/Documents/testing are NEVER committed. Tests find them through
 //      FIRSTCUT_TEST_PHOTOS (default ~/Documents/testing) and SKIP when the folder is absent, so the
 //      suite is green on a machine that has no photos and on CI.
@@ -169,7 +169,7 @@ public enum Game: String, CaseIterable, Sendable {
     /// (`Gane2NC` is a typo in the folder on disk too, but not in every folder).
     public var photoFolderName: String { rawValue }
 
-    /// The ambiguous-zone high-speed tail senior-dev and task.md §5.4 single out.
+    /// The ambiguous-zone high-speed tail senior-dev and todo.md §5.4 single out.
     public static let ambiguousTailGame = Game.game1JENKS
     public static let ambiguousTailRange = "IMG_6117"..."IMG_6164"
 

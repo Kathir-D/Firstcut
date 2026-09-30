@@ -1,13 +1,13 @@
 // Owner: qa.
 //
-// The independent ground-truth audit (task.md §12: "batching review is done by looking at the
+// The independent ground-truth audit (todo.md §12: "batching review is done by looking at the
 // photos", REV-55). This test does not assert correctness — nothing can, without eyes on the
 // images. It *produces* what has to be looked at, deterministically, and asserts only the things
 // that must be true for a look to mean anything:
 //
 //   * every gap in the ambiguous zone is in the mandatory set, with none missing;
 //   * every EXIF orientation change and every ShutterCount jump is in the mandatory set;
-//   * the fast tail of Game1JENKS (IMG_6117–6164, task.md §3) is fully covered;
+//   * the fast tail of Game1JENKS (IMG_6117–6164, todo.md §3) is fully covered;
 //   * coverage is ≥ 20% of boundaries per game, as senior-dev audits;
 //   * the plan is reproducible: same fixtures → identical plan.
 //
@@ -67,7 +67,7 @@ final class GroundTruthAuditTests: XCTestCase {
         }
     }
 
-    /// task.md §3 and §5.4 single out Game1JENKS `IMG_6117`–`IMG_6164`: 48 frames at ~90 ms broken
+    /// todo.md §3 and §5.4 single out Game1JENKS `IMG_6117`–`IMG_6164`: 48 frames at ~90 ms broken
     /// by four 0.23–0.77 s pauses, where the shutter was released and pressed again during the same
     /// play. 100% of that range must be reviewed (senior-dev audits this specifically).
     func testFastTailIsFullyScheduledForReview() throws {
@@ -80,10 +80,10 @@ final class GroundTruthAuditTests: XCTestCase {
         XCTAssertGreaterThan(tailGaps.count, 0, "no gap inside \(lower)…\(upper) was flagged")
 
         // The whole range, not just the flagged gaps: assert the numbers add up to the 48 frames
-        // task.md §3 claims, so a fixture or sampler change cannot quietly shrink the range.
+        // todo.md §3 claims, so a fixture or sampler change cannot quietly shrink the range.
         let records = try Fixtures.exifToolRecords(for: .ambiguousTailGame)
         let inTail = records.filter { $0.fileNumberTail >= lower && $0.fileNumberTail <= upper }
-        XCTAssertEqual(inTail.count, 48, "task.md §3 says IMG_6117–6164 is 48 frames")
+        XCTAssertEqual(inTail.count, 48, "todo.md §3 says IMG_6117–6164 is 48 frames")
         XCTAssertFalse(tailGaps.isEmpty)
     }
 

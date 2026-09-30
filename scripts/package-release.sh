@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Owner: infra. Turns dist/Firstcut.app into the release artifacts (task.md §13):
+# Owner: infra. Turns dist/Firstcut.app into the release artifacts (todo.md §13):
 #
 #   dist/Firstcut-<version>.zip   the app, ready to unzip into /Applications
 #   dist/SHA256SUMS.txt           its SHA-256, so the Homebrew cask and users can verify it

@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// Right-side glass inspector (task.md §9.5). Field selection is a settings choice owned by
+// Right-side glass inspector (todo.md §9.5). Field selection is a settings choice owned by
 // app-logic; every field the panel shows comes straight off `PhotoMeta`.
 
 import SwiftUI
@@ -63,7 +63,7 @@ struct InfoPanel: View {
       "Batch \(state.currentBatchIndex + 1) of \(state.batches.count) · photo \(state.currentPhotoIndex + 1) of \(state.photosInCurrentBatch.count)"
     let camera = [meta.cameraMake, meta.cameraModel].compactMap { $0 }.joined(separator: " ")
     let folder = (meta.relPath as NSString).deletingLastPathComponent
-    // Each row belongs to one `InfoField`, so Settings → Viewer can switch it off (task.md §9.5).
+    // Each row belongs to one `InfoField`, so Settings → Viewer can switch it off (todo.md §9.5).
     let all: [(InfoField, String, String)] = [
       (.fileName, "File", photo.fileName),
       (.captureTime, "Captured", PhotoFormatter.captureTime(meta.captureTime)),

@@ -1,6 +1,6 @@
 // Owner: qa.
 //
-// Contact sheets, so a boundary can be judged by looking at the photos (task.md §12) instead of by
+// Contact sheets, so a boundary can be judged by looking at the photos (todo.md §12) instead of by
 // trusting a timestamp. Built on ImageIO, which reads the full-resolution JPEG preview embedded in
 // each CR3 — the same path the app's own pipeline uses, and 100× cheaper than a RAW decode.
 //
@@ -31,7 +31,7 @@ public struct CandidateBoundary: Sendable {
     public let gapSeconds: Double
     /// Why this boundary was sampled: "gap" (Δt in the ambiguous band), "orientation" (EXIF
     /// rotation change), "shutter" (ShutterCount jump > 1, i.e. frames deleted in camera), "tail"
-    /// (inside the fast/ambiguous tail called out in task.md §3 and §5.4).
+    /// (inside the fast/ambiguous tail called out in todo.md §3 and §5.4).
     public let reason: String
 
     public var title: String {

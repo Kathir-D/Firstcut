@@ -1,6 +1,6 @@
 // Owner: pipeline.
 //
-// Phase two of batching (task.md §5.4): the shoot is first split from metadata alone, instantly, and
+// Phase two of batching (todo.md §5.4): the shoot is first split from metadata alone, instantly, and
 // then the boundaries that timing cannot decide are refined by how the frames *look*. This computes
 // that "look" for every photo in the background and hands it to the core in chunks, so unvisited
 // batches sharpen while the user is already culling.

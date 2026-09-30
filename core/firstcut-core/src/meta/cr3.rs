@@ -20,7 +20,7 @@
 //! here is a seek plus a bounded slice, so scanning 1,500 files reads 1,500 headers, not 20 GB.
 //!
 //! Nothing in this module is allowed to panic on malformed input: a file that does not parse comes
-//! back as [`Cr3Error`] and the scanner reports it (task.md §8).
+//! back as [`Cr3Error`] and the scanner reports it (todo.md §8).
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};

@@ -11,7 +11,7 @@ use crate::batch::{Batch, PhotoId};
 
 /// The visually verified truth, in `tests/fixtures/ground-truth/<game>.json`.
 ///
-/// Stored as file names, never as images (task.md §5.4). The names are looked up in the ordered
+/// Stored as file names, never as images (todo.md §5.4). The names are looked up in the ordered
 /// sequence, so a ground-truth entry that is missing from the folder is reported rather than
 /// silently shifting every boundary.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -58,7 +58,7 @@ pub struct BoundaryMetrics {
 }
 
 impl BoundaryMetrics {
-    /// Boundary F1 as a percentage, the number task.md §5.4 sets the 98% target on.
+    /// Boundary F1 as a percentage, the number todo.md §5.4 sets the 98% target on.
     #[must_use]
     pub fn f1_percent(&self) -> f32 {
         self.f1 * 100.0

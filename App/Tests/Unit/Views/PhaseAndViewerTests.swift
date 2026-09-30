@@ -78,7 +78,7 @@ struct StarRowTests {
     #expect(RatingVisuals.showsStars(Rating(stars: 1)) == true)
   }
 
-  @Test("Out-of-range star counts are clamped to the 0–5 scale of task.md §6.1")
+  @Test("Out-of-range star counts are clamped to the 0–5 scale of todo.md §6.1")
   func clamped() {
     #expect(RatingVisuals.starCount(for: Rating(stars: 9)) == 5)
     #expect(RatingVisuals.starCount(for: Rating(stars: 200)) == 5)

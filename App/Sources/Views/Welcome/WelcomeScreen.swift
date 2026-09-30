@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// Welcome state (task.md §9.6). It is a whole-window screen, not an overlay: `RootView` switches on
+// Welcome state (todo.md §9.6). It is a whole-window screen, not an overlay: `RootView` switches on
 // `phase` so it can never share the window with the culling chrome (REV-75).
 //
 // Recent folders show how far through each shoot the user got, and reopening one resumes it: the

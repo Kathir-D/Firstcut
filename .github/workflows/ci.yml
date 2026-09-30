@@ -36,7 +36,7 @@ jobs:
   rust:
     name: Rust (fmt, clippy, test)
     # macos-15 is the arm64 (M1) image for public repos; macos-15-intel would be the wrong one,
-    # Firstcut is Apple Silicon only (task.md §2).
+    # Firstcut is Apple Silicon only (todo.md §2).
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4

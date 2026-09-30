@@ -40,8 +40,8 @@ Firstcut/
 ├── scripts/                  # infra
 ├── tests/fixtures/           # core-batch (ground truth, metadata dumps); core-meta (header byte fixtures in fixtures/headers/)
 ├── Casks/  .github/  project.yml  VERSION  README.md  LICENSE   # infra
-├── task.md                   # everyone may tick their own boxes
-└── docs/                     # see task.md §0.8
+├── todo.md                   # everyone may tick their own boxes
+└── docs/                     # see todo.md §0.8
 ```
 
 ## Names

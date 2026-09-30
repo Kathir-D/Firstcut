@@ -1,8 +1,8 @@
 // Owner: ui.
 //
-// Grid (G, task.md §9.6): the whole current batch as a grid of thumbnails, with ratings and keep
+// Grid (G, todo.md §9.6): the whole current batch as a grid of thumbnails, with ratings and keep
 // rings visible. Clicking a cell selects it; double-clicking (or Return / E, the Loupe key) opens it
-// in the loupe. Only the current batch is shown: rating is scoped to it (task.md §2), and a grid of
+// in the loupe. Only the current batch is shown: rating is scoped to it (todo.md §2), and a grid of
 // the whole shoot would be 1,500 cells of decoding nobody asked for.
 
 import SwiftUI

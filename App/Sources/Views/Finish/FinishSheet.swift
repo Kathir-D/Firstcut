@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// The Finish Cull sheet (task.md §9.7). It is a thin view over the model's state machine: it draws
+// The Finish Cull sheet (todo.md §9.7). It is a thin view over the model's state machine: it draws
 // whatever `state.finishStage` is and turns every button into a `FinishAction`. It never advances
 // the stage itself, so what is on screen is always what the model believes.
 //
@@ -15,7 +15,7 @@ import SwiftUI
 struct FinishSheet: View {
   let state: any CullViewState
 
-  /// Typed confirmation for the one action that cannot be undone (task.md §9.7).
+  /// Typed confirmation for the one action that cannot be undone (todo.md §9.7).
   @State private var deleteConfirmation = ""
 
   private static let confirmationWord = "DELETE"

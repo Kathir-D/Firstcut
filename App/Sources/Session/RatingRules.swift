@@ -1,6 +1,6 @@
 // Owner: app-logic.
 //
-// Rating rules for both modes (task.md §6). Pure functions, no state, no UI: this is the whole
+// Rating rules for both modes (todo.md §6). Pure functions, no state, no UI: this is the whole
 // "what does a rating mean" answer in one file, which is why ui (visuals) and core-store (storage)
 // can both work from it without asking.
 //
@@ -104,7 +104,7 @@ public enum RatingRules {
     /// The star count to **display** for a rating, in the given mode.
     ///
     /// A keep stored with `stars == 0` would read as Unrated in stars mode, so it shows as the 5
-    /// stars it means (task.md §6: "a keep ↔ 5 stars"). This is the display half of that rule;
+    /// stars it means (todo.md §6: "a keep ↔ 5 stars"). This is the display half of that rule;
     /// `synchronized` is deliberately the *storage* half, and it does not write it back.
     public static func displayStars(
         _ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold

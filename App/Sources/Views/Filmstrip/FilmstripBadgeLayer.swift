@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// Rating visuals for the filmstrip (task.md §6.1, §6.2): stars + flag badge + color label in stars
+// Rating visuals for the filmstrip (todo.md §6.1, §6.2): stars + flag badge + color label in stars
 // mode, green/red keep rings in keep mode. One CALayer per frame keeps the whole strip on the GPU.
 
 import AppKit
@@ -22,7 +22,7 @@ enum RatingVisuals {
   /// REV-76: the number of stars drawn for a rating. Exactly `stars`, never padded to five, so a
   /// 3-star photo shows three stars and reads as 3 rather than as 3-out-of-4.
   ///
-  /// In stars mode a keep shows the 5 stars it means (task.md §6) — the display half of the mapping,
+  /// In stars mode a keep shows the 5 stars it means (todo.md §6) — the display half of the mapping,
   /// via `RatingRules.displayStars`. Reading `rating.stars` directly showed a keep as Unrated.
   static func starCount(for rating: Rating, mode: RatingMode = .stars) -> Int {
     min(max(Int(RatingRules.displayStars(rating, mode: mode)), 0), 5)

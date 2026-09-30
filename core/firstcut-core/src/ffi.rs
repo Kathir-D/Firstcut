@@ -8,7 +8,7 @@
 //! - Exports are grouped by the agent that owns the implementation, with a comment naming them.
 //! - Errors Swift must tell apart are a `#[derive(uniffi::Error)]` enum with one variant per
 //!   failure, never a bare `String`, so "no such folder" and "the card is locked" are
-//!   distinguishable on the Swift side (task.md §8).
+//!   distinguishable on the Swift side (todo.md §8).
 //! - Types crossing the boundary are declared here as `#[derive(uniffi::Record)]` mirrors of the
 //!   Rust types, named so the generated Swift matches `App/Sources/Shared/CoreTypes.swift`.
 //! - This file lives *inside* the crate, so everything it wraps is `crate::`, never
@@ -346,7 +346,7 @@ pub struct FfiScanResult {
     /// In `rel_path` order. Ordering into batches is core-batch's job, not the scanner's.
     pub photos: Vec<FfiPhotoMeta>,
     /// Files found and not understood, each with the reason. Never empty because a parse failed
-    /// quietly (task.md §8).
+    /// quietly (todo.md §8).
     pub skipped: Vec<FfiSkipped>,
 }
 
@@ -565,7 +565,7 @@ impl From<FfiCursor> for crate::session::Cursor {
     }
 }
 
-/// One rating change, with everything undo needs to put it back (task.md §6.3).
+/// One rating change, with everything undo needs to put it back (todo.md §6.3).
 #[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FfiChange {
     /// Monotonic across the session, so the app can order changes it has already seen.
@@ -698,7 +698,7 @@ pub fn compute_visual_sig(rgba: Vec<u8>, width: u32, height: u32) -> Option<FfiV
     })
 }
 
-/// Every failure Swift has to tell apart. Never a bare `String`: task.md §8 says a failure is
+/// Every failure Swift has to tell apart. Never a bare `String`: todo.md §8 says a failure is
 /// reported, never a panic, and an app that cannot tell "no such folder" from "the card is locked"
 /// cannot show the user anything useful.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
@@ -716,7 +716,7 @@ pub enum FfiError {
 /// actor before touching UI state.
 #[uniffi::export(foreign)]
 pub trait FfiSessionListener: Send + Sync {
-    /// Only unvisited batches can differ: a batch the user has been in is frozen (task.md §5.4).
+    /// Only unvisited batches can differ: a batch the user has been in is frozen (todo.md §5.4).
     fn on_batches_changed(&self, batches: Vec<FfiBatch>);
     /// FSEvents: files were added to or removed from the folder.
     fn on_files_changed(&self);
@@ -853,7 +853,7 @@ impl Session {
         self.inner.rating_mode().into()
     }
 
-    /// Switches rating mode. Existing data is mapped, never rewritten or dropped (task.md §6).
+    /// Switches rating mode. Existing data is mapped, never rewritten or dropped (todo.md §6).
     pub fn set_rating_mode(&self, mode: FfiRatingMode) -> Result<(), FfiError> {
         self.inner
             .set_rating_mode(mode.into())
@@ -899,7 +899,7 @@ impl Session {
             })
     }
 
-    /// Marks a batch as seen, which freezes it (task.md §5.4).
+    /// Marks a batch as seen, which freezes it (todo.md §5.4).
     pub fn mark_visited(&self, batch: u64) -> Result<(), FfiError> {
         self.inner
             .mark_visited(crate::batch::BatchId(batch))
@@ -914,7 +914,7 @@ impl Session {
             sigs.into_iter()
                 .map(|entry| {
                     // Checked, not trusted: a short slice from a malformed caller would panic
-                    // inside the batcher, and task.md §8 says no panic reaches Swift.
+                    // inside the batcher, and todo.md §8 says no panic reaches Swift.
                     let mut hist = [0u8; 48];
                     let len = entry.hist.len().min(48);
                     hist[..len].copy_from_slice(&entry.hist[..len]);
@@ -941,7 +941,7 @@ impl Session {
             })
     }
 
-    /// Tier counts for the Finish summary, in the given mode (task.md §6.1).
+    /// Tier counts for the Finish summary, in the given mode (todo.md §6.1).
     pub fn tier_counts(&self, mode: FfiRatingMode) -> std::collections::HashMap<FfiTier, u32> {
         crate::session::tier_counts_at(&self.inner.snapshot(), mode.into(), self.inner.keep_stars())
             .into_iter()
@@ -964,7 +964,7 @@ impl Session {
     }
 }
 
-// ─────────────────────────────────────────────────────────── Finish Cull (task.md §9.7)
+// ─────────────────────────────────────────────────────────── Finish Cull (todo.md §9.7)
 
 /// What to do with the photos that were not kept. Mirrors `fileops::UnkeptAction`.
 #[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
@@ -1416,7 +1416,7 @@ mod tests {
 
     #[test]
     fn a_missing_folder_never_panics_across_the_boundary() {
-        // task.md §8: an error, never a crash on the Swift side.
+        // todo.md §8: an error, never a crash on the Swift side.
         let sessions = tempfile::tempdir().expect("a temp dir for sessions");
         let err = Session::open_in(
             "/definitely/not/a/folder".to_string(),

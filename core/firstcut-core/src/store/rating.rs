@@ -1,17 +1,17 @@
-//! Ratings, flags, color labels, tiers and the two rating modes (task.md §6).
+//! Ratings, flags, color labels, tiers and the two rating modes (todo.md §6).
 //!
 //! These are the values Firstcut persists in the session DB and writes to XMP sidecars, so the
 //! types live here (not in `session.rs`): both [`crate::store`] and [`crate::xmp`] need them and
 //! neither of them knows about Swift.
 //!
-//! Two modes exist (task.md §2, §6): **Stars** (0..=5 plus flag and color label) and
+//! Two modes exist (todo.md §2, §6): **Stars** (0..=5 plus flag and color label) and
 //! **Keep / Not keep** (one boolean). Both are always stored, even when a mode is inactive, because
 //! switching mode mid-session must not lose data (§6).
 
 use std::fmt;
 use std::str::FromStr;
 
-/// Pick / reject flag. Independent of stars (task.md §6.1).
+/// Pick / reject flag. Independent of stars (todo.md §6.1).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Flag {
     #[default]
@@ -49,7 +49,7 @@ impl fmt::Display for Flag {
     }
 }
 
-/// The five color labels Firstcut writes (task.md §6.3: labels 1–4 red, yellow, green, blue).
+/// The five color labels Firstcut writes (todo.md §6.3: labels 1–4 red, yellow, green, blue).
 /// Purple is Lightroom's fifth label and is supported for import parity.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ColorLabel {
@@ -116,7 +116,7 @@ impl FromStr for ColorLabel {
     }
 }
 
-/// Which rating mode the app is in (Settings → General → Rating mode, task.md §6).
+/// Which rating mode the app is in (Settings → General → Rating mode, todo.md §6).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum RatingMode {
     #[default]
@@ -176,21 +176,21 @@ pub struct Rating {
 
 /// The star count at which a photo counts as a keep in **both** modes.
 ///
-/// 4 and 5 stars are the "Keep" tier in task.md §6.1, and the Finish step only keeps the Keep
+/// 4 and 5 stars are the "Keep" tier in todo.md §6.1, and the Finish step only keeps the Keep
 /// tier. Using the same threshold for the keep-mode display is what stops the filmstrip from
 /// showing a red "not keep" ring on a photo the Finish step is about to move into the kept folder.
 pub const KEEP_STARS: u8 = 4;
 
 /// The rating **shown** for a photo in a given mode.
 ///
-/// This is the whole mode-mapping rule (task.md §6: "Switching mode mid-session is allowed; existing
+/// This is the whole mode-mapping rule (todo.md §6: "Switching mode mid-session is allowed; existing
 /// data is preserved and mapped"), in one pure function, and it is the only place the rule exists.
 /// app-logic and ui call it; nobody re-derives the answer from `stars` or `keep` on their own, which
 /// is how two implementations end up disagreeing about whether a photo is a keep.
 ///
 /// | state in the source mode | shown in **Stars** | shown in **Keep / Not keep** |
 /// | --- | --- | --- |
-/// | keep, no stars | **5 stars** (task.md §6: "a keep ↔ 5 stars") | Keep |
+/// | keep, no stars | **5 stars** (todo.md §6: "a keep ↔ 5 stars") | Keep |
 /// | stars 4–5, `keep` unset | those stars | **Keep** |
 /// | stars 1–3, `keep` unset | those stars | Not keep (they are Good/Maybe, not kept at Finish) |
 /// | no stars, not kept | Unrated | Not keep |
@@ -299,7 +299,7 @@ impl Rating {
         self.flag == Flag::Reject
     }
 
-    /// The tier this rating falls into, per mode (task.md §6.1 / §6.2). Drives the Finish summary,
+    /// The tier this rating falls into, per mode (todo.md §6.1 / §6.2). Drives the Finish summary,
     /// the "split by tier" folders, and the keep-or-trash decision.
     ///
     /// **This is the mapped answer, the same one the filmstrip draws** (REV-78). It reads the
@@ -339,7 +339,7 @@ impl Rating {
         }
     }
 
-    /// True for the tiers the Finish step treats as "kept" (task.md §9.7).
+    /// True for the tiers the Finish step treats as "kept" (todo.md §9.7).
     pub fn is_kept(&self, mode: RatingMode) -> bool {
         self.is_kept_at(mode, KEEP_STARS)
     }
@@ -350,7 +350,7 @@ impl Rating {
     }
 }
 
-/// Rating buckets shown in the Finish summary and used for split folders (task.md §6.1, §9.7).
+/// Rating buckets shown in the Finish summary and used for split folders (todo.md §6.1, §9.7).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Tier {
     Keep,
@@ -379,7 +379,7 @@ impl Tier {
         }
     }
 
-    /// Folder name for "split into subfolders by tier" (task.md §9.7: `5 Keep`, `3 Good`,
+    /// Folder name for "split into subfolders by tier" (todo.md §9.7: `5 Keep`, `3 Good`,
     /// `1 Maybe`). Stars mode uses the star count so the name is meaningful in Finder; keep mode
     /// has no stars, so it uses 1/0.
     pub fn split_dir(self, mode: RatingMode) -> String {
@@ -449,7 +449,7 @@ mod tests {
         let mixed = Rating::new(4, Flag::None, None, true);
         assert_eq!(mixed.tier(mode), Tier::Keep);
         assert_eq!(mixed.tier(RatingMode::Stars), Tier::Keep);
-        // A keep made in keep mode is a keep in stars mode too: task.md §6 maps it to 5 stars. The
+        // A keep made in keep mode is a keep in stars mode too: todo.md §6 maps it to 5 stars. The
         // old assertion here said Unrated, which is REV-78: the user's keeps vanished on a mode
         // switch and Finish would have trashed them.
         assert_eq!(Rating::keep().tier(RatingMode::Stars), Tier::Keep);
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn a_keep_shows_as_five_stars_in_stars_mode() {
-        // task.md §6: "a keep ↔ 5 stars by default". Without this the user's keeps look Unrated.
+        // todo.md §6: "a keep ↔ 5 stars by default". Without this the user's keeps look Unrated.
         let keep = Rating::keep();
         assert_eq!(
             keep.stars, 0,

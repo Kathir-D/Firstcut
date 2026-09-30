@@ -1,15 +1,15 @@
 // Owner: app-logic.
 //
 // The keymap: which chord runs which command, in which rating mode, with the user's overrides on
-// top of `App/Resources/DefaultKeymap.json` (task.md §10).
+// top of `App/Resources/DefaultKeymap.json` (todo.md §10).
 //
 // Two things the plain "chord → command" table doesn't cover, both of which the contract needs:
 //
 // 1. **Mode-specific bindings.** `flag.pick` (P) and `keep.toggle` (P) are the same chord doing
-//    different things in Stars and Keep mode (task.md §6.1, §6.2). A binding can therefore declare
+//    different things in Stars and Keep mode (todo.md §6.1, §6.2). A binding can therefore declare
 //    the modes it applies to; `nil` means all of them. A mode-specific binding wins over a
 //    mode-agnostic one on the same chord.
-// 2. **Alternate chords.** Batch navigation has both ⌘←/⌘→ and `[`/`]` (task.md §10), so several
+// 2. **Alternate chords.** Batch navigation has both ⌘←/⌘→ and `[`/`]` (todo.md §10), so several
 //    bindings may point at the same command. The first one is what menus display.
 
 import Foundation

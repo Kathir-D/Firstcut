@@ -1,6 +1,6 @@
 // Owner: qa.
 //
-// The independent half of the ground-truth review. task.md §12 says the batching review is "done by
+// The independent half of the ground-truth review. todo.md §12 says the batching review is "done by
 // looking at the photos", and senior-dev's REV-55 says ground truth that the same agent produces
 // and scores cannot certify itself. This file is qa's half of that separation:
 //
@@ -26,7 +26,7 @@ public enum GapClass: String, Sendable, CaseIterable {
     case intraBurst
     /// 0.5 s … 2 s. The ambiguous zone: the shutter may have been released and pressed again during
     /// the same play. This is where visual refinement has to decide, and where every single
-    /// boundary must be checked by eye (task.md §12).
+    /// boundary must be checked by eye (todo.md §12).
     case ambiguous
     /// > 2 s. The shutter was released for a while; a boundary without looking.
     case hard
@@ -90,7 +90,7 @@ public struct GameAuditPlan: Sendable {
 }
 
 public enum BoundarySampler {
-    /// task.md §5.3's ambiguous band. A gap below this is inside a burst at any frame rate present in
+    /// todo.md §5.3's ambiguous band. A gap below this is inside a burst at any frame rate present in
     /// the test set; a gap above is a released shutter. Everything between needs eyes.
     public static let ambiguousRange: ClosedRange<Double> = 0.5...2.0
 
@@ -206,7 +206,7 @@ public enum BoundarySampler {
 
 extension ExifToolRecord {
     /// The numeric part of `IMG_6164.CR3` → 6164. Used to detect the fast tail of Game1JENKS
-    /// (task.md §3 and §5.4 name `IMG_6117`–`IMG_6164` explicitly).
+    /// (todo.md §3 and §5.4 name `IMG_6117`–`IMG_6164` explicitly).
     public var fileNumberTail: Int {
         let digits = fileName.dropFirst("IMG_".count).prefix(while: \.isNumber)
         return Int(digits) ?? 0

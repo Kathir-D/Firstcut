@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// The Settings window (task.md §9.8), a native SwiftUI `Settings` scene: ⌘, opens it, and it has one
+// The Settings window (todo.md §9.8), a native SwiftUI `Settings` scene: ⌘, opens it, and it has one
 // tab per group. Every control edits `AppModel.settings` through `updateSettings`, the one place
 // that persists a change and reacts to it, so nothing here can leave the model and the file
 // disagreeing.
@@ -8,7 +8,7 @@
 // Only settings the app actually honors are shown. A switch that does nothing is worse than no
 // switch, so the ones the code does not read yet (the T4 "Exact RAW" decode, the debug HUD, DNG
 // writes) are not offered; DNG writes are excluded on principle, because Firstcut never modifies an
-// original (task.md §11).
+// original (todo.md §11).
 
 import AppKit
 import SwiftUI
@@ -368,7 +368,7 @@ private struct KeyboardSettingsTab: View {
   private func commit(_ chord: KeyChord, to entry: CommandCatalogEntry) {
     defer { stopRecording() }
     // A chord already used by a different command is refused with the name of the command that
-    // holds it, rather than silently stealing the shortcut (task.md §9.8: conflict detection).
+    // holds it, rather than silently stealing the shortcut (todo.md §9.8: conflict detection).
     var conflict: String?
     model.updateKeymap { keymap in
       if keymap.bind(chord, to: entry.command, resolveConflict: false) != nil {

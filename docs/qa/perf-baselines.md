@@ -1,7 +1,7 @@
 # Performance baselines
 
 - **Owner:** qa
-- **Targets:** task.md §7.3
+- **Targets:** todo.md §7.3
 - **Format version:** 1 (this document). Bump when the metric set changes, and keep old rows.
 
 Every number in this file is a **measurement**, taken from a test that still exists. No estimates,
@@ -96,7 +96,7 @@ a temp folder (no copying 42 GB, no modifying the originals). qa builds that fix
 
 Measured from `perform(_:)` to the next frame presented, not to the call returning.
 
-### Zero focus misses (task.md §7.1, the app's core promise)
+### Zero focus misses (todo.md §7.1, the app's core promise)
 
 | Scenario | Focus misses | Requirement |
 | --- | --- | --- |
@@ -138,7 +138,7 @@ after a game" — the tier counters alone would call that clean.
 
 ## Notes
 
-- §3 in task.md is being corrected (REV-2 / REV-19): drive mode is **not** constant and Game1JENKS
+- §3 in todo.md is being corrected (REV-2 / REV-19): drive mode is **not** constant and Game1JENKS
   has 5 gaps of 40–60 ms, not 13. Any threshold that was tuned against the old numbers has to be
   re-measured here, not re-argued.
 - §3's frame intervals (90 ms for Game1JENKS and Gane2NC, 170 ms for Game3KC and Game4VRE) are the

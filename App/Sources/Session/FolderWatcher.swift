@@ -1,6 +1,6 @@
 // Owner: app-logic.
 //
-// Watches the session folder with FSEvents (task.md §11): new files appear, deleted ones drop out.
+// Watches the session folder with FSEvents (todo.md §11): new files appear, deleted ones drop out.
 // FSEvents rather than a directory file descriptor because a card dump has subfolders
 // (`DCIM/100CANON`) and only FSEvents reports what happens inside them.
 //

@@ -38,7 +38,7 @@ final class AppEnvironment {
   /// The real decoder. Shared with the model so the viewer and the filmstrip hit one cache.
   let images: ImageProvider
 
-  /// The one keyboard router for the whole app (task.md §10). Held here so it lives as long as the
+  /// The one keyboard router for the whole app (todo.md §10). Held here so it lives as long as the
   /// process; without it no key reached the model at all.
   @ObservationIgnored private var keyRouter: KeyRouter?
 

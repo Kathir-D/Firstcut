@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// Progress HUD (task.md §9.6): a glass capsule with the current photo's rating (§6.1), batch X of
+// Progress HUD (todo.md §9.6): a glass capsule with the current photo's rating (§6.1), batch X of
 // Y, photos left, tier counts and elapsed time. H shows and hides it.
 
 import SwiftUI

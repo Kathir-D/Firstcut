@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// Menu bar (task.md §9.1, §10): every command listed, with its default shortcut shown. Remapping is
+// Menu bar (todo.md §9.1, §10): every command listed, with its default shortcut shown. Remapping is
 // app-logic's keymap; these values are the Lightroom Classic defaults and move to the keymap as soon
 // as it lands (REQ-ui-3). Caps Lock and zoom deliberately have no menu shortcut — zoom is pointer
 // only by design (§9.2) and Caps Lock is a `flagsChanged` event, not a key (REV-47).

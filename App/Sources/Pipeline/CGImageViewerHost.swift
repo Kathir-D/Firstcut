@@ -1,7 +1,7 @@
 // Owner: pipeline.
 //
 // The implementation of ui's `PhotoViewerHost` protocol: a plain `CALayer` whose `contents` is the
-// decoded `CGImage`. This is the "display = pointer swap" property task.md §7.1 asks for —
+// decoded `CGImage`. This is the "display = pointer swap" property todo.md §7.1 asks for —
 // navigation sets a new image, and nothing is re-allocated per frame.
 //
 // ## Why a CALayer and not an IOSurface (REV-38, REV-39)
@@ -16,7 +16,7 @@
 // The seam is unchanged: if the IOSurface path is ever worth it, it replaces *this* file and
 // `ViewerArea` does not move. That is what the protocol was for (REV-52).
 //
-// ## Zoom (task.md §9.2) — mouse and trackpad only, no keyboard shortcut
+// ## Zoom (todo.md §9.2) — mouse and trackpad only, no keyboard shortcut
 //
 // * **Pinch** zooms smoothly, anchored at the pinch point.
 // * **Click** a spot jumps to 100% (one image pixel per screen pixel) *centred on that spot*;
@@ -314,7 +314,7 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
 
   override func mouseUp(with event: NSEvent) {
     defer { mouseDownPoint = nil }
-    // A click that turned into a drag must not toggle zoom (task.md §9.2).
+    // A click that turned into a drag must not toggle zoom (todo.md §9.2).
     guard !didDrag, image != nil else { return }
     let point = convert(event.locationInWindow, from: nil)
     let rect = imageRect(zoom: zoom, center: center)
@@ -382,7 +382,7 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
 
 // MARK: - Clipping mask
 
-/// Highlight / shadow clipping (task.md §9.2, key J): red where any channel is at the top of its
+/// Highlight / shadow clipping (todo.md §9.2, key J): red where any channel is at the top of its
 /// range, blue where every channel is at the bottom. Computed from a downsampled copy, because a
 /// 24-megapixel frame does not need 24 million tests to show where the sky blew out.
 enum ClippingMask {

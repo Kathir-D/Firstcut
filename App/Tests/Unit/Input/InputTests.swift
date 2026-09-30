@@ -41,7 +41,7 @@ struct CommandTests {
         #expect(Command(id: "label", argument: 2) == .setLabel(nil))  // not one of 6…9
     }
 
-    @Test("Zoom has no default key, by design (task.md §2, §9.2, §10)")
+    @Test("Zoom has no default key, by design (todo.md §2, §9.2, §10)")
     func zoomHasNoDefaultKey() throws {
         var store = KeymapStore(directory: temporaryDirectory())
         _ = try store.load()
@@ -146,7 +146,7 @@ struct KeymapTests {
         return store.defaults
     }
 
-    @Test("The shipped keymap is the Lightroom Classic table (task.md §10)")
+    @Test("The shipped keymap is the Lightroom Classic table (todo.md §10)")
     func shippedDefaults() throws {
         let keymap = try Self.defaults()
         let expected: [Command: KeyChord] = [
@@ -192,7 +192,7 @@ struct KeymapTests {
         #expect(keymap.chords(for: Command.batchPrevious.id).contains(KeyChord(.leftBracket)))
     }
 
-    @Test("P is the pick flag in Stars mode and the keep toggle in Keep mode (task.md §6)")
+    @Test("P is the pick flag in Stars mode and the keep toggle in Keep mode (todo.md §6)")
     func modeSpecificBinding() throws {
         let keymap = try Self.defaults()
         let p = KeyChord(.p)

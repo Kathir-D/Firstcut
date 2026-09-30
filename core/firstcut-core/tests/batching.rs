@@ -1,4 +1,4 @@
-//! Batching regression on the committed metadata dumps (task.md §5.4).
+//! Batching regression on the committed metadata dumps (todo.md §5.4).
 //!
 //! Runs entirely on `tests/fixtures/meta/<game>.json`, so CI needs none of the 42 GB of RAW files.
 //! Three kinds of check live here:
@@ -63,7 +63,7 @@ fn batch_names(game: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// Every invariant task.md §5 states, checked against every game. These hold for any thresholds.
+/// Every invariant todo.md §5 states, checked against every game. These hold for any thresholds.
 #[test]
 fn the_invariants_hold_for_every_game() {
     for game in GAMES {
@@ -96,7 +96,7 @@ fn the_invariants_hold_for_every_game() {
             "{game}: a photo is in two batches or none"
         );
 
-        // Determinism: task.md §5.3 step 6.
+        // Determinism: todo.md §5.3 step 6.
         let again = batch_with(&photos, &HashMap::new(), &[], BatchParams::default());
         assert_eq!(
             batches, &again.batches,
@@ -215,7 +215,7 @@ fn the_real_corpus_cannot_exercise_a_name_rollover() {
 
 #[test]
 fn a_synthetic_rollover_shoot_orders_by_time() {
-    // task.md §11 asks for this fixture explicitly. Built in memory so no file is needed.
+    // todo.md §11 asks for this fixture explicitly. Built in memory so no file is needed.
     use firstcut_core::batch::PhotoId;
     use firstcut_core::order;
 
@@ -407,7 +407,7 @@ fn boundary_f1_matches_the_visual_ground_truth() {
             m.wrong_splits
         );
 
-        // task.md §5.4: ≥ 98% boundary F1 and zero merges of clearly different plays.
+        // todo.md §5.4: ≥ 98% boundary F1 and zero merges of clearly different plays.
         if m.f1 < 0.98 {
             failures.push(format!(
                 "{game}: F1 {:.1}% is below the 98% target",
@@ -421,13 +421,13 @@ fn boundary_f1_matches_the_visual_ground_truth() {
 
     // No ground truth committed yet. This is deliberately a **skip with a message**, not a silent
     // pass and not a failure: the ground truth has to come from a human looking at the photos
-    // (task.md §12), and generating it from `batch()`'s own output would be self-certification —
+    // (todo.md §12), and generating it from `batch()`'s own output would be self-certification —
     // the exact failure mode REV-55 exists to prevent. The batcher's accuracy is therefore
     // **unmeasured**, and REQ-core-batch-1 tracks producing the first real ground truth file.
     if checked == 0 {
         eprintln!(
             "SKIPPED: no ground truth in {}. Boundary F1 is UNMEASURED — \
-             the 98% target in task.md §5.4 is not currently demonstrated. See REQ-core-batch-1.",
+             the 98% target in todo.md §5.4 is not currently demonstrated. See REQ-core-batch-1.",
             truth_path(GAMES[0])
                 .parent()
                 .unwrap_or(&PathBuf::new())
@@ -489,7 +489,7 @@ fn golden_batches_match_the_committed_dumps() {
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
-/// The high-speed regression case from task.md §5.4: the tail of Game1JENKS at ~11 fps, broken by
+/// The high-speed regression case from todo.md §5.4: the tail of Game1JENKS at ~11 fps, broken by
 /// 0.2-0.8 s re-press pauses. A burst at that rate is 90 ms per frame, so a threshold that only
 /// works at 6 fps will over-merge it.
 #[test]
@@ -534,7 +534,7 @@ fn the_high_speed_tail_of_game1jenks_is_not_one_giant_batch() {
 }
 
 /// Not a check: prints how the number of batches, and of one-photo batches, moves with the
-/// single-frame grouping window (task.md §2, decided 2026-09-29: "single frames a few seconds
+/// single-frame grouping window (todo.md §2, decided 2026-09-29: "single frames a few seconds
 /// apart are grouped"). Run with
 /// `cargo test --test batching single_window_sweep -- --ignored --nocapture`.
 #[test]

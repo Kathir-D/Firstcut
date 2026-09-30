@@ -1,6 +1,6 @@
 // Owner: app-logic.
 //
-// Loading, layering and persisting keymaps (task.md §10, §9.8 Keyboard).
+// Loading, layering and persisting keymaps (todo.md §10, §9.8 Keyboard).
 //
 // Two files, one effective map:
 //   * `App/Resources/DefaultKeymap.json` — shipped, read-only, Lightroom Classic defaults.

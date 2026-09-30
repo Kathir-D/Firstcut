@@ -3,7 +3,7 @@ import Testing
 
 @testable import Firstcut
 
-@Suite("Files appearing and vanishing (task.md §11)")
+@Suite("Files appearing and vanishing (todo.md §11)")
 @MainActor
 struct FolderChangeTests {
   private func shoot(count: Int) -> [PhotoMeta] { FixturePhotos.syntheticPhotos(count: count) }

@@ -14,7 +14,7 @@ import Foundation
     /// Batches were re-batched after visual signatures arrived. Only *unvisited* batches can differ
     /// (batching.md), so the current batch is guaranteed to still be there under the same id.
     func sessionDidChangeBatches(_ batches: [Batch])
-    /// FSEvents: files appeared or disappeared (task.md §11).
+    /// FSEvents: files appeared or disappeared (todo.md §11).
     func sessionDidChangeFiles()
     /// XMP sidecar write failed for one photo. The DB still has the rating, so this is reported,
     /// never fatal.
@@ -47,16 +47,16 @@ import Foundation
     /// Thumbnails finished for some photos; may re-batch unvisited batches.
     func submitVisualSigs(_ sigs: [(PhotoID, VisualSig)])
 
-    // Finish Cull (task.md §9.7)
+    // Finish Cull (todo.md §9.7)
     func planFinish(_ settings: FinishSettings) -> FinishPlanData
     func executeFinish(_ plan: FinishPlanData) -> FinishReportData
     func undoFinish() -> FinishReportData
 
-    /// Settings → Metadata (task.md §9.8): whether ratings are mirrored to `.xmp` sidecars, for
+    /// Settings → Metadata (todo.md §9.8): whether ratings are mirrored to `.xmp` sidecars, for
     /// which files, and what a Keep is written as. Backends with no sidecars ignore it.
     func applyMetadataSettings(_ settings: MetadataSettings)
 
-    /// Force the debounced XMP queue out. On batch change and on quit (task.md §6.3).
+    /// Force the debounced XMP queue out. On batch change and on quit (todo.md §6.3).
     func flush()
 
     /// True for a backend over a real folder, which can be re-read when files appear or vanish.

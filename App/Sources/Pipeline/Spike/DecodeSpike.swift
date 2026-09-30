@@ -7,7 +7,7 @@
 //   FIRSTCUT_TEST_PHOTOS=~/Documents/testing /tmp/firstcut-spike            # full run
 //   FIRSTCUT_TEST_PHOTOS=~/Documents/testing /tmp/firstcut-spike --quick    # small sample
 //
-// What it measures (task.md §7.2, §7.3):
+// What it measures (todo.md §7.2, §7.3):
 //   1. Where the embedded full-resolution JPEG lives in a CR3 and how long it is.
 //   2. Decode time per image at: full res, DCT-subsampled to viewport size, and ImageIO thumbnail
 //      to viewport size — plus vImage Lanczos from the full decode as the "correct but slow" option.
@@ -807,7 +807,7 @@ if !skipDisplay {
     note("\n## 7. Display swap: skipped (--no-display)")
 }
 
-// 8. Quality benchmark (task.md §7.2)
+// 8. Quality benchmark (todo.md §7.2)
 note("\n## 8. Quality: embedded preview vs CIRAWFilter, and DCT vs Lanczos")
 qualityBenchmark(samples)
 
@@ -857,7 +857,7 @@ enum PipelineSpikePlaceholder {}
 ///   b) Is ImageIO's DCT-scaled thumbnail good enough, or does it need the vImage Lanczos pass?
 ///   c) How expensive is `CIRAWFilter` (T4)?
 func qualityBenchmark(_ samples: [Sample]) {
-    // task.md §7.2 asks for CIRAWFilter specifically. Probe it, and say so out loud if we are
+    // todo.md §7.2 asks for CIRAWFilter specifically. Probe it, and say so out loud if we are
     // measuring something else instead of quietly substituting.
     let rawViaFilter: Bool = {
         guard let f = CIFilter(name: "CIRAWFilter") else { return false }

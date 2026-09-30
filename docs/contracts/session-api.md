@@ -170,7 +170,7 @@ core is linked. Use the Swift types in `App/Sources/Shared/CoreTypes.swift`.
 ## Proposed changes
 
 1. **What "split by tier" covers.** `KeptAction::SplitByTier` is listed under the *kept* photos, but
-   task.md §9.7's example folder names (`5 Keep`, `3 Good`, `1 Maybe`) only make sense if the split
+   todo.md §9.7's example folder names (`5 Keep`, `3 Good`, `1 Maybe`) only make sense if the split
    also spreads the photos that were not kept — and in stars mode only 4–5 stars are a "keep" (§6.1),
    so as written the split can only ever produce a `5 Keep` folder. The planner currently follows the
    contract as written (split applies to kept photos). **app-logic owns the flow rule**: either the

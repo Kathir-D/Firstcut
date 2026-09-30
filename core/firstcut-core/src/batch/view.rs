@@ -9,7 +9,7 @@ use crate::batch::PhotoId;
 
 /// Everything the batcher reads off a photo.
 ///
-/// Deliberately small: these are the fields named in task.md §5.2 as burst-boundary signals. A
+/// Deliberately small: these are the fields named in todo.md §5.2 as burst-boundary signals. A
 /// method that allocates would be wasteful in the inner loop, so `&str` is used instead of `String`.
 pub trait Photo {
     fn id(&self) -> PhotoId;
@@ -85,7 +85,7 @@ pub fn effective_time_ms<P: Photo + ?Sized>(p: &P) -> Option<i64> {
     p.capture_unix_ms().or_else(|| p.file_mtime_ms())
 }
 
-/// True when the timestamp is a fallback and must be flagged in the log (task.md §5.1).
+/// True when the timestamp is a fallback and must be flagged in the log (todo.md §5.1).
 #[must_use]
 pub fn time_is_fallback<P: Photo + ?Sized>(p: &P) -> bool {
     p.capture_unix_ms().is_none() && p.file_mtime_ms().is_some()

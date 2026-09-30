@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Owner: infra. Pushes the release cask into Kathir-D/homebrew-tap, so
-# `brew upgrade --cask firstcut` works without a human editing a file (task.md §13).
+# `brew upgrade --cask firstcut` works without a human editing a file (todo.md §13).
 #
 # Run by .github/workflows/release.yml after the cask in this repo has been stamped with the
 # release's version and SHA-256. Needs write access to the tap, in either of two forms (the

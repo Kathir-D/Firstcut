@@ -7,7 +7,7 @@ database, sidecars, or the Finish step needs a test that proves it.
 ## Before you start
 
 Open an issue for anything bigger than a small fix, so the direction can be agreed first. The plan,
-the decisions already made, and what is still open are in [`task.md`](task.md); the module contracts
+the decisions already made, and what is still open are in [`todo.md`](todo.md); the module contracts
 are in [`docs/contracts/`](docs/contracts/).
 
 ## Building

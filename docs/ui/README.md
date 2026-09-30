@@ -7,7 +7,7 @@
 
 | File | What |
 | --- | --- |
-| `finder-gallery-macos27.png` | Finder gallery view, the layout reference (task.md §9) |
+| `finder-gallery-macos27.png` | Finder gallery view, the layout reference (todo.md §9) |
 | `firstcut-wave1-loupe-macos27.png` | Firstcut wave 1, loupe + filmstrip, mock model |
 | `firstcut-wave1-info-panel-macos27.png` | Firstcut wave 1, with the info inspector and the progress HUD |
 
@@ -34,7 +34,7 @@ Deliberately different, and why:
 
 - **No sidebar and no path bar.** One folder = one session (§1); the folder path lives in the info
   panel instead of a permanent bar.
-- **Filmstrip is the current batch only** (task.md §9.3), so it is short, not the whole folder.
+- **Filmstrip is the current batch only** (todo.md §9.3), so it is short, not the whole folder.
   Finder's is every item in the folder.
 - **Thumbnails keep their own aspect ratio** and the selected frame sits on a rounded gray plate.
   Finder's gallery filmstrip uses uniform boxes, because Finder's item icons are a fixed size for

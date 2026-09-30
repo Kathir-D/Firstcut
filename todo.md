@@ -1,4 +1,4 @@
-# Firstcut — Task Plan
+# Firstcut — Todo
 
 > The single source of truth for what Firstcut is, the decisions already made, and every piece of
 > work needed to ship it. Check items off as they land. When a decision changes, update the
@@ -71,6 +71,11 @@ Not blocking v0.1.0; an agent can do these.
   a full manual QA pass, macOS 15 (only 26 is tested).
 - **Contracts** in `docs/contracts/` predate the merge (pipeline-api.md still describes an IOSurface
   layer).
+- **Performance plan (§7.5):** the research is done; the agent-side items there (CR3 full-size JPEG
+  location, force-decoded display-space bitmaps, DCT-scaled T2, first-photo fast path, signposts,
+  the `bench` extensions) can be built before the owner measures.
+- **Later features (§16), after v0.1.0:** manual batch split/merge; simple batch edits with presets,
+  importable from Lightroom (`.xmp`, `.lrtemplate`), Capture One (`.costyle`) and others.
 - **Later:** Sparkle updates, folder bookmarks for a sandboxed build.
 
 ### 0.4 Working practices
@@ -101,8 +106,15 @@ Not blocking v0.1.0; an agent can do these.
 > rewrites this block in the same commit as its last change, so the next agent can pick up without the
 > chat. Newest state only; history is `git log`.
 
-**As of 2026-09-30 (end of the bug-review pass):**
+**As of 2026-09-30 (planning pass after the bug review):**
 
+- **This file was `task.md`**; it is now `todo.md`. References were updated everywhere except
+  `App/Sources/Session/AppModel.swift` and `App/Sources/Pipeline/ImageProvider.swift`, which this
+  session was not allowed to read or edit. They still say `task.md` in comments; fix them the next
+  time either file is touched. The new sections are §7.5 (how the performance targets will be met:
+  research and work items) and §16 (later features: manual batch split/merge; batch edits with
+  presets imported from Lightroom, Capture One and others). `CONTINUE.md` is the prompt to hand the
+  next agent.
 - **Branches.** Work was pushed to `ccr-270c6e7f-gl7zpb`; `main` is fast-forwarded to it only once CI
   (`ci.yml`) is green on the commit. Check `git log origin/main..origin/ccr-270c6e7f-gl7zpb`: anything
   there is waiting on CI. If green, `git push origin <sha>:main` (fast-forward only, never force).
@@ -139,7 +151,10 @@ Not blocking v0.1.0; an agent can do these.
      a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.
   2. Check whether the thumbnail/preview cache flickers or is dropped when the watched folder changes
      (`AppModel` folder-change handling and `Pipeline/ImageProvider.swift`).
-  3. The core bug review is done: `execute_finish`, `undo_finish`, `mark_finish_folders`, Finish
+  3. §7.5 work items that need neither file: the CR3 full-size JPEG byte range next to `PRVW`
+     (and the wrong "full-size" doc comment on `PRVW` in `meta/cr3.rs`), `firstcut bench --folder`,
+     and `os_signpost` names. Then the ones in `ImageProvider`/`AppModel` once they can be read.
+  4. The core bug review is done: `execute_finish`, `undo_finish`, `mark_finish_folders`, Finish
      planning (split-by-tier only moves kept photos, as the contract says; REQ-core-store-2 is still
      the open question), rescan/rebatch, the scanner's grouping and the XMP import path were re-read.
      The header readers are covered by mutation tests (`a_corrupted_*_never_panics`, byte flips over
@@ -147,7 +162,7 @@ Not blocking v0.1.0; an agent can do these.
      now fixed. Known and left: sidecar ratings are imported only when a folder's session
      is first created, so a Lightroom-rated second card copied into an open shoot is not imported;
      a different file saved under a known name (same path) inherits that name's rating.
-  4. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
+  5. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
      they flag).
 - **Blocked on the owner:** the screenshots artifact cannot be downloaded from the cloud container (the
   Actions artifact host is not on its network allow-list); the owner downloads it from the
@@ -183,13 +198,15 @@ has been seen, Firstcut asks what to do with everything you didn't keep.
 
 - **No AI / ML auto-culling.** No "eyes closed" detection, no auto-rating. The only image analysis is
   a cheap perceptual hash used to find burst boundaries.
-- No editing, develop settings, or export processing. Firstcut decides *what to keep*; editing
-  happens in Lightroom/Capture One.
+- No editing, develop settings, or export processing **in v0.1**. Firstcut decides *what to keep*;
+  editing happens in Lightroom/Capture One. Simple preset-based batch edits are a planned later
+  feature ([§16.2](#162-batch-edits-with-importable-presets)).
 - No card ingest/import. Firstcut opens **one folder already on disk** containing the whole shoot.
 - No multi-folder sessions (e.g. `100CANON` + `101CANON` as one session). One folder = one session.
 - No Intel Macs, no iOS/iPadOS.
 - No keyboard shortcut for zoom (pinch / click only).
-- No manual batch editing (split/merge); batching is fully automatic.
+- No manual batch editing (split/merge) **in v0.1**; batching is fully automatic. Manual split/merge
+  is a planned later feature ([§16.1](#161-manual-batch-editing-split--merge)).
 - No network access, accounts, telemetry, or analytics. Firstcut works entirely offline.
 - English only for v0.1 (strings still go through `String(localized:)` so localization is possible later).
 
@@ -310,7 +327,7 @@ Firstcut/
 ├── tests/fixtures/           # ground-truth batch files (filenames only — no images)
 ├── .github/workflows/        # CI + release
 ├── project.yml               # XcodeGen spec (no hand-edited .pbxproj merge conflicts)
-├── task.md
+├── todo.md
 └── README.md
 ```
 
@@ -503,6 +520,74 @@ interactive targets above, none of which has been measured.
       lens, focal length, shutter/aperture/ISO/exposure comp, orientation, dimensions, AF area mode +
       AF points (for overlay), embedded preview offset/length (so Swift can read the JPEG bytes
       directly without re-parsing).
+
+### 7.5 How the targets will be met (research, 2026-09-30)
+
+> This is a plan, not a result. Every number below marked *expect* is arithmetic from §3 or from
+> the sources listed, and **does not count as a measurement** (AGENTS.md). A target is met only when
+> a row in `docs/qa/perf-baselines.md` says so. `App/Sources/Pipeline/ImageProvider.swift` and
+> `AppModel.swift` were not read for this research. Items that say "check" need someone to read them
+> against this plan.
+
+**Three facts that shape everything:**
+
+1. **A CR3 carries three JPEGs.** They are `THMB` at 160×120, `PRVW` at **1620×1080**, and the
+   full 6000×4000 JPEG in the first `trak` (Laurent Clévy's CR3 description, `lclevy/canon_cr3`).
+   The core's `PhotoMeta.preview` reads `PRVW` (`meta/cr3.rs`), whose doc comment wrongly calls it
+   "full-size". The 166 ms in §3 is the 6000×4000 JPEG. The 1620×1080 one has 7% of the pixels.
+   *Expect* ~10–20 ms to decode it; measure.
+2. **ImageIO decodes lazily.** `CGImageSourceCreateImageAtIndex` and the thumbnail call return a
+   `CGImage` whose pixels are decoded on first draw, unless `kCGImageSourceShouldCacheImmediately`
+   is set. On first draw means inside the Core Animation commit on the main thread, which is exactly
+   the 8 ms budget. A cache of lazy images is a cache of file handles.
+3. **JPEG decodes can scale in the DCT.** With `kCGImageSourceThumbnailMaxPixelSize` (and
+   `kCGImageSourceCreateThumbnailFromImageAlways`), ImageIO can decode a JPEG at 1/2, 1/4 or 1/8
+   scale, doing roughly that fraction of the work. It can only do so when the target is at or below
+   the scaled size. A 6000-px JPEG can be decoded at 3000 px cheaply; at 3456 px (a full-screen 16"
+   viewer) it needs a full decode and a downscale.
+
+**Per target:**
+
+| Target | How | *Expect* | How it is measured |
+| --- | --- | --- | --- |
+| Open → first photo < 1 s | Do not wait for the whole scan. Header-read the resume photo (or the first by name) first, decode its `PRVW` from the byte range (`CGImageSourceCreateWithData` on the bytes, not the CR3 URL), and show it. The full scan, batching and T2 decode follow in parallel, and T2 replaces the `PRVW` when it lands. | One header read + one 1620 px decode ≈ tens of ms | Signpost from the open panel returning to the first CA commit with an image |
+| Metadata scan < 3 s | Already header-only and multi-threaded (`meta::parallel_map`). Keep one bounded `pread` per file and do not pull `PRVW` bytes into the head read. Measure **cold** (`sudo purge` first) as well as warm, since a freshly copied card is often warm. | 2 ms/file × 1,500 ÷ 8 threads < 1 s | Extend `firstcut bench` to run the scan on a folder |
+| Provisional batches < 3.5 s | Scan + `order()` + `batch()` (0.4 ms, measured) + the DB insert. Write the photos in one transaction with a prepared statement. | Dominated by the scan | `firstcut bench` prints each phase |
+| Thumbnails + hashes < 20 s | 75 photos/s. Decode `PRVW` bytes to 256 px (DCT 1/4 → 405 px, then downscale), never the full JPEG or the RAW. Make one 256 px decode feed both the filmstrip (T0) and `VisualSigWorker`. Check whether they decode twice today: `VisualSigWorker` calls `DecodeEngine.decodeThumbnail(url:)` on the file URL. Keep this work at `.utility`, off the performance cores' queue. | A few ms per photo on 3 threads → well under 20 s | Signpost per chunk; total in the perf suite |
+| T2 ready before the user can reach it | Decode the **full-size** JPEG by byte range (a new core field for the `trak` JPEG, next to `PRVW`) at the viewer's backing-pixel size, with `ShouldCacheImmediately`. Use a native 32-bit BGRA layout (`noneSkipFirst \| byteOrder32Little`), so Core Animation does not convert it. On a 14" viewer (≤ 3000 px) that is the cheap DCT-1/2 path. On a larger viewer, choose by eye (§7.2): decode the full image and downscale with vImage, or accept 3000 px. | 1/2-scale ≈ ¼ of 166 ms ≈ 40–50 ms per photo; 4–8 in flight ≫ key-repeat rate | `focusMisses` = 0 in the hold-→ stress test |
+| Arrow → sharp photo ≤ 8 ms | Only a pointer swap on the main thread: a cached, already-decoded bitmap assigned to `layer.contents`. Make sure nothing on that path decodes, color-converts, resizes or touches SQLite. Write the rating off the main thread. If the commit is still too slow (it copies up to ~24 MB), make the bitmap IOSurface-backed and set `contents` to the `IOSurfaceRef`. That works on macOS: Chromium's `ca_renderer_layer_tree.mm` does it. The claim in `CGImageViewerHost.swift` (REV-38) that it cannot is wrong. Only do this if the measurement asks for it. | Assignment < 1 ms; commit to be measured | Signpost from `keyDown` to the next presented frame (`NSView.displayLink` / `CADisplayLink`), p50/p95/p99, `XCTOSSignpostMetric` |
+| Batch switch ≤ 1 frame | Same path; the next/previous batch is already in T2 by the priority rules | — | Same signpost for `⌘→` |
+| 100% zoom < 150 ms first time | The full decode is ~166 ms on one thread, so the first 100% needs a head start. On click, upscale T2 at once, so the zoom responds in one frame. Then start the full-resolution decode (T3). Also decode T3 speculatively for the current photo once the user has stayed on it for ~300 ms. With zoom lock, decode T3 ahead for the next photos in the batch. ImageIO cannot decode one JPEG on several threads or decode just a region, so speculation is the only lever. | Zoom feels instant; the sharp 100% lands ≤ 166 ms after the click, 0 ms when speculated | Signpost click → T3 on screen |
+| Memory within budget, no leaks | 3000×2000×4 B = 24 MB per T2. Three batches of up to ~50 frames (Game1JENKS bursts) ≈ 3.6 GB, inside the 6.4 GB default. Hold T1 (compressed bytes, 1–6 MB) for further batches instead of T2. Keep only ±1 T3 (96 MB each). | Peak ≈ 4 GB on the worst burst | `footprint`/`phys_footprint` sampled in the stress test; `leaks` at the end |
+
+**Work items (agent-side unless marked):**
+
+- [ ] Core: fix the `PRVW` doc comment. Expose the full-size `trak` JPEG's byte range next to
+      `PRVW` (and keep `THMB`). Test both against exiftool's `PreviewImage`/`JpgFromRaw` offsets on
+      the photos.
+- [ ] App: decode every display image from **byte ranges**, never from the CR3 URL. ImageIO then
+      never parses the container or picks the RAW.
+- [ ] App: check that every cached `CGImage` is force-decoded (`ShouldCacheImmediately`) and in a
+      native BGRA layout. Needs `ImageProvider.swift`.
+- [ ] App: first-photo fast path (header + `PRVW` of the resume photo before the full scan).
+      Needs `AppModel.swift`.
+- [ ] App: one shared 256 px decode for the filmstrip and the visual signature.
+- [ ] App: T2 at the viewer's backing size through DCT scaling; re-decode on resize (§7.1).
+- [ ] App: speculative T3 for the current photo after a dwell; T2 upscale as the instant zoom.
+- [ ] Instrumentation: `os_signpost` intervals named after the rows above, plus the debug HUD
+      (§7.3).
+- [ ] `firstcut bench --folder <dir>`: scan (cold/warm), order, batch and DB insert, per phase.
+- [ ] **Owner:** run the perf suite and `firstcut bench` on the M1 Pro. Record the rows in
+      `docs/qa/perf-baselines.md`. Pick by eye between the 3000 px DCT-scaled T2 and the
+      full-decode-and-downscale T2 on a 16" screen.
+- [ ] IOSurface-backed `contents` only if the arrow-key measurement exceeds 8 ms.
+
+Sources: Clévy, *Describing the Canon Raw v3 (CR3) file format*
+(github.com/lclevy/canon_cr3); Apple, *Image I/O Programming Guide* and the
+`CGImageSourceCreateThumbnailAtIndex` options (`kCGImageSourceShouldCacheImmediately`,
+`kCGImageSourceThumbnailMaxPixelSize`); Chromium `ui/accelerated_widget_mac/ca_renderer_layer_tree.mm`
+(`CALayer.contents` = `IOSurfaceRef`); how Photo Mechanic culls from embedded JPEGs (imagen-ai.com
+comparison articles). §3 of this file for the 166 ms and 570 ms single-thread decodes.
 
 ---
 
@@ -827,6 +912,7 @@ Same setup as [Sonar](https://github.com/Kathir-D/Sonar#install): three install 
 | M6 Formats | Built | Only Canon R8 CR3 is verified (§8) |
 | M7 Polish | Built | Visual sign-off against Finder on macOS 26 (§0.2); macOS 15 is untested |
 | M8 Release | Rehearsed | Tap secret, README screenshots, the `v0.1.0` tag (§0.2) |
+| M9 Batch editing & presets (post-v0.1) | Planned | Everything in §16 |
 
 ---
 
@@ -866,3 +952,66 @@ Decisions the owner has made are in §2. Work only the owner can do is in §0.2.
   Rust via `~/.cargo/bin`, and `swift-format`). Rust is not on the default `PATH` in non-login shells.
 - **History for the retired process** (review board, per-agent charters) is only in git:
   `git show 4d4e43d:docs/review.md`, `git show 4d4e43d:docs/agents/`.
+
+---
+
+## 16. Later features (after v0.1.0)
+
+Planned but not part of v0.1. They lift two v0.1 non-goals (§1), so each one starts by recording its
+decision in §2.
+
+### 16.1 Manual batch editing (split / merge)
+
+Automatic batching stays the default. The user can correct it where it is wrong.
+
+- [ ] **Split** the current batch at the current photo, **merge** it with the previous or next batch,
+      and **move a boundary** one photo either way. Each has a remappable shortcut (none by default)
+      and a menu item. Every edit is undoable like a rating.
+- [ ] Store edits as **overrides** in the session DB, keyed by photo ids: "boundary before X" and "no
+      boundary before X". The automatic batcher (metadata, then visual refinement) keeps running;
+      overrides are applied on top, so a re-batch or a rescan never loses them. A photo that is
+      deleted drops its override.
+- [ ] Mark user-made boundaries in the filmstrip and the batch HUD, so an automatic boundary and a
+      manual one are told apart.
+- [ ] Optional export of the overrides as `tests/fixtures/ground-truth/<g>.json`. Correcting a
+      shoot then produces the §0.2 ground truth as a side effect. The owner still decides; an agent
+      never writes ground truth itself.
+- [ ] Tests: overrides survive re-batching, visual refinement and rename reconciliation; undo and
+      redo; merging across a manual split.
+
+### 16.2 Batch edits with importable presets
+
+Simple edits applied to a whole batch (or a selection) at once, from presets the user imports.
+Firstcut still does **not** render or export: an edit is a set of develop settings written to the
+photo's XMP sidecar, which Lightroom Classic, Lightroom and Adobe Camera Raw apply when they read
+the file.
+
+- [ ] **Decision (§2):** confirm the scope. The proposal: white balance (temperature/tint), exposure,
+      contrast, highlights, shadows, whites, blacks, vibrance/saturation, profile, and straighten/crop
+      from a preset. Nothing brush-based or local.
+- [ ] **Preset model** in the core: a named set of Camera Raw settings (`crs:` namespace), stored in
+      Firstcut's library (`~/Library/Application Support/Firstcut/Presets/`) as Lightroom-format
+      `.xmp`, so a preset exports back to Lightroom unchanged.
+- [ ] **Apply to batch / selection:** merge the preset's `crs:` properties into each photo's sidecar
+      with the existing XMP writer. Keep ratings, labels and unrelated properties. Ask before
+      replacing develop settings the sidecar already has. Never touch a darktable-style
+      `IMG.CR3.xmp` (§11). Undoable per batch; shown in the info panel.
+- [ ] **Import presets:**
+  - [ ] Lightroom Classic / ACR / Lightroom `.xmp` presets (`crs:PresetType`, `crs:*` settings,
+        groups), single files and `.zip` packs.
+  - [ ] Legacy Lightroom `.lrtemplate` (a Lua table: `s = { … value = { settings = { … } } }`),
+        parsed and converted to the same model.
+  - [ ] Capture One `.costyle` / `.costylepack` (XML `<E K="…" V="…"/>` entries): map the settings
+        that have a clear Camera Raw equivalent, and list the rest as "not imported" in a report.
+  - [ ] Others, best effort, with the same "not imported" report: darktable `.dtstyle` (mostly
+        opaque module parameters, so likely the name only), DxO PhotoLab `.preset`, ON1, Luminar.
+        Profiles and LUTs (`crs:Look`, `.cube`) are reported, not applied, at first.
+- [ ] **Preview (optional, clearly marked "approximate"):** Core Image on the displayed image
+      (exposure, temperature/tint, tone curve). It never replaces Lightroom's render, so the settings
+      in the sidecar are what matters.
+- [ ] **Capture One:** it reads ratings and labels from XMP but not `crs:` develop settings, so a
+      preset reaches Lightroom/ACR only. Writing Capture One's own settings is a separate, later
+      decision.
+- [ ] **Tests:** hand-written fixture presets for every format (never commercial presets: licensing),
+      import → model → sidecar round trip, the merge rules, and the unmapped-settings report. The
+      owner's manual check: Lightroom applies an imported preset written by Firstcut.

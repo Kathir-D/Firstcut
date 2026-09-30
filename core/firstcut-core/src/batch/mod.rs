@@ -6,7 +6,7 @@
 //! - this module turns those into batches and applies the two-phase freeze rule.
 //! - [`visual`] holds the perceptual hash that settles the ambiguous zone.
 //!
-//! Everything is deterministic: same input, same batches, always (task.md §5.3 step 6). The only
+//! Everything is deterministic: same input, same batches, always (todo.md §5.3 step 6). The only
 //! unordered input is the `sigs` map, which is never iterated — only looked up.
 
 pub mod eval;
@@ -99,7 +99,7 @@ pub fn batch_id(first: PhotoId) -> BatchId {
     BatchId(first.0)
 }
 
-/// How the ambiguous zone is scored. Every weight is a tuning knob; see task.md §5.
+/// How the ambiguous zone is scored. Every weight is a tuning knob; see todo.md §5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Weights {
     /// How far into the ambiguous zone the Δt sits.
@@ -120,11 +120,11 @@ pub struct BatchParams {
     /// Frame interval assumed when a window has no short gaps at all (11 fps, the fastest in the
     /// test set).
     pub default_frame_interval_ms: i64,
-    /// Δt ≤ this is always a join (task.md §5.3 step 2).
+    /// Δt ≤ this is always a join (todo.md §5.3 step 2).
     pub hard_join_floor_ms: i64,
     /// Join threshold is `max(hard_join_floor_ms, hard_join_factor * f)`.
     pub hard_join_factor: f32,
-    /// Δt > this is always a split (task.md §5.3 step 3).
+    /// Δt > this is always a split (todo.md §5.3 step 3).
     pub hard_split_floor_ms: i64,
     /// Split threshold is `max(hard_split_floor_ms, hard_split_factor * f)`, so a slow local rate
     /// can never make the hard split tighter than the hard join.
@@ -133,7 +133,7 @@ pub struct BatchParams {
     pub split_threshold: f32,
     pub weights_meta: Weights,
     pub weights_visual: Weights,
-    /// Consecutive one-photo batches closer together than this are merged (task.md §5.3 step 5).
+    /// Consecutive one-photo batches closer together than this are merged (todo.md §5.3 step 5).
     /// 0 keeps them apart.
     pub single_group_window_ms: i64,
 }
@@ -161,7 +161,7 @@ impl Default for BatchParams {
                 deleted: 0.05,
                 visual: 0.45,
             },
-            // Owner's decision, 2026-09-29 (task.md §2): single frames a few seconds apart are one
+            // Owner's decision, 2026-09-29 (todo.md §2): single frames a few seconds apart are one
             // batch, not a run of one-photo batches. 5 s is the "few seconds": Game1JENKS goes
             // from 99 one-photo batches to 75, and no batch anywhere grows (only singles merge).
             // The exact window is still to be confirmed against visually checked ground truth.
@@ -301,7 +301,7 @@ pub fn batch_with<P: Photo>(
     }
 }
 
-/// Adaptive thresholds for boundary `i` (task.md §5.3 steps 2–3).
+/// Adaptive thresholds for boundary `i` (todo.md §5.3 steps 2–3).
 #[must_use]
 pub fn thresholds_at(intervals: &FrameIntervals, params: &BatchParams, i: usize) -> Thresholds {
     let f = intervals.at(i);
@@ -316,7 +316,7 @@ pub fn thresholds_at(intervals: &FrameIntervals, params: &BatchParams, i: usize)
     }
 }
 
-/// Weighted sum of the normalized signals, task.md §5.3 step 4.
+/// Weighted sum of the normalized signals, todo.md §5.3 step 4.
 ///
 /// Weights of *unavailable* evidence are left out of both the numerator and the denominator: a frame
 /// with no focal length recorded must not be pushed toward "same burst" just because one weight
@@ -467,7 +467,7 @@ fn assemble<P: Photo>(seq: &[&P], splits: &[bool], verdicts: &[BoundaryVerdict])
 /// Task.md §5.3 step 5: consecutive one-photo batches close together in time are one moment that
 /// happened to be broken up, and culling them apart costs the user a keypress per frame.
 ///
-/// On by default with a 5 s window (owner's decision, task.md §2); `single_group_window_ms = 0`
+/// On by default with a 5 s window (owner's decision, todo.md §2); `single_group_window_ms = 0`
 /// turns it off.
 fn apply_single_grouping<P: Photo>(batches: &mut Vec<Batch>, seq: &[&P], params: &BatchParams) {
     if params.single_group_window_ms <= 0 {
@@ -787,7 +787,7 @@ mod tests {
         );
 
         // The user culled photos 0 and 1 as one batch. Photo 2 must now stand alone even though
-        // metadata alone puts all three in one burst: task.md §5.4, a batch you are in is never
+        // metadata alone puts all three in one burst: todo.md §5.4, a batch you are in is never
         // re-split under you.
         let frozen = vec![Batch {
             id: batch_id(PhotoId(0)),
@@ -964,7 +964,7 @@ mod tests {
     #[test]
     fn the_same_input_always_gives_the_same_batches() {
         // Every field varies, so any accidental dependence on iteration order or on a HashMap walk
-        // would show up here. Same input, same batches, always: task.md §5.3 step 6.
+        // would show up here. Same input, same batches, always: todo.md §5.3 step 6.
         let photos: Vec<M> = (0..300u64)
             .map(|i| {
                 let mut p = M::frame(i, i as i64 * 90 + (i % 11) as i64 * 17);

@@ -98,7 +98,7 @@ pub struct Cursor {
     pub photo: PhotoId,
 }
 
-/// One rating change, with everything undo needs to put it back (task.md §6.3).
+/// One rating change, with everything undo needs to put it back (todo.md §6.3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Change {
     /// Monotonic across the session, so the app can order changes it has already seen.
@@ -121,7 +121,7 @@ pub struct SessionSnapshot {
     pub visited: HashSet<u64>,
     pub cursor: Option<Cursor>,
     pub last_photo_in_batch: HashMap<u64, u64>,
-    /// Files found but not understood, with the reason (task.md §8).
+    /// Files found but not understood, with the reason (todo.md §8).
     pub skipped: Vec<crate::meta::Skipped>,
 }
 
@@ -147,7 +147,7 @@ impl SessionListener for NoListener {
     fn xmp_error(&self, _photo: PhotoId, _message: String) {}
 }
 
-/// Whether and how ratings are mirrored to `.xmp` sidecars (Settings → Metadata, task.md §9.8).
+/// Whether and how ratings are mirrored to `.xmp` sidecars (Settings → Metadata, todo.md §9.8).
 ///
 /// Sidecars are the only thing Firstcut ever writes beside a photo, and never into the photo
 /// itself, so these switches decide *whether* a sidecar appears, never whether an original changes.
@@ -254,7 +254,7 @@ impl Session {
             &listener,
         )))));
         // A shoot rated in Lightroom and opened here for the first time has its ratings only in
-        // sidecars, and starting from a blank database would silently discard them (task.md §11).
+        // sidecars, and starting from a blank database would silently discard them (todo.md §11).
         let created = matches!(db.matched(), MatchKind::Created);
         let mut state = State {
             rating_mode: db.rating_mode()?,
@@ -341,7 +341,7 @@ impl Session {
     }
 
     /// Switches modes. Existing data is preserved and mapped, never rewritten
-    /// (task.md §6): the stored rating keeps both the stars and the keep flag, and only the display
+    /// (todo.md §6): the stored rating keeps both the stars and the keep flag, and only the display
     /// changes. See `store::rating::display_rating`.
     pub fn set_rating_mode(&self, mode: RatingMode) -> Result<()> {
         {
@@ -433,7 +433,7 @@ impl Session {
         }
     }
 
-    /// The photos that could not be read, with the reason (task.md §8).
+    /// The photos that could not be read, with the reason (todo.md §8).
     #[must_use]
     pub fn skipped(&self) -> Vec<crate::meta::Skipped> {
         self.state().skipped.clone()
@@ -443,7 +443,7 @@ impl Session {
     ///
     /// The pipeline sends them in chunks as thumbnails finish, so this is called repeatedly and
     /// only fires the listener when the boundaries actually moved. Visited batches are frozen
-    /// (task.md §5.4): a batch the user is in is never re-cut under them.
+    /// (todo.md §5.4): a batch the user is in is never re-cut under them.
     pub fn submit_visual_sigs(&self, sigs: Vec<(PhotoId, VisualSig)>) {
         let mut state = self.state();
         for (id, sig) in sigs {
@@ -495,7 +495,7 @@ impl Session {
         // says exactly what the sidecar should end up as. That is what makes a crash between the
         // commit and the write recoverable: the value is in the database, not in memory.
         // The sidecar is the interoperability copy, so it gets the rating *as displayed* in the
-        // current mode: a keep with no stars is 5 stars to Lightroom (task.md §6). What is stored
+        // current mode: a keep with no stars is 5 stars to Lightroom (todo.md §6). What is stored
         // stays as the user gave it — the display is a projection and writing it back would
         // persist a mode the user is not in (`store::rating::display_rating`).
         let shown =
@@ -623,7 +623,7 @@ impl Session {
         Ok(())
     }
 
-    /// Marks a batch as seen, which also freezes it against re-batching (task.md §5.4).
+    /// Marks a batch as seen, which also freezes it against re-batching (todo.md §5.4).
     ///
     /// Deliberately records no position: "seen" is not "the user was looking at the end of it",
     /// and writing the batch's last photo here would send them back to a frame they never
@@ -1099,7 +1099,7 @@ pub fn import_ratings_from_sidecars(folder: &Path, photos: &[PhotoMeta]) -> Vec<
     imported
 }
 
-/// Tier counts for the Finish summary, in the current mode (task.md §6.1).
+/// Tier counts for the Finish summary, in the current mode (todo.md §6.1).
 #[must_use]
 pub fn tier_counts(snapshot: &SessionSnapshot, mode: RatingMode) -> HashMap<Tier, usize> {
     tier_counts_at(snapshot, mode, crate::store::rating::KEEP_STARS)
@@ -1119,7 +1119,7 @@ pub fn tier_counts_at(
     counts
 }
 
-// ─────────────────────────────────────────────────────────── finish cull (task.md §9.7)
+// ─────────────────────────────────────────────────────────── finish cull (todo.md §9.7)
 
 fn fs_write_marker(path: &Path) -> std::io::Result<()> {
     std::fs::write(
@@ -1582,7 +1582,7 @@ mod tests {
 
     #[test]
     fn a_rejected_rating_writes_minus_one() {
-        // task.md §6.2: an explicit reject is `xmp:Rating="-1"`, which is what Lightroom shows.
+        // todo.md §6.2: an explicit reject is `xmp:Rating="-1"`, which is what Lightroom shows.
         let (_s, folder, session) = empty_session();
         let meta = session.snapshot().photos[0].clone();
         session
@@ -1714,7 +1714,7 @@ mod tests {
 
     #[test]
     fn a_visited_batch_is_frozen_against_re_batching() {
-        // task.md §5.4: a batch the user has been in is never re-cut under them. A signature that
+        // todo.md §5.4: a batch the user has been in is never re-cut under them. A signature that
         // would otherwise merge it into its neighbour must not.
         let (_s, _f, session) = session_with(photo_run());
         let before = session.snapshot().batches;
@@ -1815,7 +1815,7 @@ mod tests {
 
     #[test]
     fn switching_rating_mode_keeps_the_data_the_user_set() {
-        // task.md §6: switching mode is allowed and nothing is lost. A 5-star photo is a keep in
+        // todo.md §6: switching mode is allowed and nothing is lost. A 5-star photo is a keep in
         // keep mode and 5 stars again in stars mode.
         let (_s, _f, session) = empty_session();
         let meta = session.snapshot().photos[0].clone();
@@ -1888,7 +1888,7 @@ mod tests {
 
     #[test]
     fn a_keep_writes_five_stars_in_stars_mode() {
-        // task.md §6: "a keep ↔ 5 stars by default", so Lightroom shows the same decision.
+        // todo.md §6: "a keep ↔ 5 stars by default", so Lightroom shows the same decision.
         let (_s, folder, session) = empty_session();
         let meta = session.snapshot().photos[0].clone();
         session.set_rating(meta.id, Rating::keep()).unwrap();
@@ -2051,7 +2051,7 @@ mod tests {
 
     #[test]
     fn a_file_the_parser_cannot_read_is_reported_not_dropped() {
-        // task.md §8, at the session level: the shoot is incomplete and the app is told why.
+        // todo.md §8, at the session level: the shoot is incomplete and the app is told why.
         let sessions = tempfile::tempdir().unwrap();
         let folder = tempfile::tempdir().unwrap();
         fs::write(folder.path().join("IMG_0001.CR3"), b"not a real raw file").unwrap();
@@ -2258,7 +2258,7 @@ mod tests {
         assert!(second.id < third.id, "an undo is itself a change");
     }
 
-    // ─────────────────────────────────────────────── Finish Cull, on real files (task.md §9.7)
+    // ─────────────────────────────────────────────── Finish Cull, on real files (todo.md §9.7)
 
     /// Six JPEGs one second apart in a temp folder: real files, so Finish really moves things.
     fn six_jpegs() -> tempfile::TempDir {
@@ -2358,7 +2358,7 @@ mod tests {
         let run = session.execute_finish(&plan).unwrap();
         assert!(run.summary.is_clean(), "{:?}", run.summary.failed);
         // Stars mode: 4 and 5 stars are the Keep tier. 3 stars is "Good", which Finish also
-        // disposes of, because only the Keep tier is kept (task.md §9.7).
+        // disposes of, because only the Keep tier is kept (todo.md §9.7).
         assert_eq!(names(folder.path()), vec!["IMG_0001.JPG", "IMG_0002.JPG"]);
         assert_eq!(
             names(&folder.path().join("_Not kept")),

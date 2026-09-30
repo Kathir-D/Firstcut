@@ -447,7 +447,7 @@ fn stringify(v: serde_json::Value) -> Option<String> {
 
 /// `IMG_0451.CR3` → 451. The number in the name, not its rank: it survives a rollover.
 ///
-/// Only a tie-breaker of last resort (task.md §5.1). Used here because the exiftool dumps carry no
+/// Only a tie-breaker of last resort (todo.md §5.1). Used here because the exiftool dumps carry no
 /// Canon `FileNumber` tag.
 fn file_number_of(name: &str) -> Option<u32> {
     let stem = name.rsplit_once('.')?.0;

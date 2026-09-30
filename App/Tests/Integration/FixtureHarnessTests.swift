@@ -3,7 +3,7 @@
 // Smoke tests for the test harness itself. These run everywhere, including CI, because they touch
 // only committed fixtures — never the 42 GB in ~/Documents/testing.
 //
-// They double as the regression net for the measured facts in task.md §3: if core-meta regenerates
+// They double as the regression net for the measured facts in todo.md §3: if core-meta regenerates
 // an exiftool dump and something about the shoot changed, these fail loudly instead of the batcher
 // quietly re-deriving different thresholds.
 
@@ -20,7 +20,7 @@ final class FixtureHarnessTests: XCTestCase {
     }
 
     func testEveryGameHasACommittedExiftoolDump() throws {
-        XCTAssertEqual(Game.allCases.count, 4, "task.md §3 says four games")
+        XCTAssertEqual(Game.allCases.count, 4, "todo.md §3 says four games")
         for game in Game.allCases {
             let records = try Fixtures.exifToolRecords(for: game)
             XCTAssertEqual(records.count, game.expectedPhotoCount, "\(game.rawValue) record count")
@@ -81,7 +81,7 @@ final class FixtureHarnessTests: XCTestCase {
     /// Documented on purpose, because it is a trap: senior-dev verified (REV-26) that file-name
     /// order equals capture order in all 2,880 files, and Game4VRE runs 9146→9999, so the
     /// `IMG_9999 → IMG_0001` rollover never occurs in the test set. A name-based `order()` would
-    /// pass every test we have. The synthetic rollover fixture in task.md §11 is the only thing
+    /// pass every test we have. The synthetic rollover fixture in todo.md §11 is the only thing
     /// protecting the rule; see REQ-qa-5.
     func testFileNameOrderCoincidentallyMatchesCaptureOrder() throws {
         for game in Game.allCases {
@@ -117,7 +117,7 @@ final class FixtureHarnessTests: XCTestCase {
             let name = String(format: "IMG_%04d.CR3", number)
             XCTAssertNotNil(
                 Fixtures.photoURL(name, in: game),
-                "\(name) is named in task.md §3 and §5.4 but is not in \(folder.lastPathComponent)"
+                "\(name) is named in todo.md §3 and §5.4 but is not in \(folder.lastPathComponent)"
             )
         }
     }

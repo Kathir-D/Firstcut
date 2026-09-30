@@ -1,6 +1,6 @@
 // Owner: ui.
 //
-// Finder gallery layout (task.md §9): large viewer, filmstrip of the current batch underneath,
+// Finder gallery layout (todo.md §9): large viewer, filmstrip of the current batch underneath,
 // floating HUD, right-hand info inspector. The window chrome lives in App/Toolbar.
 //
 // REV-75: the phases are mutually exclusive *by construction*. The culling chrome used to be a
@@ -29,7 +29,7 @@ struct RootView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Appearance.windowBackground)
-    // Finish Cull (task.md §9.7). The stage is the model's; dismissing the sheet any other way
+    // Finish Cull (todo.md §9.7). The stage is the model's; dismissing the sheet any other way
     // than a button (Escape) is a cancel, so what is on screen never disagrees with the model.
     .sheet(
       isPresented: Binding(

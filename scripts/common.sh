@@ -16,7 +16,7 @@ export FIRSTCUT_ROOT
 GENERATED_DIR="$FIRSTCUT_ROOT/App/Generated"
 export GENERATED_DIR
 
-# The Rust workspace and the single target triple we support (Apple Silicon only, task.md §2).
+# The Rust workspace and the single target triple we support (Apple Silicon only, todo.md §2).
 CARGO_DIR="$FIRSTCUT_ROOT/core"
 export CARGO_DIR
 RUST_TARGET="${FIRSTCUT_RUST_TARGET:-aarch64-apple-darwin}"

@@ -5,7 +5,7 @@
 //! batching pass is what makes the thresholds tunable from real data (`firstcut gaps`).
 
 /// Gaps at or above this are never counted as "inside a burst" when estimating the frame interval,
-/// so a long pause between two bursts can't inflate the local rate (task.md §5.3 step 1).
+/// so a long pause between two bursts can't inflate the local rate (todo.md §5.3 step 1).
 pub const LOCAL_WINDOW_MAX_MS: i64 = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,7 @@ impl Decision {
     }
 }
 
-/// Adaptive Δt thresholds around a local frame interval `f` (task.md §5.3 steps 2–3).
+/// Adaptive Δt thresholds around a local frame interval `f` (todo.md §5.3 steps 2–3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Thresholds {
     pub frame_interval_ms: i64,
@@ -52,7 +52,7 @@ pub enum TimeQuality {
     Missing,
 }
 
-/// Every signal task.md §5.2 lists, for one consecutive pair.
+/// Every signal todo.md §5.2 lists, for one consecutive pair.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PairSignals {
     /// Signed. Negative means the effective times run backwards; see [`TimeQuality::Backwards`].
@@ -127,7 +127,7 @@ impl PairSignals {
         matches!(self.time_quality, TimeQuality::Exif | TimeQuality::Fallback)
     }
 
-    /// Hard joins and hard splits, in task.md §5.3 order. `Ambiguous` means timing can't decide.
+    /// Hard joins and hard splits, in todo.md §5.3 order. `Ambiguous` means timing can't decide.
     ///
     /// Two rules here are deliberately conservative, because both would otherwise produce a hard
     /// decision that visual signatures can never revisit:
@@ -170,7 +170,7 @@ pub fn stops_between(a: Option<f32>, b: Option<f32>) -> f32 {
 }
 
 /// Aperture + shutter change in stops. ISO drift is weighted down because a burst in changing light
-/// walks the ISO several stops without changing the moment (task.md §5.2: "small auto-ISO drift
+/// walks the ISO several stops without changing the moment (todo.md §5.2: "small auto-ISO drift
 /// ignored").
 #[must_use]
 pub fn exposure_ev_between<P: crate::batch::Photo + ?Sized>(prev: &P, cur: &P) -> f32 {
@@ -199,7 +199,7 @@ pub fn exposure_ev_between<P: crate::batch::Photo + ?Sized>(prev: &P, cur: &P) -
 const ISO_DRIFT_WEIGHT: f32 = 0.35;
 
 /// Rolling median of Δt among the neighbouring short gaps, so thresholds adapt from 6 fps to 11 fps
-/// to 40 fps instead of being hard-coded to one speed (task.md §5.3 step 1).
+/// to 40 fps instead of being hard-coded to one speed (todo.md §5.3 step 1).
 ///
 /// `gaps[i]` is the Δt from element `i-1` to element `i` in capture order; `gaps[0]` is unused.
 #[derive(Debug, Clone)]

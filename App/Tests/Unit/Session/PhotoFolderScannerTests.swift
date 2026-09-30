@@ -180,7 +180,7 @@ struct PhotoFolderScannerTests {
         #expect(data.batches.flatMap(\.photoIds).count == 15)
     }
 
-    @Test("A file that is not an image is skipped, never fatal (task.md §8)")
+    @Test("A file that is not an image is skipped, never fatal (todo.md §8)")
     func unreadableFileDoesNotBlockTheFolder() throws {
         let folder = folder()
         writePhoto(folder, "IMG_0001.jpg")

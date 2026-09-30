@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 @testable import Firstcut
 
-@Suite("Visual signatures (task.md §5.4 phase two)")
+@Suite("Visual signatures (todo.md §5.4 phase two)")
 struct VisualSigWorkerTests {
   /// Writes a JPEG of a horizontal gradient (dark left to bright right) to a temp file.
   private func gradientJPEG(width: Int = 64, height: Int = 48, invert: Bool = false) throws -> URL {

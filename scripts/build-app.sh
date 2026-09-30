@@ -3,7 +3,7 @@
 # Owner: infra. Builds the shippable app: Rust core -> bindings -> Xcode project -> Release app
 # -> ad-hoc signature -> dist/Firstcut.app.
 #
-# This is the "clean clone to working app" path (task.md §13). No manual steps, no paid Apple
+# This is the "clean clone to working app" path (todo.md §13). No manual steps, no paid Apple
 # Developer account, no notarization: the app is ad-hoc signed, which is what the Homebrew cask and
 # the curl download rely on.
 #
@@ -64,7 +64,7 @@ APP="$FIRSTCUT_ROOT/build/dd/Build/Products/$CONFIGURATION/Firstcut.app"
 
 # 4. Stage and sign. The Rust core is statically linked, so the .app is self-contained: there is no
 #    dylib to embed and only one code signature to make. Ad-hoc (-s -) is deliberate: without a
-#    paid Developer ID we cannot notarize (task.md §13).
+#    paid Developer ID we cannot notarize (todo.md §13).
 log "Staging dist/Firstcut.app"
 rm -rf "$FIRSTCUT_ROOT/dist"
 mkdir -p "$FIRSTCUT_ROOT/dist"

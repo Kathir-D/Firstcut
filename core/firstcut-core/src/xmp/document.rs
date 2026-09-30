@@ -4,7 +4,7 @@
 //! them, and the user may have edited one by hand. So every operation here is a **merge**: the
 //! document is kept as text, only the `xmp:Rating` and `xmp:Label` spans are replaced, and
 //! everything else — other namespaces, `xmp:ModifyDate`, a tool's comment, the whitespace, the
-//! xpacket wrapper — comes out byte for byte identical (task.md §11).
+//! xpacket wrapper — comes out byte for byte identical (todo.md §11).
 //!
 //! Values can be written in either of the two shapes XMP allows, and both are read:
 //! attribute form (`xmp:Rating="4"`, what Lightroom writes) and element form
@@ -381,7 +381,7 @@ pub fn template(values: &XmpValues) -> String {
     )
 }
 
-/// The path of the sidecar for a photo, Lightroom's way (task.md §11): the photo's base name with
+/// The path of the sidecar for a photo, Lightroom's way (todo.md §11): the photo's base name with
 /// `.xmp`, so `Sat/IMG_0001.CR3` → `Sat/IMG_0001.xmp`. A RAW+JPEG pair shares it, as in Lightroom.
 ///
 /// Firstcut used to write `IMG_0001.CR3.xmp`, which Lightroom never reads, so a rating made here

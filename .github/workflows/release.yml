@@ -1,6 +1,6 @@
 name: release
 
-# Owner: infra. Publishes a release when a v* tag is pushed (task.md §13):
+# Owner: infra. Publishes a release when a v* tag is pushed (todo.md §13):
 #
 #   VERSION from the tag -> build-app.sh (ad-hoc signed) -> package-release.sh (zip + SHA-256)
 #   -> GitHub Release with the zip, its checksum and the cask -> the cask is bumped in
@@ -25,7 +25,7 @@ jobs:
   release:
     # macos-26 is the arm64 image with Xcode 26, the toolchain that compiles the Liquid Glass path
     # (`glassEffect`); a build on macos-15 / Xcode 16 would ship the material fallback on every Mac.
-    # The Xcode 16 build stays in ci.yml as the minimum-toolchain check (task.md §2).
+    # The Xcode 16 build stays in ci.yml as the minimum-toolchain check (todo.md §2).
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4

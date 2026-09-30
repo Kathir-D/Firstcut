@@ -1,6 +1,6 @@
 // Owner: app-logic.
 //
-// The folders the user opened recently, with how far through each one they got (task.md §9.6, the
+// The folders the user opened recently, with how far through each one they got (todo.md §9.6, the
 // Welcome window: "recent sessions with progress (resume)"). The shoot itself resumes from its
 // session database; this is only the list that gets the user back to it.
 //

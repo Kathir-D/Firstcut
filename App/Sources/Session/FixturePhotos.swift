@@ -2,7 +2,7 @@
 //
 // Turns the exiftool dumps in `tests/fixtures/exiftool/<game>.json` into the `PhotoMeta` values from
 // [photo-meta.md], so the whole model layer can be built, demoed and tested before core-meta's
-// parser exists (task.md §0.7). Once core-batch's `dump-meta` output lands in
+// parser exists (todo.md §0.7). Once core-batch's `dump-meta` output lands in
 // `tests/fixtures/meta/<game>.json` this file is deleted in favour of decoding that instead.
 //
 // Everything in here is **mock-grade on purpose**: the batch splitting is the §5.3 timing heuristic

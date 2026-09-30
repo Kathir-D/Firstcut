@@ -25,7 +25,7 @@ struct GlassBackground<Content: View>: View {
   /// Liquid Glass where the toolchain and the system have it, the closest material elsewhere.
   ///
   /// `glassEffect` is in the macOS 26 SDK (Xcode 26, Swift 6.2). CI keeps Xcode 16 as the
-  /// minimum-toolchain check (task.md §2), which has no such API, so the call is compiled only where
+  /// minimum-toolchain check (todo.md §2), which has no such API, so the call is compiled only where
   /// it exists. The `#if` wraps whole statements, never half of an `if`/`else` chain, which the
   /// newer compiler rejects.
   @ViewBuilder

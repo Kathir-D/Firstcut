@@ -2,7 +2,7 @@
 //
 // Finder-style filmstrip: the current batch only, one horizontally scrolling strip of thumbnails at
 // their own aspect ratio, the selected frame on a rounded gray plate, rating stars/flags/labels in
-// stars mode and green/red keep rings in keep mode (task.md §6.1, §6.2, §9.3).
+// stars mode and green/red keep rings in keep mode (todo.md §6.1, §6.2, §9.3).
 //
 // Layer-backed and drawn by hand rather than one view per frame, so 60+ frames stay smooth.
 

@@ -84,7 +84,7 @@ public protocol CoreSessionAPI: AnyObject, Sendable {
     /// `Session::set_xmp_settings`. A core with no sidecar support ignores it.
     func applyMetadataSettings(_ settings: MetadataSettings)
 
-    /// Force the debounced XMP queue out. On batch change and on quit (task.md §6.3).
+    /// Force the debounced XMP queue out. On batch change and on quit (todo.md §6.3).
     func flush()
     func close()
 }

@@ -1,4 +1,4 @@
-//! Session persistence (task.md §11). Owner: core-store.
+//! Session persistence (todo.md §11). Owner: core-store.
 //!
 //! One SQLite database per shoot, holding everything needed to resume: which files are in the
 //! shoot, how they were batched, every rating, the undo log, the cursor, which batches were seen,
@@ -12,7 +12,7 @@
 //! * [`identity`] — volume + path + fingerprint, i.e. what makes a folder "the same shoot".
 //! * [`schema`] — the SQL and the forward-only migrations.
 //! * [`records`] — typed rows and the only statements in the codebase.
-//! * [`rating`] — ratings, flags, labels, tiers and the two rating modes (task.md §6).
+//! * [`rating`] — ratings, flags, labels, tiers and the two rating modes (todo.md §6).
 //!
 //! Nothing here touches the photo files themselves: the session database lives in Application
 //! Support, and no function in this module opens a file inside the shoot.

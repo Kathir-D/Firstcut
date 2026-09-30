@@ -56,14 +56,14 @@ pub struct RatingRow {
     pub rev: i64,
     /// True while the sidecar still has to be written.
     pub xmp_pending: bool,
-    /// The exact `xmp:Rating` value to write, including -1 for reject (task.md §6.2).
+    /// The exact `xmp:Rating` value to write, including -1 for reject (todo.md §6.2).
     pub xmp_rating: Option<i64>,
     /// The exact `xmp:Label` value to write.
     pub xmp_label: Option<String>,
     pub updated_at_ms: i64,
 }
 
-/// A rating change, with everything needed to undo it (task.md §6.3).
+/// A rating change, with everything needed to undo it (todo.md §6.3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HistoryEntry {
     pub seq: i64,
@@ -78,7 +78,7 @@ pub struct HistoryEntry {
     pub undone: bool,
 }
 
-/// One physical file operation from the Finish step (task.md §9.7).
+/// One physical file operation from the Finish step (todo.md §9.7).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileOpRow {
     pub id: i64,

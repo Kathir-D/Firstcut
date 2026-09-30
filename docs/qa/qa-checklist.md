@@ -1,6 +1,6 @@
 # Manual QA checklist
 
-- **Scope:** task.md §9 (every screen), §12 (full cull, finish step), plus the safety rules of §9.7.
+- **Scope:** todo.md §9 (every screen), §12 (full cull, finish step), plus the safety rules of §9.7.
 - **Sign-off:** required for v0.1.0 on **macOS 26 and macOS 15**.
 
 This is the human pass. The automated suites (`App/Tests/Integration/`, `App/Tests/Performance/`)
@@ -9,7 +9,7 @@ prove behaviour; this proves the app *feels* like a first-party Apple app, which
 ## How to run it
 
 - **Never cull the originals in `~/Documents/testing`.** Copy or hard-link one game to a scratch
-  folder first and work there. task.md §9.7 says originals are only moved at the explicit finish step,
+  folder first and work there. todo.md §9.7 says originals are only moved at the explicit finish step,
   and that step is exactly what this checklist exercises — on a *copy*.
   `FIRSTCUT_TEST_PHOTOS` can point at a scratch root; qa's harness uses it for the automated runs.
 - **Both rating modes, all four games**, at least one game start to finish per mode.
@@ -30,12 +30,12 @@ Legend: `[ ]` not run · `[x]` passed · `[!]` failed → bug id · `[-]` not ap
 
 - [ ] Welcome window appears on launch: Open Folder…, recent sessions, drag-and-drop target.
 - [ ] Opening a 708-photo game reaches the first photo in under a second, with **no spinner** and no
-      progressive sharpening (task.md §7.3).
+      progressive sharpening (todo.md §7.3).
 - [ ] Metadata scan completes in the background; the UI never blocks on it.
 - [ ] Provisional batches appear before thumbnails finish; the count settles without the batch the
       user is in ever being re-split under them.
 - [ ] Quit mid-cull, relaunch, pick the recent session: cursor, visited batches, and ratings all
-      come back (task.md §11).
+      come back (todo.md §11).
 - [ ] Quit immediately after rating (inside the 1 s XMP debounce window), relaunch: **no rating is
       lost** (session-api.md guarantee: zero DB writes lost).
 - [ ] Drag a folder onto the Dock icon opens it.
@@ -93,7 +93,7 @@ Legend: `[ ]` not run · `[x]` passed · `[!]` failed → bug id · `[-]` not ap
 - [ ] ⌘Z / ⇧⌘Z undo and redo rating, flag and label changes; undoing in another batch **navigates
       there first**.
 - [ ] **Only the current batch can be rated**: an attempt to rate a photo in another batch is
-      impossible from the UI (task.md §2, rating scope).
+      impossible from the UI (todo.md §2, rating scope).
 - [ ] Auto-advance (Caps Lock) moves on after rating; off by default, toggle persists.
 - [ ] Stars mode: 5–4 = keep, 3 = good, 2–1 = maybe, 0 = unrated.
 - [ ] Keep mode: `P` toggles keep, `X` rejects, and the tiers map to keep / unrated / rejected.
@@ -185,4 +185,4 @@ Full numbers and the regression rule: [`perf-baselines.md`](perf-baselines.md).
 - [ ] `docs/qa/perf-baselines.md`: baselines recorded on both OS versions, no metric over budget.
 - [ ] Originals in `~/Documents/testing`: checksums unchanged (re-verified).
 - [ ] Checklist above: every row `[x]`, `[-]`, or `[!]` with a closed bug.
-- [ ] Wave-4 sign-off recorded in `task.md` §14 (M7/M8).
+- [ ] Wave-4 sign-off recorded in `todo.md` §14 (M7/M8).

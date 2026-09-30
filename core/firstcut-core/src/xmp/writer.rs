@@ -2,7 +2,7 @@
 //!
 //! A rating keystroke must return in well under a millisecond (docs/contracts/session-api.md), so
 //! the sidecar is never written on the caller's thread. Instead the rating goes into a small map,
-//! and a background thread writes whatever has been sitting there for [`DEADLINE`] (task.md §6.3:
+//! and a background thread writes whatever has been sitting there for [`DEADLINE`] (todo.md §6.3:
 //! "Each change writes to the DB immediately and to XMP on a debounced background queue (≤ 1 s),
 //! flushed on batch change and on quit. A crash never loses more than ~1 s").
 //!
@@ -124,7 +124,7 @@ impl XmpWriter {
     }
 
     /// Writes everything that is waiting and returns when the queue is empty *and* nothing is
-    /// mid-write. Used on batch change and on quit (task.md §6.3).
+    /// mid-write. Used on batch change and on quit (todo.md §6.3).
     pub fn flush(&self) {
         self.shared.flushing.store(true, Ordering::Release);
         self.shared.signal.notify_all();
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn a_rating_reaches_the_sidecar_within_a_second() {
-        // The promise in task.md §6.3.
+        // The promise in todo.md §6.3.
         assert!(DEADLINE <= Duration::from_secs(1));
         let dir = tempfile::tempdir().unwrap();
         let path = sidecar(dir.path(), "IMG_0001.CR3.xmp");

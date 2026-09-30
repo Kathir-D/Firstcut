@@ -2,7 +2,7 @@
 //
 // Window, toolbar and menu wiring. The window is a SwiftUI `Window` scene so the toolbar picks up
 // the system Liquid Glass on macOS 26 and the material fallback on 15 for free; `AppDelegate`
-// forces the dark appearance app-wide (task.md §2).
+// forces the dark appearance app-wide (todo.md §2).
 
 import AppKit
 import SwiftUI
@@ -24,7 +24,7 @@ struct FirstcutApp: App {
     .defaultSize(width: 1440, height: 900)
     .commands { FirstcutCommands(environment: environment) }
 
-    // ⌘, opens this (task.md §9.8); SwiftUI adds the "Settings…" item to the app menu itself.
+    // ⌘, opens this (todo.md §9.8); SwiftUI adds the "Settings…" item to the app menu itself.
     Settings {
       SettingsView(model: environment.model)
     }
@@ -99,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     true
   }
 
-  /// A crash never loses more than about a second of ratings (task.md §6.3), and a *quit* loses
+  /// A crash never loses more than about a second of ratings (todo.md §6.3), and a *quit* loses
   /// none: the debounced sidecar queue, the settings and the recents list are written out first.
   func applicationWillTerminate(_ notification: Notification) {
     MainActor.assumeIsolated { AppEnvironment.shared.model.prepareForQuit() }

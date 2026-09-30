@@ -1,10 +1,10 @@
 // Owner: app-logic.
 //
-// The catalog every UI surface enumerates: the menus (task.md §9.1), the keymap editor
+// The catalog every UI surface enumerates: the menus (todo.md §9.1), the keymap editor
 // (Settings → Keyboard) and the conflict report. Keeping it next to `Command` is what guarantees a
 // command can't exist without a title, a menu home and a defined default key.
 //
-// Titles are localizable from day one even though v0.1 ships English only (task.md §1 non-goals).
+// Titles are localizable from day one even though v0.1 ships English only (todo.md §1 non-goals).
 
 import Foundation
 
@@ -40,7 +40,7 @@ public enum CommandCatalog {
     public static let entries: [CommandCatalogEntry] = {
         var list: [CommandCatalogEntry] = []
 
-        // Photo: navigation + rating (task.md §6, §9.4, §10)
+        // Photo: navigation + rating (todo.md §6, §9.4, §10)
         list += [CommandCatalogEntry(command: .photoPrevious, menu: .photo, title: "Previous Photo")]
         list += [CommandCatalogEntry(command: .photoNext, menu: .photo, title: "Next Photo")]
         list += [CommandCatalogEntry(command: .batchPrevious, menu: .photo, title: "Previous Batch")]
@@ -81,7 +81,7 @@ public enum CommandCatalog {
                 command: .toggleAutoAdvance, menu: .photo, title: "Auto-Advance")
         ]
 
-        // View (task.md §9.2, §9.3, §9.5, §9.6)
+        // View (todo.md §9.2, §9.3, §9.5, §9.6)
         list += [
             CommandCatalogEntry(command: .showLoupe, menu: .view, title: "Loupe"),
             CommandCatalogEntry(command: .showGrid, menu: .view, title: "Grid"),
@@ -134,7 +134,7 @@ extension ColorLabel {
 }
 
 /// Localization helper. v0.1 is English only, so the key *is* the English text; adding a
-/// Localizable.strings later changes nothing at the call sites (task.md §1 non-goals).
+/// Localizable.strings later changes nothing at the call sites (todo.md §1 non-goals).
 enum CatalogText {
     static func localized(_ value: String) -> String {
         NSLocalizedString(value, comment: "")

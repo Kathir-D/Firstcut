@@ -1,4 +1,4 @@
-//! Schema and migrations for the session database (task.md §11).
+//! Schema and migrations for the session database (todo.md §11).
 //!
 //! Migrations are a list of SQL files applied in order and recorded in SQLite's `user_version`.
 //! Rules for adding one (see docs/contracts/session-api.md):
