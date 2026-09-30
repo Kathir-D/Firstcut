@@ -19,9 +19,9 @@ import Foundation
 final class VisualSigWorker {
     /// Photos per hand-off. Each hand-off may re-batch, so it is neither per photo (a re-batch per
     /// photo is wasted work) nor the whole shoot (nothing would refine until the very end).
-    static let chunkSize = 96
+    nonisolated static let chunkSize = 96
     /// Decodes in flight at once. Well under the core count: this is background work.
-    static let maxConcurrent = 3
+    nonisolated static let maxConcurrent = 3
 
     private var task: Task<Void, Never>?
 
