@@ -455,10 +455,9 @@ fn group_files(folder: &Path, photo: &PhotoRow) -> Vec<GroupFile> {
 /// One op per file of the group, all sharing the destination's base name.
 ///
 /// The group is renamed as a group: the destination decides the base name, and every member keeps
-/// everything after the shared base, so `IMG_0001.CR3`, `IMG_0001.JPG` and `IMG_0001.CR3.xmp`
-/// become `IMG_0001-2.CR3`, `IMG_0001-2.JPG` and `IMG_0001-2.CR3.xmp` and never come apart. (Only
-/// the last extension was kept before, which turned the sidecar into `IMG_0001.xmp`: a name
-/// Firstcut itself does not read back, so the rating was lost after a Finish.)
+/// everything after the shared base, so `IMG_0001.CR3`, `IMG_0001.JPG`, `IMG_0001.xmp` and a
+/// darktable `IMG_0001.CR3.xmp` become `IMG_0001-2.CR3`, `IMG_0001-2.JPG`, `IMG_0001-2.xmp` and
+/// `IMG_0001-2.CR3.xmp`, and never come apart or change which file each sidecar belongs to.
 fn destination_ops(
     kind: FileOpKind,
     primary: &str,
