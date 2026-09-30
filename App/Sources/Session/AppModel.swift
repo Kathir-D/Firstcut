@@ -52,6 +52,9 @@ public final class AppModel: SessionListener, KeyRouterSource {
     public var imageProvider: ImageProvider? { images as? ImageProvider }
 
     /// ui owns these two; the model asks, it doesn't do.
+    /// Folders opened before, newest first, for the Welcome window (task.md §9.6).
+    public private(set) var recents: [RecentFolder] = []
+
     public var onRequestOpenFolder: (() -> Void)?
     public var onRequestToggleFullScreen: ((Bool) -> Void)?
 
@@ -60,6 +63,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
     private let backendBox = SessionBox()
     private let sessionFactory: (URL) throws -> any SessionBackend
     private let settingsStore: SettingsStore
+    private let recentsStore: RecentFoldersStore
     private var keymapStore: KeymapStore
     private var photoIndex: [PhotoID: Int] = [:]
     private var batchIndexByID: [BatchID: Int] = [:]
@@ -88,6 +92,8 @@ public final class AppModel: SessionListener, KeyRouterSource {
         sessionFactory = dependencies.sessionFactory
         settings = dependencies.settings
         settingsStore = dependencies.settingsStore
+        recentsStore = RecentFoldersStore(directory: dependencies.settingsStore.directory)
+        recents = recentsStore.load()
         keymapStore = dependencies.keymapStore
         keymap = dependencies.keymap
         hudVisible = dependencies.settings.viewer.hudVisible
@@ -232,9 +238,53 @@ public final class AppModel: SessionListener, KeyRouterSource {
         phase = .culling
         pushCursor()
         updatePipelineFocus()
+        recordRecent()
+    }
+
+    /// Remembers this folder and how far through it the user is. Called when a folder opens, when
+    /// it closes and when the app quits, which is enough for "412 of 708 rated" on the Welcome
+    /// screen without writing a file on every keystroke.
+    public func recordRecent() {
+        guard phase == .culling || phase == .finishing, !allPhotos.isEmpty else { return }
+        let folder = URL(fileURLWithPath: backend.data.folder, isDirectory: true)
+        guard !folder.path.isEmpty else { return }
+        recents = RecentFoldersStore.recording(
+            RecentFolder(
+                path: folder.path,
+                name: folderName.isEmpty ? folder.lastPathComponent : folderName,
+                openedAt: Date(), totalPhotos: allPhotos.count, ratedPhotos: ratedCount),
+            in: recents)
+        recentsStore.save(recents)
+    }
+
+    public func forgetRecent(_ folder: RecentFolder) {
+        recents.removeAll { $0.path == folder.path }
+        recentsStore.save(recents)
+    }
+
+    /// Opens a folder from the Welcome list. One that has gone (an unplugged card) is reported and
+    /// dropped from the list instead of failing silently every time.
+    public func openRecent(_ folder: RecentFolder) {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else {
+            lastError = "\(folder.name) is not available. Connect the drive or card and try again."
+            return
+        }
+        open(folder: folder.url)
+    }
+
+    /// Everything that must reach the disk before the process ends: the debounced XMP queue
+    /// (task.md §6.3, "flushed on batch change and on quit"), the settings and the recents list.
+    public func prepareForQuit() {
+        recordRecent()
+        backend.flush()
+        flushSettings()
     }
 
     public func closeSession() {
+        recordRecent()
         backend.flush()
         backend.listener = nil
         allPhotos = []

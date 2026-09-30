@@ -26,6 +26,7 @@ protocol CullViewState: AnyObject {
   var showsClippingOverlay: Bool { get }
   var isZoomLocked: Bool { get }
   var finishStage: FinishStage { get }
+  var recentFolders: [RecentFolder] { get }
   var visibleInfoFields: Set<InfoField> { get }
   var folderURL: URL? { get }
   var autoAdvanceEnabled: Bool { get }
@@ -34,6 +35,8 @@ protocol CullViewState: AnyObject {
   var images: CullImageSource { get }
   func send(_ action: CullAction)
   func finish(_ action: FinishAction)
+  func openRecent(_ folder: RecentFolder)
+  func forgetRecent(_ folder: RecentFolder)
 }
 
 /// A photo as the views consume it. REV-53 and REV-69: `tier` and `isKeep` are **values the model

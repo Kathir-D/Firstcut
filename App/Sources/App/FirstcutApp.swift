@@ -80,4 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     true
   }
+
+  /// A crash never loses more than about a second of ratings (task.md §6.3), and a *quit* loses
+  /// none: the debounced sidecar queue, the settings and the recents list are written out first.
+  func applicationWillTerminate(_ notification: Notification) {
+    MainActor.assumeIsolated { AppEnvironment.shared.model.prepareForQuit() }
+  }
 }

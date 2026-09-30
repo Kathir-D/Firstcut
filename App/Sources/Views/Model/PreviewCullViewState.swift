@@ -33,6 +33,7 @@ final class PreviewCullViewState: CullViewState {
   var showsClippingOverlay = false
   var isZoomLocked = false
   var finishStage: FinishStage = .hidden
+  var recentFolders: [RecentFolder] = []
   var visibleInfoFields: Set<InfoField> = InfoField.all
   var folderURL: URL? { nil }
   var autoAdvanceEnabled = false
@@ -59,6 +60,9 @@ final class PreviewCullViewState: CullViewState {
   }
 
   // MARK: - CullViewState
+
+  func openRecent(_ folder: RecentFolder) {}
+  func forgetRecent(_ folder: RecentFolder) {}
 
   func finish(_ action: FinishAction) {
     if case .cancel = action { finishStage = .hidden }
