@@ -44,6 +44,15 @@ import Foundation
     func markVisited(batch: BatchID)
     func lastPhotoInBatch(_ batch: BatchID) -> PhotoID?
 
+    /// Settings → General: which star rating counts as a keep (4 or 5). Sent after a folder opens
+    /// and again whenever the setting changes, because the core's Finish plan and `tierCounts` read
+    /// it: without this call "only 5 stars" changes the filmstrip but not what Finish keeps, and the
+    /// summary sheet disagrees with the ratings the user just made.
+    ///
+    /// Not a stored setting on the session — the app's settings are the record (session.rs keeps
+    /// `keep_stars` in memory for the same reason).
+    func setKeepThreshold(_ stars: Int)
+
     /// Thumbnails finished for some photos; may re-batch unvisited batches.
     func submitVisualSigs(_ sigs: [(PhotoID, VisualSig)])
 
@@ -69,6 +78,7 @@ import Foundation
 
 extension SessionBackend {
     public func applyMetadataSettings(_ settings: MetadataSettings) {}
+    public func setKeepThreshold(_ stars: Int) {}
     public var canRescan: Bool { false }
     public func rescan() -> SessionData? { nil }
 }

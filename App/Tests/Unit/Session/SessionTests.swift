@@ -587,6 +587,34 @@ struct AppModelRatingTests {
         #expect(model.currentPhoto?.tier == .keep)
     }
 
+    @Test("The keep threshold reaches the core on open and on every change (todo.md §0.3)")
+    func keepThresholdReachesTheCore() throws {
+        let session = MockSession(photos: FixturePhotos.syntheticPhotos(count: 12, burstSize: 3))
+        let model = AppModel(.testing(backend: session))
+        // Before a folder is open there is no core to tell.
+        #expect(session.keepThreshold == nil)
+        model.open(session, folderName: "Test")
+        #expect(session.keepThreshold == RatingRules.defaultKeepThreshold)
+        model.updateSettings { $0.keepThreshold = 5 }
+        #expect(session.keepThreshold == 5)
+        // An unrelated setting change must not re-send it: the value is already right, and a
+        // redundant call would be a behaviour nothing needs.
+        model.updateSettings { $0.viewer.zoomLock = true }
+        #expect(session.keepThreshold == 5)
+    }
+
+    @Test("A folder opened while 'only 5 stars' is set is planned with that threshold")
+    func keepThresholdIsSentBeforeTheFirstPlan() throws {
+        var tuned = AppSettings()
+        tuned.general.keepThreshold = 5
+        let session = MockSession(photos: FixturePhotos.syntheticPhotos(count: 12, burstSize: 3))
+        let model = AppModel(.testing(backend: session, settings: tuned))
+        model.open(session, folderName: "Test")
+        // A 4-star photo is a keep at the default threshold, but this shoot is set to 5-only, so the
+        // core has to be told at open — before anything reads it — rather than on the first change.
+        #expect(session.keepThreshold == 5)
+    }
+
     @Test("Nothing can be rated before a folder is open")
     func ratingWithoutSession() throws {
         let model = AppModel(.preview(game: nil))

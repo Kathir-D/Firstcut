@@ -98,6 +98,14 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
         try? session.setRatingMode(mode: mode.ffi)
     }
 
+    /// The core clamps to 4…5 (`clamp_keep_stars`), so anything outside that is a no-op rather
+    /// than an error. Called after a folder opens and whenever the setting changes: the core holds
+    /// it in memory, so a shoot opened later in the same launch would otherwise plan Finish with
+    /// the default 4.
+    public func setKeepThreshold(_ stars: Int) {
+        session.setKeepThreshold(stars: UInt8(clamping: stars))
+    }
+
     public func setRating(photo: PhotoID, _ rating: Rating) throws -> RatingChange {
         RatingChange(try session.setRating(photo: photo, rating: rating.ffi))
     }

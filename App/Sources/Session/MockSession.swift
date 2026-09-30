@@ -200,6 +200,15 @@ import Foundation
 
     public func lastPhotoInBatch(_ batch: BatchID) -> PhotoID? { data.lastPhotoInBatch[batch] }
 
+    /// The threshold the core was last told, so a test can assert the app actually sends it rather
+    /// than only recomputing its own tiers. `nil` until the first call, which is what makes
+    /// "the app sends it on open" checkable.
+    public private(set) var keepThreshold: Int?
+
+    public func setKeepThreshold(_ stars: Int) {
+        keepThreshold = stars
+    }
+
     public func flush() {
         flushCount += 1
         xmpWrites.removeAll()

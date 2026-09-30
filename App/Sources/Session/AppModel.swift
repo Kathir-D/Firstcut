@@ -245,6 +245,11 @@ public final class AppModel: SessionListener, KeyRouterSource {
         backendBox.session = session
         session.listener = self
         session.applyMetadataSettings(settings.metadata)
+        // The core's Finish plan and `tierCounts` read the keep threshold, and it is not stored on
+        // the session (the app's settings are the record). Without this, "only 5 stars" changes the
+        // filmstrip while Finish still keeps every 4-star photo, and the summary sheet disagrees
+        // with the ratings the user just made.
+        session.setKeepThreshold(settings.keepThreshold)
         self.folderName = folderName ?? (data.folder as NSString).lastPathComponent
         skippedFiles = data.skipped
         allPhotos = data.photos.map {
@@ -711,10 +716,17 @@ public final class AppModel: SessionListener, KeyRouterSource {
         mutation(&settings)
         guard settings != before else { return }
 
+        let thresholdChanged = settings.keepThreshold != before.keepThreshold
         if settings.general.ratingMode != before.general.ratingMode {
             applyRatingModeChange(from: before.general.ratingMode)
-        } else if settings.keepThreshold != before.keepThreshold {
+        } else if thresholdChanged {
             recomputeTiers()
+        }
+        if thresholdChanged {
+            // The core holds the threshold in memory rather than in the database (the app's
+            // settings are the record), so it has to be told again: Finish plans and the summary
+            // sheet's tier counts read it there.
+            backend.setKeepThreshold(settings.keepThreshold)
         }
         if settings.viewer.zoomLock != before.viewer.zoomLock {
             viewer.zoomLock = settings.viewer.zoomLock

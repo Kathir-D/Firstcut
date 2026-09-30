@@ -84,6 +84,9 @@ public protocol CoreSessionAPI: AnyObject, Sendable {
     /// `Session::set_xmp_settings`. A core with no sidecar support ignores it.
     func applyMetadataSettings(_ settings: MetadataSettings)
 
+    /// `Session::set_keep_stars`. Clamped to 4…5 by the core, so a bogus value is harmless.
+    func setKeepThreshold(_ stars: Int)
+
     /// Force the debounced XMP queue out. On batch change and on quit (todo.md §6.3).
     func flush()
     func close()
@@ -255,6 +258,10 @@ public final class CoreSessionBackend: SessionBackend {
 
     public func applyMetadataSettings(_ settings: MetadataSettings) {
         core.applyMetadataSettings(settings)
+    }
+
+    public func setKeepThreshold(_ stars: Int) {
+        core.setKeepThreshold(stars)
     }
 
     public var canRescan: Bool { true }

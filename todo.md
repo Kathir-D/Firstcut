@@ -54,10 +54,11 @@ Only a person with the Mac, the test photos, the apps or the repo settings can d
 
 Not blocking v0.1.0; an agent can do these.
 
-- **Keep threshold → core:** the core takes it (`Session.setKeepThreshold`, used by Finish and
-  `tierCounts`), but the app does not send it yet. Call it from `AppModel` after a folder opens and
-  whenever `settings.keepThreshold` changes; until then "Only 5 stars" changes the filmstrip, not
-  what Finish keeps.
+- ~~**Keep threshold → core:**~~ **Done.** `AppModel` sends `session.setKeepThreshold(...)` after a
+  folder opens and whenever `settings.keepThreshold` changes, so "Only 5 stars" now reaches Finish
+  and `tierCounts`, not just the filmstrip. Wired through `SessionBackend` → `CoreSessionAPI` →
+  `UniFFICoreSession` (the FFI export already existed; the app simply never called it). Two tests
+  assert the call, and both fail if it is removed.
 - **One definition per type (REV-72/73):** `Shared/CoreTypes.swift`, `Session/PipelineMirror.swift`
   and `Session/SessionTypes.swift` hand-mirror types the Rust core also defines.
 - **Strict CI:** Swift warnings as errors and `swift-format` enforced (REV-12, REV-59); the tree is
@@ -106,68 +107,38 @@ Not blocking v0.1.0; an agent can do these.
 > rewrites this block in the same commit as its last change, so the next agent can pick up without the
 > chat. Newest state only; history is `git log`.
 
-**As of 2026-09-30 (planning pass after the bug review):**
+**As of 2026-09-30 (agent session on Kathir's Mac, not the cloud container):**
 
-- **This file was `task.md`**; it is now `todo.md`. References were updated everywhere except
-  `App/Sources/Session/AppModel.swift` and `App/Sources/Pipeline/ImageProvider.swift`, which this
-  session was not allowed to read or edit. They still say `task.md` in comments; fix them the next
-  time either file is touched. The new sections are §7.5 (how the performance targets will be met:
-  research and work items) and §16 (later features: manual batch split/merge; batch edits with
-  presets imported from Lightroom, Capture One and others). `CONTINUE.md` is the prompt to hand the
-  next agent.
-- **Branches.** Work was pushed to `ccr-270c6e7f-gl7zpb`; `main` is fast-forwarded to it only once CI
-  (`ci.yml`) is green on the commit. Check `git log origin/main..origin/ccr-270c6e7f-gl7zpb`: anything
-  there is waiting on CI. If green, `git push origin <sha>:main` (fast-forward only, never force).
-- **Just finished (bug review of Finish, core side):** keep mode and stars mode agree on tiers (Swift
-  `RatingRules.tier` = Rust `Rating::tier`); a reject is never a keep; the keep threshold reaches
-  Finish and `tierCounts` in the core; Move and Trash work across volumes (EXDEV → copy, verify,
-  remove); Trash goes to `~/.Trash` or `<volume>/.Trashes/<uid>`; undo never overwrites a file that
-  came back; cross-volume moves count toward the free-space check; **Mark rejected** writes the
-  sidecar the plan names (it used to write `X.xmp.xmp` and failed when no sidecar existed yet);
-  **Write kept list** writes the kept names to the chosen file (it never wrote anything before) and
-  undo removes it; **Copy** verifies the byte count, keeps the modification time and never leaves a
-  partial copy behind; **split by stars** puts a keep-mode keep in `5`, not `0`. **Rename
-  recognition** (rescan): a new photo no longer inherits a deleted one's rating through a reused inode
-  number or a same-size file without a shutter count, and one vanished photo is claimed at most once.
-  **Undo Finish** keeps reversals that failed (a file back at the old path) in the log, so the next
-  Undo retries them instead of skipping to an older run. **Sidecars** follow the keep threshold ("only 5 stars" in keep
-  mode no longer writes a 4-star photo as a keep). Sidecars already written are not rewritten when
-  the threshold changes; they update the next time that photo's rating changes. **Rating undo/redo:**
-  redo replays in the right order, a new rating clears the redo stack, and ⌘Z with the real core
-  updates the photo on screen (the core and Swift disagreed on which side of an undo is which). **Moved
-  groups** keep each member's name (a sidecar used to be renamed on the way), and a companion already
-  at the destination renames the whole group. **Sidecar naming** now follows §11: Firstcut writes
-  `IMG_0001.xmp` (Lightroom's name; it wrote `IMG_0001.CR3.xmp` before, which Lightroom never
-  reads). A darktable-style `IMG_0001.CR3.xmp` is still read on import when there is no Lightroom
-  one, and moves with its photo, but is never renamed or rewritten (it may hold darktable's edits). **Sessions
-  survive a changed folder:** the database name includes a fingerprint of every image's name and
-  size, so deleting one photo in Finder, copying a second card in, or a Finish into `_Not kept/`
-  opened a blank session next time (ratings, batches and Finish undo gone). An earlier session for
-  the same path is now re-homed when its photos are mostly still there (see
-  docs/contracts/session-api.md), and renames made while the app was closed are reconciled at
-  open, not only on rescan.
+- **The blockers in the previous handoff are gone: this session is on the real Mac.** `cargo`,
+  `swift`, `xcodebuild`, `xcodegen`, `swift-format` and `exiftool` are all present, and the four
+  games are in `~/Documents/testing`. So the Swift changes below can be built and tested locally
+  instead of waiting for `ci.yml`, the perf rows in §7.5 can be measured rather than estimated, and
+  the app can be launched and screenshotted. Baseline before this session's work: `cargo fmt`
+  clean, `cargo clippy --all-targets -D warnings` clean, 343 Rust tests green, 231 Swift unit
+  tests + 21 integration tests green.
+- **Fixed (todo.md §0.3, the first item of the previous "Next, in order"):** the keep threshold now
+  reaches the core. `AppModel` calls `session.setKeepThreshold(settings.keepThreshold)` after a
+  folder opens and again whenever the setting changes, so "Only 5 stars" changes what Finish keeps
+  and the summary sheet's tier counts, not only the filmstrip. The FFI export existed; the app
+  never called it. New seam method on `SessionBackend` and `CoreSessionAPI`, implemented in
+  `UniFFICoreSession` and recorded by `MockSession`. Two tests in `SessionTests` fail if either
+  call is removed (checked by mutation).
 - **Next, in order:**
-  1. Wire the keep threshold from the app: `AppModel` must call `session.setKeepThreshold(...)` after
-     a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.
-  2. Check whether the thumbnail/preview cache flickers or is dropped when the watched folder changes
-     (`AppModel` folder-change handling and `Pipeline/ImageProvider.swift`).
-  3. §7.5 work items that need neither file: the CR3 full-size JPEG byte range next to `PRVW`
-     (and the wrong "full-size" doc comment on `PRVW` in `meta/cr3.rs`), `firstcut bench --folder`,
-     and `os_signpost` names. Then the ones in `ImageProvider`/`AppModel` once they can be read.
-  4. The core bug review is done: `execute_finish`, `undo_finish`, `mark_finish_folders`, Finish
-     planning (split-by-tier only moves kept photos, as the contract says; REQ-core-store-2 is still
-     the open question), rescan/rebatch, the scanner's grouping and the XMP import path were re-read.
-     The header readers are covered by mutation tests (`a_corrupted_*_never_panics`, byte flips over
-     CR3/JPEG/HEIF/PNG/TIFF/RAF); a 30k-iteration run per format found one overflow (HEIF `iloc`),
-     now fixed. Known and left: sidecar ratings are imported only when a folder's session
-     is first created, so a Lightroom-rated second card copied into an open shoot is not imported;
-     a different file saved under a known name (same path) inherits that name's rating.
-  5. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
-     they flag).
-- **Blocked on the owner:** the screenshots artifact cannot be downloaded from the cloud container (the
-  Actions artifact host is not on its network allow-list); the owner downloads it from the
-  `Screenshots` run in Actions. Swift is only compiled on CI (no toolchain in the container), so
-  every Swift change needs a green `ci.yml` run before `main` moves.
+  1. ~~Wire the keep threshold from the app.~~ Done above.
+  2. Check whether the thumbnail/preview cache flickers or is dropped when the watched folder
+     changes (`AppModel.folderDidChange` and `Pipeline/ImageProvider.swift`).
+  3. §7.5 work items: the CR3 full-size JPEG byte range next to `PRVW` (and the wrong "full-size"
+     doc comment on `PRVW` in `meta/cr3.rs`), `firstcut bench --folder`, `os_signpost` names. Then
+     `firstcut bench --folder` **run on the photos** and the rows written into
+     `docs/qa/perf-baselines.md` — the measurement the previous sessions could not make.
+  4. Known and left from the bug review: sidecar ratings are imported only when a folder's session
+     is first created, so a Lightroom-rated second card copied into an open shoot is not imported; a
+     different file saved under a known name (same path) inherits that name's rating.
+  5. UI polish from screenshots the app can now be launched to take.
+- **Still the owner's, for the reason that it is a judgement call, not for lack of a machine:** the
+  ground truth in `tests/fixtures/ground-truth/` (an agent must not synthesise it), the
+  Game1JENKS re-press decision, the "pick by eye" embedded-preview vs `CIRAWFilter` choice at
+  16", and the visual sign-off against Finder.
 
 ---
 

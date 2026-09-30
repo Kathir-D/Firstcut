@@ -30,6 +30,7 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
     var cursors: [SessionCursor] = []
     var visited: [BatchID] = []
     var ratingModeSets: [RatingMode] = []
+    var keepThresholdSets: [Int] = []
     var submittedSigBatches = 0
     var flushed = 0
     var closed = 0
@@ -55,6 +56,13 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         ratingModeSets.append(mode)
         self.mode = mode
+    }
+
+    /// The core clamps to 4…5, so the fake does too: a test that sends 3 must not see 3 reach a
+    /// "core" and conclude the app is allowed to send one.
+    func setKeepThreshold(_ stars: Int) {
+        lock.lock(); defer { lock.unlock() }
+        keepThresholdSets.append(stars)
     }
 
     func setRating(photo: PhotoID, _ rating: Rating) throws -> RatingChange {
