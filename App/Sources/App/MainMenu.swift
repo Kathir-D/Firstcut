@@ -26,21 +26,21 @@ struct FirstcutCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("Open Folder…") { environment.send(.openFolder) }
-                .keyboardShortcut("o", modifiers: .command)
+                .keyboardShortcut(shortcut(.openFolder))
         }
 
         CommandGroup(replacing: .saveItem) {
             Button("Finish Cull…") { environment.send(.finishCull) }
-                .keyboardShortcut(.return, modifiers: .command)
+                .keyboardShortcut(shortcut(.finishCull))
                 .disabled(!isCulling)
         }
 
         CommandGroup(replacing: .undoRedo) {
             Button("Undo Rating") { environment.send(.undo) }
-                .keyboardShortcut("z", modifiers: .command)
+                .keyboardShortcut(shortcut(.undo))
                 .disabled(!isCulling)
             Button("Redo Rating") { environment.send(.redo) }
-                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .keyboardShortcut(shortcut(.redo))
                 .disabled(!isCulling)
         }
 
@@ -50,19 +50,19 @@ struct FirstcutCommands: Commands {
 
         CommandMenu("Photo") {
             Button("Previous Photo") { environment.send(.photoPrevious) }
-                .keyboardShortcut(.leftArrow, modifiers: [])
+                .keyboardShortcut(shortcut(.photoPrevious))
                 .disabled(!isCulling)
             Button("Next Photo") { environment.send(.photoNext) }
-                .keyboardShortcut(.rightArrow, modifiers: [])
+                .keyboardShortcut(shortcut(.photoNext))
                 .disabled(!isCulling)
 
             Divider()
 
             Button("Previous Batch") { environment.send(.batchPrevious) }
-                .keyboardShortcut(.leftArrow, modifiers: .command)
+                .keyboardShortcut(shortcut(.batchPrevious))
                 .disabled(!isCulling)
             Button("Next Batch") { environment.send(.batchNext) }
-                .keyboardShortcut(.rightArrow, modifiers: .command)
+                .keyboardShortcut(shortcut(.batchNext))
                 .disabled(!isCulling)
 
             Divider()
@@ -72,65 +72,76 @@ struct FirstcutCommands: Commands {
                     Button("\(stars) Star\(stars == 1 ? "" : "s")") {
                         environment.send(.setRating(stars: UInt8(stars)))
                     }
-                    .keyboardShortcut(KeyEquivalent(Character("\(stars)")), modifiers: [])
+                    .keyboardShortcut(shortcut(.setStars(stars)))
                 }
                 Button("No Stars") { environment.send(.setRating(stars: 0)) }
-                    .keyboardShortcut("0", modifiers: [])
+                    .keyboardShortcut(shortcut(.setStars(0)))
             }
             .disabled(!isCulling)
 
             Menu("Flag") {
                 Button("Reject Flag") { environment.send(.setFlag(.reject)) }
-                    .keyboardShortcut("x", modifiers: [])
+                    .keyboardShortcut(shortcut(.rejectFlag))
                 Button("Unflag") { environment.send(.setFlag(.none)) }
-                    .keyboardShortcut("u", modifiers: [])
+                    .keyboardShortcut(shortcut(.unflag))
             }
             .disabled(!isCulling)
 
             Button(pickOrKeepTitle) { environment.send(pickOrKeepAction) }
-                .keyboardShortcut("p", modifiers: [])
+                .keyboardShortcut(shortcut(pickOrKeepCommand))
                 .disabled(!isCulling)
 
             Menu("Color Label") {
                 Button("Red") { environment.send(.setLabel(.red)) }
-                    .keyboardShortcut("6", modifiers: [])
+                    .keyboardShortcut(shortcut(.setLabel(.red)))
                 Button("Yellow") { environment.send(.setLabel(.yellow)) }
-                    .keyboardShortcut("7", modifiers: [])
+                    .keyboardShortcut(shortcut(.setLabel(.yellow)))
                 Button("Green") { environment.send(.setLabel(.green)) }
-                    .keyboardShortcut("8", modifiers: [])
+                    .keyboardShortcut(shortcut(.setLabel(.green)))
                 Button("Blue") { environment.send(.setLabel(.blue)) }
-                    .keyboardShortcut("9", modifiers: [])
+                    .keyboardShortcut(shortcut(.setLabel(.blue)))
             }
             .disabled(!isCulling)
         }
 
         CommandGroup(after: .toolbar) {
             Button("As Loupe") { environment.send(.setViewMode(.loupe)) }
-                .keyboardShortcut("e", modifiers: [])
+                .keyboardShortcut(shortcut(.showLoupe))
                 .disabled(!isCulling)
             Button("as Grid") { environment.send(.setViewMode(.grid)) }
-                .keyboardShortcut("g", modifiers: [])
+                .keyboardShortcut(shortcut(.showGrid))
                 .disabled(!isCulling)
-            Button("as Compare") { environment.send(.setViewMode(.compare(count: 2))) }
-                .keyboardShortcut("c", modifiers: [])
+            Button("as Compare (2-up)") { environment.send(.setViewMode(.compare(count: 2))) }
+                .keyboardShortcut(shortcut(.showCompare(2)))
+                .disabled(!isCulling)
+            Button("as Compare (3-up)") { environment.send(.setViewMode(.compare(count: 3))) }
+                .keyboardShortcut(shortcut(.showCompare(3)))
+                .disabled(!isCulling)
+            Button("as Compare (4-up)") { environment.send(.setViewMode(.compare(count: 4))) }
+                .keyboardShortcut(shortcut(.showCompare(4)))
+                .disabled(!isCulling)
+
+            Divider()
+
+            Toggle("Zoom Lock", isOn: zoomLockBinding)
                 .disabled(!isCulling)
 
             Divider()
 
             Button("Info Panel") { environment.send(.toggleInfoPanel) }
-                .keyboardShortcut("i", modifiers: [])
+                .keyboardShortcut(shortcut(.toggleInfoPanel))
                 .disabled(!isCulling)
             Button("Progress HUD") { environment.send(.toggleHUD) }
-                .keyboardShortcut("h", modifiers: [])
+                .keyboardShortcut(shortcut(.toggleHUD))
                 .disabled(!isCulling)
 
             Divider()
 
             Button("Clipping Overlay") { environment.send(.toggleClippingOverlay) }
-                .keyboardShortcut("j", modifiers: [])
+                .keyboardShortcut(shortcut(.toggleClippingOverlay))
                 .disabled(!isCulling)
             Button("AF Point Overlay") { environment.send(.toggleAFOverlay) }
-                .keyboardShortcut("a", modifiers: [])
+                .keyboardShortcut(shortcut(.toggleAFOverlay))
                 .disabled(!isCulling)
 
             Divider()
@@ -145,6 +156,29 @@ struct FirstcutCommands: Commands {
                 }
             }
         }
+    }
+
+    private var zoomLockBinding: Binding<Bool> {
+        Binding(
+            get: { environment.state.isZoomLocked },
+            set: { _ in environment.send(.toggleZoomLock) }
+        )
+    }
+
+    /// The menu shows the keymap's shortcut, so a remapped key is what the menu says, and it can
+    /// never disagree with what the key does. Only chords with ⌘, ⌃ or ⌥ become menu key
+    /// equivalents: an *unmodified* one (P, 1–5, the arrows) would fire from the menu even while a
+    /// text field is being typed in. Those keys are handled by the key router alone, which knows.
+    private func shortcut(_ command: Command) -> KeyboardShortcut? {
+        let model = environment.model
+        guard let chord = model.keymap.primaryChord(for: command, mode: model.ratingMode),
+            !chord.modifiers.isDisjoint(with: [.command, .control, .option])
+        else { return nil }
+        return KeyboardShortcut(chord: chord)
+    }
+
+    private var pickOrKeepCommand: Command {
+        environment.state.ratingMode == .keep ? .toggleKeep : .togglePickFlag
     }
 
     private var autoAdvanceBinding: Binding<Bool> {
@@ -162,5 +196,64 @@ struct FirstcutCommands: Commands {
 
     private var pickOrKeepAction: CullAction {
         environment.state.ratingMode == .keep ? .toggleKeep : .setFlag(.pick)
+    }
+}
+
+extension KeyboardShortcut {
+    /// A keymap chord as a menu key equivalent, or nil for keys a menu cannot express.
+    init?(chord: KeyChord) {
+        guard let equivalent = chord.key.keyEquivalent else { return nil }
+        var modifiers: EventModifiers = []
+        if chord.modifiers.contains(.command) { modifiers.insert(.command) }
+        if chord.modifiers.contains(.shift) { modifiers.insert(.shift) }
+        if chord.modifiers.contains(.option) { modifiers.insert(.option) }
+        if chord.modifiers.contains(.control) { modifiers.insert(.control) }
+        self.init(equivalent, modifiers: modifiers)
+    }
+}
+
+extension Key {
+    var keyEquivalent: KeyEquivalent? {
+        switch self {
+        case .leftArrow: .leftArrow
+        case .rightArrow: .rightArrow
+        case .upArrow: .upArrow
+        case .downArrow: .downArrow
+        case .escape: .escape
+        case .return: .return
+        case .tab: .tab
+        case .space: .space
+        case .delete: .delete
+        case .forwardDelete: .deleteForward
+        case .home: .home
+        case .end: .end
+        case .pageUp: .pageUp
+        case .pageDown: .pageDown
+        case .zero: "0"
+        case .one: "1"
+        case .two: "2"
+        case .three: "3"
+        case .four: "4"
+        case .five: "5"
+        case .six: "6"
+        case .seven: "7"
+        case .eight: "8"
+        case .nine: "9"
+        case .backtick: "`"
+        case .minus: "-"
+        case .equal: "="
+        case .leftBracket: "["
+        case .rightBracket: "]"
+        case .backslash: "\\"
+        case .semicolon: ";"
+        case .quote: "'"
+        case .comma: ","
+        case .period: "."
+        case .slash: "/"
+        case .keypadEnter, .capsLock, .function: nil
+        case .a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v,
+            .w, .x, .y, .z:
+            KeyEquivalent(Character(rawValue))
+        }
     }
 }

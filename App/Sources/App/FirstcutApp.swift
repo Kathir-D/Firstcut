@@ -33,6 +33,9 @@ struct FirstcutApp: App {
 
 enum WindowID {
   static let main = "main"
+  /// Set on the culling window by `WindowAccessor`, so the key router can tell it from a sheet or
+  /// the Settings window.
+  static let mainIdentifier = NSUserInterfaceItemIdentifier("firstcut.main")
 }
 
 private struct WindowContent: View {
@@ -59,6 +62,7 @@ struct WindowAccessor: NSViewRepresentable {
 
   private func configure(_ window: NSWindow?) {
     guard let window else { return }
+    window.identifier = WindowID.mainIdentifier
     window.isRestorable = false
     window.appearance = NSAppearance(named: .darkAqua)
     window.minSize = NSSize(width: 900, height: 600)

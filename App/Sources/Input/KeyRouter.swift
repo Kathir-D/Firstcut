@@ -29,6 +29,12 @@ import Foundation
 @MainActor public final class KeyRouter {
     public weak var source: (any KeyRouterSource)?
 
+    /// Whether keys should be routed right now. The app narrows this to "the culling window is the
+    /// key window and no text field is being typed in", so a key pressed in a sheet, the Settings
+    /// window or a text field is never also read as a rating. Defaults to always, which is what the
+    /// tests drive.
+    public var isActive: () -> Bool = { true }
+
     private var monitor: Any?
     private var capsLockOn = false
 
@@ -68,7 +74,7 @@ import Foundation
     /// - Returns: true when the event was consumed.
     @discardableResult
     public func handle(_ event: NSEvent) -> Bool {
-        guard let source, !source.isTextEditing else { return false }
+        guard let source, !source.isTextEditing, isActive() else { return false }
 
         switch event.type {
         case .flagsChanged:

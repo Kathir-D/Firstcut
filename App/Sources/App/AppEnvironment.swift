@@ -38,6 +38,10 @@ final class AppEnvironment {
   /// The real decoder. Shared with the model so the viewer and the filmstrip hit one cache.
   let images: ImageProvider
 
+  /// The one keyboard router for the whole app (task.md §10). Held here so it lives as long as the
+  /// process; without it no key reached the model at all.
+  @ObservationIgnored private var keyRouter: KeyRouter?
+
   /// A folder chosen but not opened yet — see `open(folder:)`, which is why this is not just a
   /// property the views read.
   private(set) var pendingFolderURL: URL?
@@ -90,6 +94,16 @@ final class AppEnvironment {
     // The model asks for a panel and a window; it cannot make either. Without these two lines
     // "Open Folder…" (⌘O, the toolbar, the Welcome button) and Full Screen (⌃⌘F) were consumed by
     // the key router and then did nothing, because nothing was listening.
+    let router = KeyRouter(source: model)
+    router.isActive = {
+      // Only the culling window, and never while a text field has the keyboard: a folder name typed
+      // in the Finish sheet must not also rate the photo behind it.
+      guard let window = NSApp.keyWindow else { return false }
+      return window.identifier == WindowID.mainIdentifier && !(window.firstResponder is NSText)
+    }
+    router.install()
+    keyRouter = router
+
     model.onRequestOpenFolder = { [weak self] in self?.presentOpenPanel() }
     model.onRequestToggleFullScreen = { _ in NSApp.keyWindow?.toggleFullScreen(nil) }
 
