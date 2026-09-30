@@ -56,11 +56,25 @@ pub enum KeptAction {
     WriteList(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinishOptions {
     pub unkept: UnkeptAction,
     pub kept: KeptAction,
     pub rating_mode: RatingMode,
+    /// Stars that make a keep in stars mode (4 or 5, Settings → General). The session fills it in
+    /// from its own setting, like `rating_mode`, so the plan agrees with the filmstrip.
+    pub keep_stars: u8,
+}
+
+impl Default for FinishOptions {
+    fn default() -> Self {
+        Self {
+            unkept: UnkeptAction::default(),
+            kept: KeptAction::default(),
+            rating_mode: RatingMode::default(),
+            keep_stars: crate::store::rating::KEEP_STARS,
+        }
+    }
 }
 
 /// One physical file operation. The whole group is a run of these, and each one is logged
@@ -237,7 +251,7 @@ pub fn plan_finish(
 
     for photo in photos {
         let rating = ratings.get(&photo.id).copied().unwrap_or_default();
-        let kept = rating.is_kept(options.rating_mode);
+        let kept = rating.is_kept_at(options.rating_mode, options.keep_stars);
         let files = group_files(folder, photo);
 
         if kept {
@@ -1204,6 +1218,7 @@ mod tests {
             unkept,
             kept,
             rating_mode: RatingMode::Stars,
+            ..Default::default()
         }
     }
 
@@ -1264,6 +1279,7 @@ mod tests {
                             unkept: UnkeptAction::MoveToSubfolder("_Not kept".into()),
                             kept: KeptAction::None,
                             rating_mode: mode,
+                            ..Default::default()
                         },
                         0,
                     );
@@ -1314,6 +1330,7 @@ mod tests {
                         unkept: UnkeptAction::DeletePermanently,
                         kept: KeptAction::None,
                         rating_mode: mode,
+                        ..Default::default()
                     },
                     0,
                 );
@@ -1347,6 +1364,7 @@ mod tests {
                         unkept: UnkeptAction::DeletePermanently,
                         kept: KeptAction::None,
                         rating_mode: mode,
+                        ..Default::default()
                     },
                     0,
                 );

@@ -205,6 +205,13 @@ pub const KEEP_STARS: u8 = 4;
 /// this back would persist a keep the user never gave. To change what is stored, use
 /// [`map_rating`] — the one path that converts a mode change into a real write.
 pub fn display_rating(rating: &Rating, mode: RatingMode) -> Rating {
+    display_rating_at(rating, mode, KEEP_STARS)
+}
+
+/// [`display_rating`] with the user's keep threshold (Settings → General: "4 and 5 stars" or
+/// "only 5 stars"). `keep_stars` is clamped to 4…5, the two choices the app offers.
+pub fn display_rating_at(rating: &Rating, mode: RatingMode, keep_stars: u8) -> Rating {
+    let keep_stars = clamp_keep_stars(keep_stars);
     match mode {
         // A keep with no stars would read as Unrated, so it shows as the 5 stars it means.
         RatingMode::Stars => Rating {
@@ -217,10 +224,16 @@ pub fn display_rating(rating: &Rating, mode: RatingMode) -> Rating {
         },
         // In keep mode the stars are still there, they just do not drive the ring.
         RatingMode::KeepNotKeep => Rating {
-            keep: rating.keep || rating.stars >= KEEP_STARS,
+            keep: rating.keep || rating.stars >= keep_stars,
             ..*rating
         },
     }
+}
+
+/// The threshold actually used: 4 or 5 stars. Anything else would make 0-star photos keeps (below)
+/// or nothing a keep (above).
+pub fn clamp_keep_stars(keep_stars: u8) -> u8 {
+    keep_stars.clamp(KEEP_STARS, Rating::MAX_STARS)
 }
 
 /// The rating as it would be *stored* if the user worked in `to` mode: [`display_rating`] plus the
@@ -294,19 +307,25 @@ impl Rating {
     /// keep made in keep mode is a Keep in stars mode. An earlier version read the raw fields: the
     /// UI showed a green Keep ring and Finish then moved the photo to the trash.
     pub fn tier(&self, mode: RatingMode) -> Tier {
-        display_rating(self, mode).mode_tier(mode)
+        self.tier_at(mode, KEEP_STARS)
+    }
+
+    /// [`Rating::tier`] with the user's keep threshold: at 5, a 4-star photo is Good, not Keep.
+    pub fn tier_at(&self, mode: RatingMode, keep_stars: u8) -> Tier {
+        let keep_stars = clamp_keep_stars(keep_stars);
+        display_rating_at(self, mode, keep_stars).mode_tier(mode, keep_stars)
     }
 
     /// The tier of a rating that is already a view for `mode`. Private on purpose: everything
     /// outside this module asks [`Rating::tier`], so there is exactly one rule.
-    fn mode_tier(&self, mode: RatingMode) -> Tier {
+    fn mode_tier(&self, mode: RatingMode, keep_stars: u8) -> Tier {
         if self.flag == Flag::Reject {
             return Tier::Rejected;
         }
         match mode {
             RatingMode::Stars => match self.stars {
-                4 | 5 => Tier::Keep,
-                3 => Tier::Good,
+                n if n >= keep_stars => Tier::Keep,
+                3..=5 => Tier::Good,
                 1 | 2 => Tier::Maybe,
                 _ => Tier::Unrated,
             },
@@ -322,7 +341,12 @@ impl Rating {
 
     /// True for the tiers the Finish step treats as "kept" (task.md §9.7).
     pub fn is_kept(&self, mode: RatingMode) -> bool {
-        matches!(self.tier(mode), Tier::Keep)
+        self.is_kept_at(mode, KEEP_STARS)
+    }
+
+    /// [`Rating::is_kept`] with the user's keep threshold.
+    pub fn is_kept_at(&self, mode: RatingMode, keep_stars: u8) -> bool {
+        matches!(self.tier_at(mode, keep_stars), Tier::Keep)
     }
 }
 
@@ -429,6 +453,13 @@ mod tests {
         // old assertion here said Unrated, which is REV-78: the user's keeps vanished on a mode
         // switch and Finish would have trashed them.
         assert_eq!(Rating::keep().tier(RatingMode::Stars), Tier::Keep);
+        // Only 5 stars counts as a keep: 4 drops to Good in stars mode and to Not keep in keep
+        // mode, and a keep made in keep mode is still a keep.
+        assert_eq!(Rating::stars(4).tier_at(RatingMode::Stars, 5), Tier::Good);
+        assert_eq!(Rating::stars(5).tier_at(RatingMode::Stars, 5), Tier::Keep);
+        assert!(!Rating::stars(4).is_kept_at(RatingMode::KeepNotKeep, 5));
+        assert!(Rating::keep().is_kept_at(RatingMode::Stars, 5));
+        assert_eq!(Rating::stars(4).tier_at(RatingMode::Stars, 0), Tier::Keep);
     }
 
     #[test]

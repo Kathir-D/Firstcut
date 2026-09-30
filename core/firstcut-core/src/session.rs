@@ -185,6 +185,9 @@ struct State {
     /// One `Change` per rating call, handed out in order so the app can detect a stale one.
     change_seq: u64,
     rating_mode: RatingMode,
+    /// Stars that make a keep in stars mode (4 or 5). Set by the app from Settings on open and on
+    /// every change; not persisted, the app's setting is the record.
+    keep_stars: u8,
     mapping: XmpMapping,
     xmp: XmpSettings,
 }
@@ -255,6 +258,7 @@ impl Session {
         let created = matches!(db.matched(), MatchKind::Created);
         let mut state = State {
             rating_mode: db.rating_mode()?,
+            keep_stars: crate::store::rating::KEEP_STARS,
             db,
             photos: HashMap::new(),
             order: Vec::new(),
@@ -320,6 +324,17 @@ impl Session {
     #[must_use]
     pub fn rating_mode(&self) -> RatingMode {
         self.state().rating_mode
+    }
+
+    /// The keep threshold in stars mode: 4 ("4 and 5 stars") or 5 ("only 5 stars"). Finish and
+    /// the tier counts use it, so they agree with what the filmstrip shows.
+    pub fn keep_stars(&self) -> u8 {
+        self.state().keep_stars
+    }
+
+    /// Sets the keep threshold; clamped to 4…5.
+    pub fn set_keep_stars(&self, stars: u8) {
+        self.state().keep_stars = crate::store::rating::clamp_keep_stars(stars);
     }
 
     /// Switches modes. Existing data is preserved and mapped, never rewritten
@@ -1053,9 +1068,19 @@ pub fn import_ratings_from_sidecars(folder: &Path, photos: &[PhotoMeta]) -> Vec<
 /// Tier counts for the Finish summary, in the current mode (task.md §6.1).
 #[must_use]
 pub fn tier_counts(snapshot: &SessionSnapshot, mode: RatingMode) -> HashMap<Tier, usize> {
+    tier_counts_at(snapshot, mode, crate::store::rating::KEEP_STARS)
+}
+
+/// [`tier_counts`] with the user's keep threshold.
+#[must_use]
+pub fn tier_counts_at(
+    snapshot: &SessionSnapshot,
+    mode: RatingMode,
+    keep_stars: u8,
+) -> HashMap<Tier, usize> {
     let mut counts: HashMap<Tier, usize> = Tier::ALL.into_iter().map(|tier| (tier, 0)).collect();
     for rating in snapshot.ratings.values() {
-        *counts.entry(rating.tier(mode)).or_insert(0) += 1;
+        *counts.entry(rating.tier_at(mode, keep_stars)).or_insert(0) += 1;
     }
     counts
 }
@@ -1115,6 +1140,7 @@ impl Session {
             .count();
         let options = crate::fileops::FinishOptions {
             rating_mode: state.rating_mode,
+            keep_stars: state.keep_stars,
             ..options.clone()
         };
         Ok(crate::fileops::plan_finish(
@@ -2051,6 +2077,51 @@ mod tests {
             .collect();
         out.sort();
         out
+    }
+
+    #[test]
+    fn finish_and_the_tier_counts_follow_the_keep_threshold() {
+        let folder = six_jpegs();
+        let sessions = tempfile::tempdir().unwrap();
+        let session =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        let id = |n: u32| crate::batch::photo_id(&format!("IMG_{n:04}.JPG"));
+        session.set_rating(id(1), Rating::stars(5)).unwrap();
+        session.set_rating(id(2), Rating::stars(4)).unwrap();
+
+        let kept = |session: &Session| {
+            let options = crate::fileops::FinishOptions {
+                unkept: crate::fileops::UnkeptAction::MoveToSubfolder("_Not kept".to_string()),
+                ..Default::default()
+            };
+            let plan = session.plan_finish(&options).unwrap();
+            let moved: Vec<String> = plan.ops.iter().map(|op| op.from.clone()).collect();
+            [1, 2]
+                .into_iter()
+                .filter(|n| {
+                    !moved
+                        .iter()
+                        .any(|m| m.ends_with(&format!("IMG_{n:04}.JPG")))
+                })
+                .collect::<Vec<_>>()
+        };
+        let keeps = |session: &Session| {
+            tier_counts_at(&session.snapshot(), RatingMode::Stars, session.keep_stars())
+                [&Tier::Keep]
+        };
+
+        assert_eq!(kept(&session), vec![1, 2]);
+        assert_eq!(keeps(&session), 2);
+
+        session.set_keep_stars(5);
+        assert_eq!(kept(&session), vec![1], "a 4-star photo is Good, not kept");
+        assert_eq!(keeps(&session), 1);
+
+        // Out-of-range values are clamped to the two choices the app offers.
+        session.set_keep_stars(0);
+        assert_eq!(session.keep_stars(), 4);
+        session.set_keep_stars(9);
+        assert_eq!(session.keep_stars(), 5);
     }
 
     #[test]

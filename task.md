@@ -53,6 +53,10 @@ Only a person with the Mac, the test photos, the apps or the repo settings can d
 
 Not blocking v0.1.0; an agent can do these.
 
+- **Keep threshold → core:** the core takes it (`Session.setKeepThreshold`, used by Finish and
+  `tierCounts`), but the app does not send it yet. Call it from `AppModel` after a folder opens and
+  whenever `settings.keepThreshold` changes; until then "Only 5 stars" changes the filmstrip, not
+  what Finish keeps.
 - **One definition per type (REV-72/73):** `Shared/CoreTypes.swift`, `Session/PipelineMirror.swift`
   and `Session/SessionTypes.swift` hand-mirror types the Rust core also defines.
 - **Strict CI:** Swift warnings as errors and `swift-format` enforced (REV-12, REV-59); the tree is

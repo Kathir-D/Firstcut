@@ -862,6 +862,12 @@ impl Session {
             })
     }
 
+    /// The keep threshold in stars mode (Settings → General): 4 ("4 and 5 stars") or 5 ("only 5
+    /// stars"); anything else is clamped. Finish and `tier_counts` follow it.
+    pub fn set_keep_threshold(&self, stars: u8) {
+        self.inner.set_keep_stars(stars);
+    }
+
     /// Records a rating. Returns in the time one WAL transaction takes; the XMP sidecar is written
     /// on a debounced background thread, so the app never waits on a file write.
     pub fn set_rating(&self, photo: u64, rating: FfiRating) -> Result<FfiChange, FfiError> {
@@ -937,7 +943,7 @@ impl Session {
 
     /// Tier counts for the Finish summary, in the given mode (task.md §6.1).
     pub fn tier_counts(&self, mode: FfiRatingMode) -> std::collections::HashMap<FfiTier, u32> {
-        crate::session::tier_counts(&self.inner.snapshot(), mode.into())
+        crate::session::tier_counts_at(&self.inner.snapshot(), mode.into(), self.inner.keep_stars())
             .into_iter()
             .map(|(tier, count)| (tier.into(), count as u32))
             .collect()
@@ -1168,6 +1174,7 @@ impl Session {
             unkept: options.unkept.into(),
             kept: options.kept.into(),
             rating_mode: self.inner.rating_mode(),
+            keep_stars: self.inner.keep_stars(),
         };
         self.inner
             .plan_finish(&options)
