@@ -726,6 +726,12 @@ struct BatchesChangedTests {
         model.sessionDidFailWritingXMP(photo: try #require(model.currentPhoto?.id), message: "disk full")
         #expect(model.lastError != nil)
         #expect(model.currentPhoto?.rating.stars == 5)
+
+        // Once dismissed, a read-only card does not raise the same alert again on every rating.
+        model.dismissError()
+        #expect(model.lastError == nil)
+        model.sessionDidFailWritingXMP(photo: try #require(model.currentPhoto?.id), message: "disk full")
+        #expect(model.lastError == nil)
     }
 }
 

@@ -38,6 +38,16 @@ struct RootView: View {
     ) {
       FinishSheet(state: state)
     }
+    .alert(
+      "Something went wrong",
+      isPresented: Binding(
+        get: { state.errorMessage != nil },
+        set: { if !$0 { state.dismissError() } })
+    ) {
+      Button("OK") { state.dismissError() }
+    } message: {
+      Text(state.errorMessage ?? "")
+    }
   }
 
   /// Only reachable in `.culling` and `.finishing`, so nothing here can composite over the welcome

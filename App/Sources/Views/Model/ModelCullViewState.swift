@@ -87,6 +87,9 @@ final class ModelCullViewState: CullViewState {
   var viewerBackgroundDarkness: Double { model.viewer.backgroundGray }
   var progress: CullProgress { model.progress }
 
+  var errorMessage: String? { model.lastError }
+  func dismissError() { model.dismissError() }
+
   func openRecent(_ folder: RecentFolder) { model.openRecent(folder) }
   func forgetRecent(_ folder: RecentFolder) { model.forgetRecent(folder) }
 

@@ -61,6 +61,9 @@ final class PreviewCullViewState: CullViewState {
 
   // MARK: - CullViewState
 
+  var errorMessage: String? { nil }
+  func dismissError() {}
+
   func openRecent(_ folder: RecentFolder) {}
   func forgetRecent(_ folder: RecentFolder) {}
 

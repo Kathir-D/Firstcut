@@ -33,6 +33,10 @@ protocol CullViewState: AnyObject {
   var viewerBackgroundDarkness: Double { get }
   var progress: CullProgress { get }
   var images: CullImageSource { get }
+  /// Something that went wrong that the user has to be told about (a folder that would not open,
+  /// sidecars that cannot be written). The window shows it as an alert.
+  var errorMessage: String? { get }
+  func dismissError()
   func send(_ action: CullAction)
   func finish(_ action: FinishAction)
   func openRecent(_ folder: RecentFolder)

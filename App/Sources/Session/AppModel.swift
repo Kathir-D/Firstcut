@@ -25,7 +25,11 @@ public final class AppModel: SessionListener, KeyRouterSource {
     public private(set) var currentPhotoIndex: Int = 0
     /// Files that couldn't be parsed (task.md §8: shown with a placeholder, never blocking).
     public private(set) var skippedFiles: [SkippedFile] = []
+    /// Something the user needs to know went wrong; the window shows it as an alert until
+    /// `dismissError()`.
     public private(set) var lastError: String?
+    /// A read-only card fails every sidecar write; one alert per folder says so, not one per rating.
+    private var reportedXMPFailure = false
 
     // MARK: Modes and toggles
 
@@ -197,6 +201,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         // pending sidecars and its place in the recents.
         let previous = phase
         recordRecent()
+        reportedXMPFailure = false
         backend.flush()
         if let asyncSessionFactory {
             openTask?.cancel()
@@ -378,7 +383,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
     }
 
     /// Opens a folder from the Welcome list. One that has gone (an unplugged card) is reported and
-    /// dropped from the list instead of failing silently every time.
+    /// stays in the list, since plugging the card back in brings it back.
     public func openRecent(_ folder: RecentFolder) {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
@@ -583,7 +588,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// Tells the pipeline what the user can reach. Called on **every** navigation: a batch switch has
     /// to hit ≤ 1 display frame, so this can't be debounced (task.md §7.3).
     public func updatePipelineFocus() {
-        guard let batch = currentBatch, let photo = currentPhoto else { return }
+        guard currentBatch != nil, let photo = currentPhoto else { return }
         let reach = max(1, settings.performance.lookAheadBatches)
         let lower = max(0, currentBatchIndex - reach)
         let upper = min(batches.count - 1, currentBatchIndex + reach)
@@ -905,7 +910,14 @@ public final class AppModel: SessionListener, KeyRouterSource {
     }
 
     public func sessionDidFailWritingXMP(photo: PhotoID, message: String) {
-        lastError = "XMP: \(message)"
+        guard !reportedXMPFailure else { return }
+        reportedXMPFailure = true
+        lastError =
+            "Ratings could not be saved next to the photos (\(message)). They are still kept in Firstcut's own record of this folder."
+    }
+
+    public func dismissError() {
+        lastError = nil
     }
 
     public func sessionDidImportRatings(_ ratings: [PhotoID: Rating]) {
