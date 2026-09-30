@@ -1481,6 +1481,37 @@ mod tests {
     }
 
     #[test]
+    fn a_corrupted_cr3_never_panics() {
+        // Cards and cables corrupt files. Flipped bytes land in box sizes, IFD offsets and counts,
+        // and a panic here would take the whole scan down with it, so every mutation must come back
+        // as a value or an error.
+        let whole = SyntheticCr3::r8().subsec("84").build();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mutated.CR3");
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..3000 {
+            let mut bytes = whole.clone();
+            for _ in 0..1 + next() % 6 {
+                let at = (next() as usize) % bytes.len();
+                // Half the time a big word, which is what an offset or a count gone wrong reads as.
+                if next() % 2 == 0 && at + 4 <= bytes.len() {
+                    bytes[at..at + 4].copy_from_slice(&(next() as u32).to_be_bytes());
+                } else {
+                    bytes[at] = next() as u8;
+                }
+            }
+            std::fs::write(&path, &bytes).unwrap();
+            let _ = Cr3::parse(&path);
+        }
+    }
+
+    #[test]
     fn an_unknown_tiff_type_is_skipped_rather_than_guessed() {
         // Type 0 and the reserved types have no size this parser knows, so they must produce no
         // values instead of a wrong number.

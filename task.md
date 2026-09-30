@@ -139,10 +139,12 @@ Not blocking v0.1.0; an agent can do these.
      a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.
   2. Check whether the thumbnail/preview cache flickers or is dropped when the watched folder changes
      (`AppModel` folder-change handling and `Pipeline/ImageProvider.swift`).
-  3. Continue the bug review of code not yet re-read: `fileops` planning for split-by-tier, the
-     metadata readers in `meta/` (CR3/NEF/ARW header parsing). Reviewed and fine: `execute_finish`,
-     `undo_finish`, `mark_finish_folders`, rescan/rebatch in `session.rs`, the scanner's grouping,
-     the XMP import path. Known and left: sidecar ratings are imported only when a folder's session
+  3. The core bug review is done: `execute_finish`, `undo_finish`, `mark_finish_folders`, Finish
+     planning (split-by-tier only moves kept photos, as the contract says; REQ-core-store-2 is still
+     the open question), rescan/rebatch, the scanner's grouping and the XMP import path were re-read.
+     The header readers are covered by mutation tests (`a_corrupted_*_never_panics`, byte flips over
+     CR3/JPEG/HEIF/PNG/TIFF/RAF); a 30k-iteration run per format found one overflow (HEIF `iloc`),
+     now fixed. Known and left: sidecar ratings are imported only when a folder's session
      is first created, so a Lightroom-rated second card copied into an open shoot is not imported;
      a different file saved under a known name (same path) inherits that name's rating.
   4. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what

@@ -460,7 +460,7 @@ fn heif(data: &[u8], meta: &mut Cr3) {
     let Some(prefix) = be(payload, 0, 4).map(|p| p as usize) else {
         return;
     };
-    tiff_file(data, offset + 4 + prefix, meta);
+    tiff_file(data, offset.saturating_add(4).saturating_add(prefix), meta);
     heif_size(data, &children, meta);
 }
 
@@ -534,7 +534,8 @@ fn iloc_extent(data: &[u8], iloc: &Bmff, item: u32) -> Option<(usize, usize)> {
             let length = be(data, pos, length_size)? as usize;
             pos += length_size;
             if n == 0 {
-                first = Some((base + offset, length));
+                // Both come from the file; a corrupt pair must not overflow.
+                first = base.checked_add(offset).map(|at| (at, length));
             }
         }
         if id == item {
@@ -865,6 +866,43 @@ mod tests {
             FileKind::Tiff,
         ] {
             let _ = parse(&[], kind);
+        }
+    }
+
+    #[test]
+    fn a_corrupted_file_never_panics() {
+        // Flipped bytes land in lengths, offsets and counts; each format must survive them.
+        let samples = [
+            (fixtures::jpeg(&tiff_bytes(), 4000, 3000), FileKind::Jpeg),
+            (heic(&tiff_bytes(), 4032, 3024), FileKind::Heif),
+            (fixtures::png(&tiff_bytes(), 10, 10), FileKind::Png),
+            (tiff_bytes(), FileKind::Tiff),
+            (tiff_bytes(), FileKind::Raw(crate::meta::RawFormat::Nef)),
+            (
+                fixtures::raf(&fixtures::jpeg(&tiff_bytes(), 40, 30)),
+                FileKind::Raw(crate::meta::RawFormat::Raf),
+            ),
+        ];
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for (whole, kind) in &samples {
+            for _ in 0..3000 {
+                let mut bytes = whole.clone();
+                for _ in 0..1 + next() % 6 {
+                    let at = (next() as usize) % bytes.len();
+                    if next() % 2 == 0 && at + 4 <= bytes.len() {
+                        bytes[at..at + 4].copy_from_slice(&(next() as u32).to_be_bytes());
+                    } else {
+                        bytes[at] = next() as u8;
+                    }
+                }
+                let _ = parse(&bytes, *kind);
+            }
         }
     }
 
