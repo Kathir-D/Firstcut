@@ -670,7 +670,7 @@ fn execute_op(op: &FileOp) -> ExecutedOp {
         FileOpKind::WriteList => write_list(op),
         FileOpKind::Move => transfer(op, &source, Move::Rename),
         FileOpKind::Copy => transfer(op, &source, Move::Copy),
-        FileOpKind::Trash => transfer(op, &source, Move::Trash),
+        FileOpKind::Trash => trash(op, &source, trash_for(&source)),
         FileOpKind::Delete => match std::fs::remove_file(&source) {
             Ok(()) => ExecutedOp {
                 kind: op.kind.clone(),
@@ -688,7 +688,6 @@ fn execute_op(op: &FileOp) -> ExecutedOp {
 enum Move {
     Rename,
     Copy,
-    Trash,
 }
 
 fn transfer(op: &FileOp, source: &Path, how: Move) -> ExecutedOp {
@@ -699,7 +698,7 @@ fn transfer(op: &FileOp, source: &Path, how: Move) -> ExecutedOp {
         .map(|meta| meta.len())
         .unwrap_or(0);
 
-    if matches!(how, Move::Rename | Move::Copy) && target.exists() {
+    if target.exists() {
         // The safety rule, enforced at the last possible moment.
         return ExecutedOp::failure(
             op,
@@ -722,7 +721,6 @@ fn transfer(op: &FileOp, source: &Path, how: Move) -> ExecutedOp {
     let result = match how {
         Move::Rename => move_file(source, &target),
         Move::Copy => std::fs::copy(source, &target).map(|_| ()),
-        Move::Trash => move_to_trash(source, &target),
     };
 
     match result {
@@ -741,28 +739,40 @@ fn transfer(op: &FileOp, source: &Path, how: Move) -> ExecutedOp {
 /// Moves a file into the Trash so Finder can recover it (task.md §9.7: "Trash is recoverable via
 /// Finder").
 ///
-/// The plan has already picked a free name in `op.to`; on the way here that name is checked again,
-/// because the plan may be older than whatever is in `~/.Trash` now. Nothing is ever overwritten,
-/// here or anywhere else in this module.
-fn move_to_trash(source: &Path, planned: &Path) -> std::io::Result<()> {
+/// The plan carries no destination for a trash op: which Trash, and which free name in it, can only
+/// be decided now. The name actually used is what the log records, so undo finds the file.
+fn trash(op: &FileOp, source: &Path, trash: std::io::Result<PathBuf>) -> ExecutedOp {
+    let size = std::fs::metadata(source)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+    match trash.and_then(|trash| trash_into(source, &trash)) {
+        Ok(target) => ExecutedOp {
+            kind: op.kind.clone(),
+            src: op.from.clone(),
+            dst: Some(target.to_string_lossy().into_owned()),
+            size_bytes: size,
+            status: "done",
+            error: None,
+        },
+        Err(error) => ExecutedOp::failure(op, format!("could not move it to the Trash: {error}")),
+    }
+}
+
+/// Moves `source` into the `trash` folder under a free name (`IMG_0001-2.CR3` when the name is
+/// taken). Nothing is ever overwritten, here or anywhere else in this module.
+fn trash_into(source: &Path, trash: &Path) -> std::io::Result<PathBuf> {
     let name = source
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "file".to_string());
-    let trash = trash_for(source)?;
-    let mut target = planned.to_path_buf();
-    // The plan's destination may live somewhere other than this volume's trash (it only guarantees
-    // a free name); re-resolve it in the real trash so a stale plan cannot put two files in one
-    // place.
-    if target.parent() != Some(trash.as_path()) {
-        target = trash.join(&name);
-    }
+    let mut target = trash.join(&name);
     let mut counter = 1;
     while target.exists() {
         counter += 1;
         target = trash.join(suffixed(&name, counter));
     }
-    move_file(source, &target)
+    move_file(source, &target)?;
+    Ok(target)
 }
 
 /// Moves `source` to `target`, across volumes if it has to.
@@ -1965,6 +1975,34 @@ mod tests {
         );
         assert!(plan.bytes_to_copy > 0, "{plan:?}");
         assert!(!crosses_volume(shoot.path(), &shoot.path().join("Kept")));
+    }
+
+    #[test]
+    fn trashing_a_file_moves_it_and_undo_brings_it_back() {
+        // The plan has no destination for a trash op (see the test above); executing one used to
+        // fail with "the plan gave no destination", so Move to Trash never trashed anything.
+        let shoot = tempfile::tempdir().unwrap();
+        let trash_folder = tempfile::tempdir().unwrap();
+        let source = shoot.path().join("IMG_0001.CR3");
+        fs::write(&source, b"raw").unwrap();
+        fs::write(trash_folder.path().join("IMG_0001.CR3"), b"older").unwrap();
+        let op = FileOp::new(FileOpKind::Trash, source.to_string_lossy(), None);
+
+        let done = trash(&op, &source, Ok(trash_folder.path().to_path_buf()));
+        assert!(done.is_done(), "{:?}", done.error);
+        assert!(!source.exists());
+        let landed = trash_folder.path().join("IMG_0001-2.CR3");
+        assert_eq!(done.dst.as_deref(), Some(&*landed.to_string_lossy()));
+        assert_eq!(fs::read(&landed).unwrap(), b"raw");
+        assert_eq!(
+            fs::read(trash_folder.path().join("IMG_0001.CR3")).unwrap(),
+            b"older",
+            "the file already in the Trash is untouched"
+        );
+
+        let undone = undo_ops(&[done]);
+        assert_eq!(undone[0].status, "done", "{:?}", undone[0].error);
+        assert_eq!(fs::read(&source).unwrap(), b"raw");
     }
 
     #[test]
