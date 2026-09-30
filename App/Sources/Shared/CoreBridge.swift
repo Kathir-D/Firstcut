@@ -100,9 +100,12 @@ public enum FirstcutCoreBridge {
 
     /// The generated bindings' text, for the one test that checks the exports are the expected ones.
     ///
-    /// Kept as source text and still read from the repository, because that is a test's job: a test
-    /// *should* read the file and assert on it. `hasSessionAPI` no longer depends on it, so nothing
-    /// on the app's launch or folder-open path can prompt for a folder.
+    /// Read from the **test bundle**, never from the repository. The repository is under
+    /// `~/Documents`, the test host is a GUI app, and an ad-hoc signed build has no stable identity,
+    /// so macOS asks for Documents access again on every rebuild and blocks the run forever with
+    /// nobody there to click Allow. `scripts/build-core.sh` copies the generated source into each
+    /// test target as `FirstcutCore.bindings.txt` (see `project.yml`), which is why the tests can
+    /// still assert on the real generated text.
     static var generatedBindingsSource: String? { readGeneratedBindings() }
 }
 
@@ -120,15 +123,17 @@ extension FirstcutCoreBridge {
     /// "are the session exports there?" is asked by the About box and by a test, not 60 times a
     /// second, so paying for it there is the right trade.
     static func readGeneratedBindings() -> String? {
-        // Test-only. Nothing on the app's launch or folder-open path calls this: `hasSessionAPI` is
-        // answered by the type system now. That is what stopped the TCC prompt, because this is the
-        // one function that reaches into the repository, and the repository is under ~/Documents.
-        // `App/Generated/FirstcutCore.swift` is a sibling of `App/Sources`, so two levels up from
-        // `App/Sources/Shared`.
-        var directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        for _ in 0..<2 { directory.deleteLastPathComponent() }
-        let url = directory.appendingPathComponent("Generated/FirstcutCore.swift")
-        return try? String(contentsOf: url, encoding: .utf8)
+        // Bundle first, and only the bundle. The repository copy under `~/Documents` is deliberately
+        // not a fallback any more: reaching it raises a TCC consent prompt that hangs the test run
+        // with nobody there to answer it. If the resource is missing the test fails with a message
+        // that says so, which is better than a hang or a silent pass.
+        for bundle in Bundle.allBundles + [Bundle.main] {
+            guard
+                let url = bundle.url(
+                    forResource: "FirstcutCore.bindings", withExtension: "txt")
+            else { continue }
+            return try? String(contentsOf: url, encoding: .utf8)
+        }
+        return nil
     }
-
 }

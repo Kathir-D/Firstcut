@@ -77,6 +77,10 @@ App/Generated/FirstcutCore.xcframework   libfirstcut_core.a, linked, never embed
 
 ## Build & test commands
 
+Every command below is worth running through `scripts/with-timeout.sh <seconds> …` (exit 124 means
+it was killed). A build or test run on this machine can otherwise block forever rather than fail —
+see **Nothing in a test run may touch `~/Documents`** below.
+
 | What | Command |
 | --- | --- |
 | Rust tests | `cargo test --manifest-path core/Cargo.toml` |
@@ -86,7 +90,30 @@ App/Generated/FirstcutCore.xcframework   libfirstcut_core.a, linked, never embed
 | Generate the Xcode project | `xcodegen` (run after pulling; `Firstcut.xcodeproj` is git-ignored) |
 | Build the app | `scripts/build-app.sh` → `dist/Firstcut.app` (`--open` to launch it) |
 | Swift tests | `xcodebuild -project Firstcut.xcodeproj -scheme Firstcut -destination 'platform=macOS,arch=arm64' test` |
+| Run with a deadline | `scripts/with-timeout.sh 600 xcodebuild … test` |
 | Everything CI runs | see the header of [.github/workflows/ci.yml](../../.github/workflows/ci.yml) |
+
+## Nothing in a test run may touch `~/Documents`
+
+The repository is under `~/Documents`. A test host is a GUI app, and the app is ad-hoc signed, so it
+has a **new identity on every rebuild** — macOS therefore re-asks for Documents access every time and
+blocks the run forever waiting for a click that nobody is there to give. A run that does this does
+not fail, it just never finishes.
+
+So the rules are:
+
+- Everything a test reads is **bundled into the test target** (`project.yml`), and read from the
+  app's own container. The fixtures land as flat `exiftool/` and `meta/` folders, because a folder
+  reference keeps its own name; a lookup for `tests/fixtures/exiftool` will not find them.
+- `build-core.sh` also writes `App/Generated/FirstcutCore.bindings.txt`, which is what the tests that
+  assert on the export list read. Xcode will not copy a `.swift` file through Copy Bundle Resources.
+- The **test photos** are read only when `FIRSTCUT_ALLOW_PHOTO_TESTS=1` is set. Not "the tests are
+  skipped" — the lookup itself does nothing, so an innocent test cannot trigger it.
+- `FixturePhotos`' repository fallback is disabled in any test process. It still exists for previews
+  run from a checkout, which are not a test host.
+
+`App/Tests/Integration/FixtureHarnessTests` has three tests that assert this, and they fail if a
+lookup starts reaching a protected path again.
 
 ## CI
 
@@ -94,10 +121,6 @@ App/Generated/FirstcutCore.xcframework   libfirstcut_core.a, linked, never embed
 warnings`, `cargo test`, a release build of the core, then `scripts/build-core.sh`, `xcodegen`,
 `xcodebuild build` and `xcodebuild test` on an arm64 `macos-15` runner. Cargo and DerivedData are
 cached. The release workflow (`.github/workflows/release.yml`) runs on `v*` tags.
-
-Before CI existed, the local rule was to run the same checks yourself; that is no longer needed,
-but it is still the fastest way to catch a break.
-
 
 ## Day-one bootstrap (already in the repo)
 
@@ -114,29 +137,6 @@ but it is still the fastest way to catch a break.
 - **Dependency exception**: any agent may add its own crates to `[dependencies]` in
   `core/firstcut-core/Cargo.toml` (one line each, alphabetical). Swift packages: request them from infra.
 - `Cargo.lock` conflicts: take `main`'s version, then `cargo build`.
-
-## Build & test commands
-
-| What | Command |
-| --- | --- |
-| Rust tests | `cargo test --manifest-path core/Cargo.toml` |
-| Rust lint | `cargo fmt --check` and `cargo clippy -- -D warnings` |
-| Build the Rust core + bindings | `scripts/build-core.sh` → `App/Generated/` |
-| Get a worktree ready after a pull | `scripts/generate-project.sh` |
-| Generate the Xcode project | `xcodegen` (run after pulling; `Firstcut.xcodeproj` is git-ignored) |
-| Build the app | `scripts/build-app.sh` → `dist/Firstcut.app` (`--open` to launch it) |
-| Swift tests | `xcodebuild -project Firstcut.xcodeproj -scheme Firstcut -destination 'platform=macOS,arch=arm64' test` |
-| Everything CI runs | see the header of [.github/workflows/ci.yml](../../.github/workflows/ci.yml) |
-
-## CI
-
-`.github/workflows/ci.yml` runs on every push and PR: `cargo fmt --check`, `cargo clippy -D
-warnings`, `cargo test`, a release build of the core, then `scripts/build-core.sh`, `xcodegen`,
-`xcodebuild build` and `xcodebuild test` on an arm64 `macos-15` runner. Cargo and DerivedData are
-cached. The release workflow (`.github/workflows/release.yml`) runs on `v*` tags.
-
-Before CI existed, the rule was to run the same checks locally before merging; that is no longer
-required, but it is still the fastest way to catch a break.
 
 ## Git workflow
 
@@ -158,3 +158,8 @@ required, but it is still the fastest way to catch a break.
   `FirstcutCore`. `CoreTypes.swift` is unchanged. No breaking changes: Swift sources are still
   picked up by folder, and `App/Generated/` is optional in `project.yml` so a clean clone can run
   `xcodegen` before the first core build. **Proposed freeze at v1.0** — pending sign-off (see the old infra charter, `git show 4d4e43d:docs/agents/archive/infra.md`).
+- v0.1.1: added **Nothing in a test run may touch `~/Documents`** (why the ad-hoc rebuild re-asks for
+  Documents access and hangs the run, and the four lookups that were doing it), `scripts/with-timeout.sh`
+  and a line in the commands table for it. `build-core.sh` now also emits
+  `App/Generated/FirstcutCore.bindings.txt`, and `project.yml` bundles it into the test targets.
+  Removed the duplicated **Build & test commands** and **CI** sections.

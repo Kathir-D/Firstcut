@@ -93,6 +93,13 @@ targets:
       - path: tests/fixtures/meta
         type: folder
         buildPhase: resources
+      # The generated bindings, so the tests that assert on the real export list read them from the
+      # bundle. Reading them from the repository (under ~/Documents) made the GUI test host raise a
+      # TCC consent prompt on every rebuild and hang the run with nobody there to answer it.
+      - path: App/Generated/FirstcutCore.bindings.txt
+        optional: true
+        type: file
+        buildPhase: resources
     dependencies:
       - target: Firstcut
       - target: FirstcutCore
@@ -110,6 +117,13 @@ targets:
       - path: tests/fixtures/meta
         type: folder
         buildPhase: resources
+      # The generated bindings, so the tests that assert on the real export list read them from the
+      # bundle. Reading them from the repository (under ~/Documents) made the GUI test host raise a
+      # TCC consent prompt on every rebuild and hang the run with nobody there to answer it.
+      - path: App/Generated/FirstcutCore.bindings.txt
+        optional: true
+        type: file
+        buildPhase: resources
     dependencies:
       - target: Firstcut
       - target: FirstcutCore
@@ -126,6 +140,13 @@ targets:
         buildPhase: resources
       - path: tests/fixtures/meta
         type: folder
+        buildPhase: resources
+      # The generated bindings, so the tests that assert on the real export list read them from the
+      # bundle. Reading them from the repository (under ~/Documents) made the GUI test host raise a
+      # TCC consent prompt on every rebuild and hang the run with nobody there to answer it.
+      - path: App/Generated/FirstcutCore.bindings.txt
+        optional: true
+        type: file
         buildPhase: resources
     dependencies:
       - target: Firstcut

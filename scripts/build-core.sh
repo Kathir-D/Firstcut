@@ -60,6 +60,18 @@ mkdir -p "$FFI_DIR"
 # puts this directory on HEADER_SEARCH_PATHS.
 mv "$GENERATED_DIR/FirstcutCoreFFI.modulemap" "$FFI_DIR/module.modulemap"
 mv "$GENERATED_DIR/FirstcutCoreFFI.h" "$FFI_DIR/FirstcutCoreFFI.h"
+
+# The same bindings again under a name Xcode will accept as a bundled resource.
+#
+# `CoreBridgeTests` asserts on the real export list by reading the generated source. Reading it from
+# the repository meant reading ~/Documents from a GUI test host, which raises a TCC consent prompt
+# and blocks the run forever with nobody there to click Allow — and because the app is ad-hoc signed,
+# its identity changes on every rebuild, so the prompt came back every time. Bundling the file into
+# the test target fixes it. Xcode silently refuses to copy a `.swift` file through a Copy Bundle
+# Resources phase ("cannot be processed by a Copy Bundle Resources build phase"), so the copy is
+# published as plain text. The content is byte-identical; only the name differs.
+cp "$GENERATED_DIR/FirstcutCore.swift" "$GENERATED_DIR/FirstcutCore.bindings.txt"
+
 log "Packaging FirstcutCore.xcframework"
 rm -rf "$GENERATED_DIR/FirstcutCore.xcframework"
 xcodebuild -create-xcframework \
@@ -72,5 +84,6 @@ date >"$STAMP"
 log "Core ready:"
 printf '    %s\n' \
   "$GENERATED_DIR/FirstcutCore.swift" \
+  "$GENERATED_DIR/FirstcutCore.bindings.txt" \
   "$GENERATED_DIR/FirstcutCoreFFI/" \
   "$GENERATED_DIR/FirstcutCore.xcframework/"

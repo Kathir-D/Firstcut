@@ -48,26 +48,20 @@ public enum TestEnvironment {
 
     public static let defaultPhotosFolder = "~/Documents/testing"
 
-    /// Root of the repo checkout this test bundle was compiled from, found by walking up from this
-    /// file until `project.yml` appears. Works in every agent worktree.
+    /// Root of the repo checkout this test bundle was compiled from, derived from this file's own
+    /// path by stripping the four components between it and the root.
     ///
-    /// Only for tests that genuinely need a *committed file* (ground truth, golden batches). The
-    /// exiftool and meta dumps are read through `fixtureURL` from the copy bundled into the test
-    /// bundle instead — see `Fixtures.bundled(_:)` — because this walk ends inside ~/Documents, and
-    /// the test host is a GUI app, so reading it raises a TCC consent prompt that blocks the run
-    /// forever with nobody there to click Allow. That cost three hangs and about an hour on
-    /// 2026-09-29 before it was diagnosed.
-    public static let repositoryRoot: URL? = {
+    /// **It touches no file system at all, and that is the whole point.** The repository lives under
+    /// ~/Documents, the test host is a GUI app, and an ad-hoc signed build has a new identity on
+    /// every rebuild, so macOS re-asks for Documents access each time and blocks the run forever with
+    /// nobody there to click Allow. Even `fileExists` counts as touching it. Fixtures are read from
+    /// the copies bundled into this bundle (`Fixtures.bundled(_:)`); this value only names the
+    /// checkout in a failure message.
+    public static let repositoryRoot: URL = {
         var url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while url.path != "/" {
-            if FileManager.default.fileExists(
-                atPath: url.appendingPathComponent("project.yml").path)
-            {
-                return url
-            }
-            url = url.deletingLastPathComponent()
-        }
-        return nil
+        // Support/ → Unit|Integration|Performance/ → Tests/ → App/ → the root.
+        for _ in 0..<4 { url.deleteLastPathComponent() }
+        return url
     }()
 
     /// A committed fixture, preferring the copy inside the test bundle.
@@ -79,25 +73,45 @@ public enum TestEnvironment {
     public static func bundled(_ relativePath: String, in bundle: Bundle = .main) -> URL? {
         let name = (relativePath as NSString).lastPathComponent
         let directory = (relativePath as NSString).deletingLastPathComponent
-        if !directory.isEmpty,
-            let found = bundle.url(
-                forResource: name, withExtension: nil, subdirectory: "\(directory)/")
-        {
-            return found
-        }
-        for candidate in Bundle.allBundles {
-            if !directory.isEmpty,
-                let found = candidate.url(
-                    forResource: name, withExtension: nil, subdirectory: "\(directory)/")
-            {
-                return found
+        // `project.yml` copies each fixture folder as a *folder reference*, so
+        // `tests/fixtures/exiftool` lands in the bundle as a flat `exiftool/`. Asking only for the
+        // nested `tests/fixtures/exiftool` subdirectory therefore never matched, the lookup fell
+        // through to the repository, and the run hung on a TCC prompt. Try the layouts that exist.
+        var subdirectories = [directory, (directory as NSString).lastPathComponent]
+        subdirectories.append(contentsOf: directory.split(separator: "/").map(String.init).reversed())
+        subdirectories.append("")
+        for candidate in [bundle] + Bundle.allBundles {
+            for subdirectory in subdirectories {
+                let found: URL?
+                if subdirectory.isEmpty {
+                    found = candidate.url(forResource: name, withExtension: nil)
+                        ?? candidate.url(
+                            forResource: (name as NSString).deletingPathExtension,
+                            withExtension: (name as NSString).pathExtension)
+                } else {
+                    found = candidate.url(
+                        forResource: name, withExtension: nil, subdirectory: "\(subdirectory)/")
+                        ?? candidate.url(
+                            forResource: name, withExtension: (name as NSString).pathExtension,
+                            subdirectory: "\(subdirectory)/")
+                }
+                if let found, FileManager.default.fileExists(atPath: found.path) { return found }
             }
         }
-        return repositoryRoot?.appendingPathComponent(relativePath)
+        // No repository fallback, deliberately. Everything a test reads is bundled, and reaching
+        // the checkout means touching ~/Documents from a GUI test host, which raises a TCC consent
+        // prompt that hangs the run with nobody there to click Allow. Returning nil makes the test
+        // fail with a message instead of hanging.
+        return nil
     }
 
     /// The test photos, or nil when this machine has none. Never creates anything.
+    ///
+    /// **Returns nil without touching the file system unless the photos are explicitly enabled.**
+    /// Falling back to `~/Documents/testing` and `stat`ing it on first access, whatever the opt-in
+    /// said, was the TCC consent prompt that hangs an unattended `xcodebuild test` on this machine.
     public static let testPhotos: URL? = {
+        guard photoTestsAllowed else { return nil }
         let raw =
             ProcessInfo.processInfo.environment[photosEnvVar]
             ?? (NSString(string: defaultPhotosFolder).expandingTildeInPath)
@@ -382,14 +396,11 @@ enum ExifToolDateParser {
 }
 
 public enum FixtureError: Error, CustomStringConvertible {
-    case repositoryRootNotFound
     case fixtureMissing(String)
     case photoCountMismatch(game: Game, expected: Int, actual: Int)
 
     public var description: String {
         switch self {
-        case .repositoryRootNotFound:
-            "Could not find project.yml above \(#filePath) — is this test bundle from another checkout?"
         case .fixtureMissing(let path):
             "Missing committed fixture: \(path)"
         case .photoCountMismatch(let game, let expected, let actual):

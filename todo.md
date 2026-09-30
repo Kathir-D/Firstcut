@@ -150,6 +150,30 @@ Not blocking v0.1.0; an agent can do these.
      is first created, so a Lightroom-rated second card copied into an open shoot is not imported; a
      different file saved under a known name (same path) inherits that name's rating.
   6. UI polish from screenshots the app can now be launched to take.
+- **Fixed — the ~/Documents TCC hang, and the timeout tool that made it findable.** `xcodebuild test`
+  on this machine was hanging indefinitely (no prompt, no failure, no output), which is the worst
+  failure mode there is. Causes, all of them now gone:
+  - `FixturePhotos.fixtureURL` asked the bundle for a `tests/fixtures/exiftool` **subdirectory**. But
+    `project.yml` copies each fixture folder as a *folder reference*, so the bundle holds a flat
+    `exiftool/`. The nested lookup never matched, so it fell through to the repository — inside
+    `~/Documents` — and the GUI test host raised a TCC consent prompt and waited forever. It now tries
+    the layouts that actually exist, and its repository fallback is off in any test process.
+  - `TestEnvironment.testPhotos` was a `static let` that `stat`ed `~/Documents/testing` on first
+    access **regardless of the opt-in**. The `FIRSTCUT_ALLOW_PHOTO_TESTS` gate covered the tests but
+    not the lookup, so even `testPhotoDiscoveryIsOptional` triggered it. It now returns nil without
+    touching the filesystem unless the opt-in is set.
+  - `FirstcutCoreBridge.generatedBindingsSource` read the generated bindings from the repository for
+    three tests. `scripts/build-core.sh` now also writes them as `FirstcutCore.bindings.txt` and
+    `project.yml` bundles that into each test target (Xcode silently refuses to copy a `.swift` file
+    through Copy Bundle Resources).
+  - `TestEnvironment.repositoryRoot` walked up looking for `project.yml`, i.e. stat'ed inside
+    `~/Documents` just to compute a path for a message. It is now pure path arithmetic.
+  - `Fixtures.bundled` no longer falls back to the repository at all; it returns nil and the test
+    fails with a message, which beats hanging.
+
+  `scripts/with-timeout.sh <seconds> <command>` now wraps every build and test run, so a hang is a
+  124 with a diagnosis instead of a frozen shell. It found the above in minutes. The full suite is
+  235 unit + 24 integration + 3 performance tests, green, in about 4 seconds.
 - **Still the owner's, for the reason that it is a judgement call, not for lack of a machine:** the
   ground truth in `tests/fixtures/ground-truth/` (an agent must not synthesise it), the
   Game1JENKS re-press decision, the "pick by eye" embedded-preview vs `CIRAWFilter` choice at

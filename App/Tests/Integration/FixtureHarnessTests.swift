@@ -11,12 +11,20 @@ import XCTest
 
 final class FixtureHarnessTests: XCTestCase {
 
-    func testRepositoryRootIsFound() throws {
-        let root = try XCTUnwrap(TestEnvironment.repositoryRoot, FixtureError.repositoryRootNotFound.description)
+    /// Asserts on the **shape** of the derived checkout path, not on the file system.
+    ///
+    /// The obvious version of this test — walk up until `project.yml` appears, then stat it — is a
+    /// TCC consent prompt waiting to happen: the repository is under ~/Documents and the test host
+    /// is a GUI app, so it blocks the whole run with nobody there to answer it. `repositoryRoot` is
+    /// therefore pure path arithmetic and is checked as such.
+    func testRepositoryRootIsDerived() {
+        let root = TestEnvironment.repositoryRoot
+        XCTAssertTrue(root.path.hasSuffix("/Firstcut"), "checkout root resolved to \(root.path)")
+        XCTAssertEqual(root.lastPathComponent, "Firstcut")
+        // It must point *at* the checkout root, not into it.
         XCTAssertTrue(
-            FileManager.default.fileExists(atPath: root.appendingPathComponent("project.yml").path),
-            "repositoryRoot resolved to \(root.path), which has no project.yml"
-        )
+            root.path.hasSuffix("/App/Tests") == false,
+            "repositoryRoot should be the root, not a directory inside it: \(root.path)")
     }
 
     func testEveryGameHasACommittedExiftoolDump() throws {
@@ -120,5 +128,56 @@ final class FixtureHarnessTests: XCTestCase {
                 "\(name) is named in todo.md §3 and §5.4 but is not in \(folder.lastPathComponent)"
             )
         }
+    }
+
+    // MARK: - Nothing may reach ~/Documents unless the photos are opted into
+    //
+    // These three are the regression net for the hang. The repository lives under ~/Documents, the
+    // test host is a GUI app, and an ad-hoc signed build has a new identity on every rebuild, so
+    // macOS raises a TCC consent prompt for Documents access on every rebuild and waits forever for
+    // a click that nobody is there to give. A run that touches a protected path does not fail, it
+    // simply never finishes — the worst possible failure mode, because there is no message.
+
+    /// The fixtures must come out of the built bundle, which is inside the app's own container.
+    func testFixturesResolveFromTheBundleNotTheRepository() throws {
+        for game in Game.allCases {
+            let url = try XCTUnwrap(
+                TestEnvironment.fixtureURL("tests/fixtures/exiftool/\(game.rawValue).json"),
+                "\(game.rawValue) exiftool dump not found in the bundle"
+            )
+            XCTAssertFalse(
+                url.path.contains("/Documents/"),
+                "\(game.rawValue) resolved to \(url.path), which is in a protected folder")
+        }
+    }
+
+    /// `project.yml` copies each fixture folder as a folder reference, so the bundle holds a flat
+    /// `exiftool/` and not `tests/fixtures/exiftool/`. Asking for the nested layout silently missed
+    /// and the lookup fell through to the repository — which is the hang above.
+    func testTheFlatBundleLayoutIsTheOneThatIsLookedFor() throws {
+        let url = try XCTUnwrap(
+            TestEnvironment.fixtureURL("tests/fixtures/exiftool/Game1JENKS.json"))
+        XCTAssertTrue(
+            url.path.contains("/exiftool/"),
+            "expected the folder-reference layout in the bundle, got \(url.path)"
+        )
+    }
+
+    /// Without the opt-in there must be no photos root at all — resolved by *not* touching the
+    /// filesystem. The gate used to cover the tests but not this lookup, so even a test that only
+    /// asked whether discovery was possible raised the prompt.
+    func testNoPhotoLookupHappensWithoutTheOptIn() throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment[TestEnvironment.photoTestsEnvVar] == nil,
+            "photos are opted into on this run, so the root is expected to resolve"
+        )
+        XCTAssertNil(
+            TestEnvironment.testPhotos,
+            "the photos root resolved without FIRSTCUT_ALLOW_PHOTO_TESTS, which means it was stat'ed"
+        )
+        XCTAssertTrue(
+            TestEnvironment.discoveredPhotoFolders().isEmpty,
+            "folders were discovered from ~/Documents without the opt-in"
+        )
     }
 }

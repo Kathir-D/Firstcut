@@ -17,35 +17,42 @@ public enum FixturePhotos {
 
     // MARK: - Locating
 
-    /// Looks for the fixtures in `FIRSTCUT_FIXTURES`, then relative to this source file, so both the
-    /// test bundle and a checkout build find them without the 42 GB of RAW files.
+    /// Looks for the fixtures in `FIRSTCUT_FIXTURES`, then in the bundle, then — but only outside a
+    /// test process — in the checkout, so both the test bundle and a developer running a preview
+    /// from Xcode find them without the 42 GB of RAW files.
     public static func fixtureURL(game: String) -> URL? {
         let name = "\(game).json"
         if let root = ProcessInfo.processInfo.environment["FIRSTCUT_FIXTURES"] {
             let url = URL(fileURLWithPath: root).appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: url.path) { return url }
         }
-        // Bundled copy first. `tests/fixtures/` is committed into the test bundles (see project.yml),
-        // because walking up to the repository root means reading a path inside ~/Documents — and the
-        // test host is a GUI app, so that raises a TCC consent prompt on every run and the host
-        // blocks forever waiting for a click that never comes. Three hangs and about an hour on
-        // 2026-09-29, all from this function. The bundle copy is read from the app's own container,
-        // which needs no grant.
-        if let bundled = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: fixtureDirectory)
-            ?? Bundle.main.url(forResource: "\(fixtureDirectory)/\(name)", withExtension: nil),
-            FileManager.default.fileExists(atPath: bundled.path)
-        {
-            return bundled
-        }
-        for bundle in Bundle.allBundles {
-            if let found = bundle.url(forResource: name, withExtension: nil, subdirectory: fixtureDirectory),
-                FileManager.default.fileExists(atPath: found.path)
-            {
-                return found
+        // The bundled copy, read from the app's own container, which needs no TCC grant. The bundle
+        // is checked over several layouts because `project.yml` copies `tests/fixtures/exiftool` as
+        // a *folder reference*, which lands in the bundle as a flat `exiftool/` — so the nested
+        // `tests/fixtures/exiftool` subdirectory this function used to ask for never existed there.
+        // When it missed, the lookup fell through to the repository, i.e. ~/Documents, and the GUI
+        // test host raised a TCC consent prompt and blocked the whole run with nobody there to click
+        // Allow. Three hangs and about an hour on 2026-09-29, all from this function; it came back
+        // after the nested layout was "fixed" because the flat one was still being missed.
+        for bundle in Bundle.allBundles + [Bundle.main] {
+            for candidate in [
+                bundle.url(forResource: name, withExtension: nil, subdirectory: fixtureDirectory),
+                bundle.url(
+                    forResource: name, withExtension: nil,
+                    subdirectory: "\(bundledDirectory)/"),
+                bundle.url(forResource: "\(fixtureDirectory)/\(name)", withExtension: nil),
+                bundle.url(forResource: "\(bundledDirectory)/\(name)", withExtension: nil),
+                bundle.url(forResource: name, withExtension: "json"),
+            ] {
+                if let candidate, FileManager.default.fileExists(atPath: candidate.path) {
+                    return candidate
+                }
             }
         }
-        // Session/ → Sources/ → App/ → the repository root. Still useful for a command-line tool run
-        // from a checkout, and only reached when the fixtures are not bundled.
+        // The checkout, last, and never in a test process. A test host is a GUI app: reading
+        // ~/Documents from one is the hang described above, and a test that genuinely needs the
+        // photos is opt-in behind FIRSTCUT_ALLOW_PHOTO_TESTS and reads them itself.
+        guard !Self.isRunningTests else { return nil }
         var directory = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { directory.deleteLastPathComponent() }
         for _ in 0..<4 {
@@ -54,6 +61,18 @@ public enum FixturePhotos {
             directory.deleteLastPathComponent()
         }
         return nil
+    }
+
+    /// Where `project.yml` puts the fixture folders in a built bundle: the folder reference keeps its
+    /// own name, so `tests/fixtures/exiftool` becomes `exiftool`.
+    public static let bundledDirectory = "exiftool"
+
+    /// True in an XCTest process. Used to keep the repository fallback off the test path, where
+    /// reaching ~/Documents is a TCC prompt rather than a file read.
+    public static var isRunningTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
     }
 
     public enum FixtureError: Error, CustomStringConvertible {
