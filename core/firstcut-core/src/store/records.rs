@@ -614,8 +614,14 @@ pub fn count_by_tier(db: &Db, mode: RatingMode) -> Result<HashMap<super::rating:
 // --------------------------------------------------------------- history
 
 /// Appends a change to the undo log. Undo and redo are two views of this one table.
+///
+/// A new change discards whatever could still be redone, as in every editor: redoing a change made
+/// before it would apply a stale rating over the new one.
 pub fn push_history(db: &Db, entry: &HistoryEntry) -> Result<i64> {
     let conn = db.conn();
+    if !entry.undone {
+        conn.execute("DELETE FROM history WHERE undone = 1", [])?;
+    }
     conn.execute(
         "INSERT INTO history (photo_id, batch_id, batch_index, before_stars, before_flag,
                               before_label, before_keep, after_stars, after_flag, after_label,
@@ -686,11 +692,16 @@ pub fn last_undoable(db: &Db) -> Result<Option<HistoryEntry>> {
     )
 }
 
-/// The newest change that has been undone: the next `redo()`.
+/// The change undone most recently: the next `redo()`.
+///
+/// Undo walks back from the newest change, so the undone changes are always the newest ones
+/// (`push_history` discards them when a new change arrives), and the last one undone is the
+/// *oldest* of them. Taking the newest instead redid changes out of order: 3 stars then 5, undone
+/// twice, redid 5 and then 3.
 pub fn last_redoable(db: &Db) -> Result<Option<HistoryEntry>> {
     history_one(
         db,
-        "SELECT {HISTORY_COLUMNS} FROM history WHERE undone = 1 ORDER BY seq DESC LIMIT 1",
+        "SELECT {HISTORY_COLUMNS} FROM history WHERE undone = 1 ORDER BY seq ASC LIMIT 1",
     )
 }
 

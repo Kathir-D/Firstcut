@@ -1816,6 +1816,34 @@ mod tests {
     }
 
     #[test]
+    fn redo_replays_changes_in_order_and_a_new_change_clears_it() {
+        let (_s, _f, session) = empty_session();
+        let photo = session.snapshot().photos[0].id;
+        let rating = |session: &Session| session.snapshot().ratings.get(&photo.0).copied();
+        session.set_rating(photo, Rating::stars(3)).unwrap();
+        session.set_rating(photo, Rating::stars(5)).unwrap();
+
+        session.undo().unwrap();
+        session.undo().unwrap();
+        assert_eq!(rating(&session).unwrap_or_default(), Rating::neutral());
+        session.redo().unwrap();
+        assert_eq!(
+            rating(&session),
+            Some(Rating::stars(3)),
+            "the first change comes back first"
+        );
+        session.redo().unwrap();
+        assert_eq!(rating(&session), Some(Rating::stars(5)));
+        assert!(session.redo().is_none());
+
+        // Undo, then rate something new: the undone 5 stars cannot be redone over it.
+        session.undo().unwrap();
+        session.set_rating(photo, Rating::stars(1)).unwrap();
+        assert!(session.redo().is_none());
+        assert_eq!(rating(&session), Some(Rating::stars(1)));
+    }
+
+    #[test]
     fn the_sidecar_follows_the_keep_threshold() {
         // "Only 5 stars" in keep mode: a 4-star photo is shown as not kept, so the sidecar must
         // not tell Lightroom it is a keep.

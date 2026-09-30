@@ -78,8 +78,10 @@ impl Session {
     pub fn submit_visual_sigs(&self, sigs: Vec<(PhotoId, VisualSig)>);   // from pipeline; may re-batch unvisited batches → listener.batches_changed
 
     pub fn set_rating(&self, photo: PhotoId, rating: Rating) -> Change;   // DB now, XMP debounced ≤ 1 s
-    pub fn undo(&self) -> Option<Change>;
-    pub fn redo(&self) -> Option<Change>;
+    pub fn undo(&self) -> Option<Change>;   // the transition made: before = undone value, after = restored
+    pub fn redo(&self) -> Option<Change>;   // same shape; a new rating clears the redo stack
+                                            // (Swift's SessionBackend.undo returns the change undone, so
+                                            //  UniFFICoreSession swaps the pair)
 
     pub fn set_cursor(&self, cursor: Cursor);
     pub fn mark_visited(&self, batch: BatchId);

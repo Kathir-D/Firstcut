@@ -102,7 +102,18 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
         RatingChange(try session.setRating(photo: photo, rating: rating.ffi))
     }
 
-    public func undo() -> RatingChange? { session.undo().map(RatingChange.init) }
+    /// The core reports an undo as the transition it just made (`before` = the rating being
+    /// undone, `after` = the one restored). The app's contract, like `MockSession`, is "the change
+    /// that was undone", whose `before` is the value now in place, so the pair is swapped here.
+    /// Without the swap the cached rating kept the undone value and ⌘Z looked like it did nothing.
+    public func undo() -> RatingChange? {
+        session.undo().map { ffi in
+            let transition = RatingChange(ffi)
+            return RatingChange(
+                id: transition.id, photo: transition.photo, batch: transition.batch,
+                before: transition.after, after: transition.before)
+        }
+    }
 
     public func redo() -> RatingChange? { session.redo().map(RatingChange.init) }
 
