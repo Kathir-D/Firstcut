@@ -36,12 +36,18 @@ struct SettingsView: View {
 }
 
 /// A binding into `AppSettings` that writes through `updateSettings`.
+///
+/// `@MainActor` so the closures it builds may touch the model, which is main-actor state; the key
+/// path is captured once as `nonisolated(unsafe)` because key paths are not `Sendable` and this one
+/// is never used off the main actor.
+@MainActor
 private func settingBinding<T: Equatable>(
   _ model: AppModel, _ keyPath: WritableKeyPath<AppSettings, T>
 ) -> Binding<T> {
-  Binding(
-    get: { model.settings[keyPath: keyPath] },
-    set: { value in model.updateSettings { $0[keyPath: keyPath] = value } })
+  nonisolated(unsafe) let path = keyPath
+  return Binding(
+    get: { model.settings[keyPath: path] },
+    set: { value in model.updateSettings { $0[keyPath: path] = value } })
 }
 
 // MARK: - General
