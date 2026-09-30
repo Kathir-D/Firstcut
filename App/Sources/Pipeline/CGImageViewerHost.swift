@@ -15,6 +15,19 @@
 //
 // The seam is unchanged: if the IOSurface path is ever worth it, it replaces *this* file and
 // `ViewerArea` does not move. That is what the protocol was for (REV-52).
+//
+// ## Zoom (task.md §9.2) — mouse and trackpad only, no keyboard shortcut
+//
+// * **Pinch** zooms smoothly, anchored at the pinch point.
+// * **Click** a spot jumps to 100% (one image pixel per screen pixel) *centred on that spot*;
+//   click again returns to fit. A click that turned into a drag does neither.
+// * While zoomed, **drag** or **two-finger scroll** pans.
+// * **Zoom lock**: arrowing to the next frame keeps the same zoom level and the same spot, so
+//   sharpness can be compared across a burst. Without it, every photo opens at fit.
+//
+// The geometry is one function (`imageRect`) from three numbers — the image size, the zoom relative
+// to fit, and the normalized point of the image that sits at the centre of the view — so pinch,
+// click, pan and lock cannot disagree about where the photograph is.
 
 import AppKit
 import QuartzCore
@@ -23,15 +36,26 @@ import QuartzCore
 final class CGImageViewerHost: NSView, PhotoViewerHost {
   private let images: any CullImageSource
   private let imageLayer = CALayer()
+  private let overlayLayer = CALayer()
 
   private var photoID: PhotoID?
-  private var zoom: Double = 1
-  private var isZoomLocked = false
-  private var anchor: CGPoint = .zero
+  private var image: CGImage?
 
-  /// The zoom the view is currently presenting, derived from the layer's own transform. Read for the
-  /// HUD, so it must not be a second stored number that can drift from what is on screen.
-  var presentedZoom: Double { Double(imageLayer.transform.m11) }
+  /// Zoom relative to *fit*: 1 is the whole photograph, `oneToOne` is 100%.
+  private var zoom: CGFloat = 1
+  /// The point of the image (0…1, top-left origin) that sits at the centre of the view.
+  private var center = CGPoint(x: 0.5, y: 0.5)
+  private var isZoomLocked = false
+  private var presentation = ViewerPresentation.fit
+
+  // Gesture bookkeeping.
+  private var mouseDownPoint: CGPoint?
+  private var mouseDownCenter = CGPoint(x: 0.5, y: 0.5)
+  private var didDrag = false
+  private let dragSlop: CGFloat = 3
+
+  /// The zoom the view is presenting, for the HUD, as a multiple of fit. Read on demand.
+  var presentedZoom: Double { Double(zoom) }
 
   init(images: any CullImageSource) {
     self.images = images
@@ -39,16 +63,16 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     wantsLayer = true
     layer?.backgroundColor = NSColor.clear.cgColor
 
-    imageLayer.contentsGravity = .resizeAspect
+    imageLayer.contentsGravity = .resize
     imageLayer.magnificationFilter = .linear
     imageLayer.minificationFilter = .trilinear
-    // The loupe is the whole point of a culling app, so this is the linear-filter quality choice
-    // §7.2 asks for: cheap, and it is already a camera preview rather than a RAW decode.
+    imageLayer.masksToBounds = true
     layer?.addSublayer(imageLayer)
 
-    let click = NSClickGestureRecognizer(target: self, action: #selector(toggleZoom))
-    addGestureRecognizer(click)
-    let pinch = NSClickGestureRecognizer(target: self, action: #selector(toggleZoom))
+    overlayLayer.masksToBounds = true
+    imageLayer.addSublayer(overlayLayer)
+
+    let pinch = NSMagnificationGestureRecognizer(target: self, action: #selector(pinched(_:)))
     addGestureRecognizer(pinch)
   }
 
@@ -60,32 +84,41 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
   // MARK: - PhotoViewerHost
 
   func setPhoto(_ id: PhotoID, aspectRatio: Double) {
+    let changed = photoID != id
     photoID = id
+    if changed, !isZoomLocked {
+      // A new photo opens at fit, unless the user has locked the zoom to compare a burst.
+      zoom = 1
+      center = CGPoint(x: 0.5, y: 0.5)
+    }
     present()
   }
 
   func setViewerState(_ state: ViewerPresentation) {
-    zoom = state.isZoomed ? 2 : 1
+    let lockChanged = isZoomLocked != state.isZoomLocked
     isZoomLocked = state.isZoomLocked
-    if !state.isZoomed { anchor = .zero }
-    applyTransform()
+    let overlaysChanged =
+      presentation.afRects != state.afRects || presentation.showsClipping != state.showsClipping
+    presentation = state
+    if lockChanged || overlaysChanged { updateOverlays() }
+    layoutImage(animated: false)
   }
 
   func setViewportSize(_ size: CGSize) {
-    // Re-frame on layout. The image itself is not re-decoded: a size change is a transform, and
-    // §7.1's budget is about decodes.
-    imageLayer.frame = bounds
+    // A size change is a transform, not a decode: §7.1's budget is about decodes.
+    layoutImage(animated: false)
   }
 
   override func layout() {
     super.layout()
-    imageLayer.frame = bounds
+    layoutImage(animated: false)
   }
 
   // MARK: - Presentation
 
   private func present() {
     guard let photoID else {
+      image = nil
       imageLayer.contents = nil
       return
     }
@@ -93,35 +126,278 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     // the focus window, which is the state navigation moves through. A miss returns nil and the
     // focus counter records it, so a regression here shows up in a test rather than as a blank
     // viewer nobody measures.
-    if let image = images.displayImage(for: photoID) {
-      imageLayer.contents = image
+    if let decoded = images.displayImage(for: photoID) {
+      image = decoded
+      imageLayer.contents = decoded
     }
-    applyTransform()
+    updateOverlays()
+    layoutImage(animated: false)
   }
 
-  private func applyTransform() {
-    guard bounds.width > 0, bounds.height > 0 else { return }
-    let scale = zoom.isFinite && zoom > 0 ? zoom : 1
+  // MARK: - Geometry
+
+  /// The image's size in points when the whole photograph fits the view, or `.zero` with no image.
+  private var fitSize: CGSize {
+    guard let image, image.width > 0, image.height > 0, bounds.width > 0, bounds.height > 0 else {
+      return .zero
+    }
+    let scale = min(bounds.width / CGFloat(image.width), bounds.height / CGFloat(image.height))
+    return CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale)
+  }
+
+  /// `zoom` at which one image pixel is one screen pixel: 100%.
+  private var oneToOne: CGFloat {
+    guard let image, fitSize.width > 0 else { return 1 }
+    let pointsPerPixel = 1 / (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
+    return max(1, CGFloat(image.width) * pointsPerPixel / fitSize.width)
+  }
+
+  private var maxZoom: CGFloat { max(oneToOne * 3, 4) }
+
+  /// Where the photograph is drawn, in this view's coordinates (AppKit: bottom-left origin).
+  private func imageRect(zoom: CGFloat, center: CGPoint) -> CGRect {
+    let fit = fitSize
+    guard fit != .zero else { return .zero }
+    let size = CGSize(width: fit.width * zoom, height: fit.height * zoom)
+    // `center` is top-left based; flip y for AppKit's bottom-left layer coordinates.
+    var origin = CGPoint(
+      x: bounds.midX - center.x * size.width,
+      y: bounds.midY - (1 - center.y) * size.height)
+    // Never leave a gap on a side the photograph could cover, and centre it where it is smaller
+    // than the view (which is exactly fit).
+    origin.x = clampedOrigin(origin.x, size: size.width, viewport: bounds.width)
+    origin.y = clampedOrigin(origin.y, size: size.height, viewport: bounds.height)
+    return CGRect(origin: origin, size: size)
+  }
+
+  private func clampedOrigin(_ origin: CGFloat, size: CGFloat, viewport: CGFloat) -> CGFloat {
+    if size <= viewport { return (viewport - size) / 2 }
+    return min(0, max(viewport - size, origin))
+  }
+
+  /// The inverse of `imageRect` for a point in view coordinates: the normalized (top-left) point
+  /// of the image under it.
+  private func imagePoint(at viewPoint: CGPoint, in rect: CGRect) -> CGPoint {
+    guard rect.width > 0, rect.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
+    return CGPoint(
+      x: min(1, max(0, (viewPoint.x - rect.minX) / rect.width)),
+      y: min(1, max(0, 1 - (viewPoint.y - rect.minY) / rect.height)))
+  }
+
+  private func layoutImage(animated: Bool) {
+    let rect = imageRect(zoom: zoom, center: center)
+    // Keep `center` honest after clamping, so a later pan starts from what is on screen.
+    if rect != .zero, zoom > 1 {
+      center = imagePoint(at: CGPoint(x: bounds.midX, y: bounds.midY), in: rect)
+    }
     CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    // Centre, then scale about the zoom anchor.
-    //
-    // Setting `position` after `anchorPoint` matters: `anchorPoint` is in unit coordinates of the
-    // layer's *own* bounds, and the image is drawn with `resizeAspect` inside `bounds`. Pinning the
-    // position to `bounds.midX/midY` with a non-centred anchor put the photograph in the top-right
-    // corner at 1:1 — which looked like a decoding failure rather than a layout mistake, and cost a
-    // while to tell apart from "the viewer is black".
-    imageLayer.contentsGravity = .resizeAspect
-    imageLayer.frame = CGRect(origin: .zero, size: bounds.size)
-    imageLayer.anchorPoint = CGPoint(x: anchor.x, y: anchor.y)
-    imageLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
-    imageLayer.transform = CATransform3DMakeScale(scale, scale, 1)
+    if animated {
+      CATransaction.setAnimationDuration(0.22)
+      CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
+    } else {
+      CATransaction.setDisableActions(true)
+    }
+    imageLayer.frame = rect
+    overlayLayer.frame = imageLayer.bounds
+    relayoutOverlays()
     CATransaction.commit()
   }
 
-  @objc private func toggleZoom() {
-    guard !isZoomLocked else { return }
-    zoom = zoom > 1.01 ? 1 : 2
-    applyTransform()
+  // MARK: - Overlays (AF points, clipping)
+
+  private var clippingLayer: CALayer?
+  private var afLayers: [(layer: CAShapeLayer, rect: ViewerPresentation.AFRect)] = []
+
+  private func updateOverlays() {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    overlayLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+    clippingLayer = nil
+    afLayers = []
+
+    if presentation.showsClipping, let image {
+      let mask = CALayer()
+      mask.contentsGravity = .resize
+      mask.contents = ClippingMask.make(from: image)
+      overlayLayer.addSublayer(mask)
+      clippingLayer = mask
+    }
+    for rect in presentation.afRects {
+      let layer = CAShapeLayer()
+      layer.fillColor = nil
+      layer.lineWidth = 2
+      // Green is "in focus" the way a camera draws it; white is a point that was active but missed.
+      layer.strokeColor =
+        (rect.inFocus ? NSColor.systemGreen : NSColor.white.withAlphaComponent(0.6)).cgColor
+      overlayLayer.addSublayer(layer)
+      afLayers.append((layer, rect))
+    }
+    relayoutOverlays()
+    CATransaction.commit()
+  }
+
+  /// Overlays are laid out from normalized geometry every time the photograph moves, so they stay
+  /// on the pixels they mark through pinch, pan and resize.
+  private func relayoutOverlays() {
+    let frame = overlayLayer.bounds
+    clippingLayer?.frame = frame
+    for (layer, rect) in afLayers {
+      layer.frame = frame
+      // `rect` is normalized with a top-left origin; layer coordinates are bottom-left.
+      let box = CGRect(
+        x: (rect.x - rect.w / 2) * frame.width,
+        y: (1 - rect.y - rect.h / 2) * frame.height,
+        width: rect.w * frame.width,
+        height: rect.h * frame.height)
+      layer.path = CGPath(rect: box, transform: nil)
+    }
+  }
+
+  // MARK: - Input
+
+  override var acceptsFirstResponder: Bool { false }
+
+  override func mouseDown(with event: NSEvent) {
+    mouseDownPoint = convert(event.locationInWindow, from: nil)
+    mouseDownCenter = center
+    didDrag = false
+  }
+
+  override func mouseDragged(with event: NSEvent) {
+    guard let start = mouseDownPoint else { return }
+    let point = convert(event.locationInWindow, from: nil)
+    if !didDrag, hypot(point.x - start.x, point.y - start.y) < dragSlop { return }
+    didDrag = true
+    guard zoom > 1.001 else { return }
+    let size = imageRect(zoom: zoom, center: center).size
+    guard size.width > 0, size.height > 0 else { return }
+    // Dragging the photograph right moves the view's centre left over the image.
+    center = CGPoint(
+      x: min(1, max(0, mouseDownCenter.x - (point.x - start.x) / size.width)),
+      y: min(1, max(0, mouseDownCenter.y + (point.y - start.y) / size.height)))
+    layoutImage(animated: false)
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    defer { mouseDownPoint = nil }
+    // A click that turned into a drag must not toggle zoom (task.md §9.2).
+    guard !didDrag, image != nil else { return }
+    let point = convert(event.locationInWindow, from: nil)
+    let rect = imageRect(zoom: zoom, center: center)
+    guard rect.contains(point) else { return }
+
+    if zoom > 1.001 {
+      zoom = 1
+      center = CGPoint(x: 0.5, y: 0.5)
+    } else {
+      // 100%, centred on the spot that was clicked.
+      center = imagePoint(at: point, in: rect)
+      zoom = oneToOne
+    }
+    layoutImage(animated: true)
+  }
+
+  override func scrollWheel(with event: NSEvent) {
+    guard zoom > 1.001 else {
+      super.scrollWheel(with: event)
+      return
+    }
+    let size = imageRect(zoom: zoom, center: center).size
+    guard size.width > 0, size.height > 0 else { return }
+    center = CGPoint(
+      x: min(1, max(0, center.x - event.scrollingDeltaX / size.width)),
+      y: min(1, max(0, center.y - event.scrollingDeltaY / size.height)))
+    layoutImage(animated: false)
+  }
+
+  @objc private func pinched(_ recognizer: NSMagnificationGestureRecognizer) {
+    guard image != nil else { return }
+    switch recognizer.state {
+    case .began, .changed:
+      let anchorView = recognizer.location(in: self)
+      let rect = imageRect(zoom: zoom, center: center)
+      let anchor = imagePoint(at: anchorView, in: rect)
+      let factor = 1 + recognizer.magnification
+      recognizer.magnification = 0
+      let next = min(maxZoom, max(1, zoom * factor))
+      guard next != zoom else { return }
+      // Keep the image point under the fingers where it is: solve for the centre that puts
+      // `anchor` back under `anchorView` at the new zoom.
+      let fit = fitSize
+      let newSize = CGSize(width: fit.width * next, height: fit.height * next)
+      if next <= 1.001 {
+        zoom = 1
+        center = CGPoint(x: 0.5, y: 0.5)
+      } else if newSize.width > 0, newSize.height > 0 {
+        zoom = next
+        center = CGPoint(
+          x: anchor.x + (bounds.midX - anchorView.x) / newSize.width,
+          y: anchor.y - (bounds.midY - anchorView.y) / newSize.height)
+        center.x = min(1, max(0, center.x))
+        center.y = min(1, max(0, center.y))
+      }
+      layoutImage(animated: false)
+    default:
+      break
+    }
+  }
+}
+
+// MARK: - Clipping mask
+
+/// Highlight / shadow clipping (task.md §9.2, key J): red where any channel is at the top of its
+/// range, blue where every channel is at the bottom. Computed from a downsampled copy, because a
+/// 24-megapixel frame does not need 24 million tests to show where the sky blew out.
+enum ClippingMask {
+  static let highlight: UInt8 = 250
+  static let shadow: UInt8 = 5
+
+  static func make(from image: CGImage, maxEdge: Int = 1024) -> CGImage? {
+    let longest = max(image.width, image.height)
+    guard longest > 0 else { return nil }
+    let scale = min(1, Double(maxEdge) / Double(longest))
+    let width = max(1, Int(Double(image.width) * scale))
+    let height = max(1, Int(Double(image.height) * scale))
+    let bytesPerRow = width * 4
+    var source = [UInt8](repeating: 0, count: bytesPerRow * height)
+    let space = CGColorSpaceCreateDeviceRGB()
+    let drew = source.withUnsafeMutableBytes { buffer -> Bool in
+      guard
+        let context = CGContext(
+          data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+          bytesPerRow: bytesPerRow, space: space,
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+      else { return false }
+      context.interpolationQuality = .medium
+      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+      return true
+    }
+    guard drew else { return nil }
+
+    var out = [UInt8](repeating: 0, count: bytesPerRow * height)
+    var index = 0
+    while index < source.count {
+      let r = source[index]
+      let g = source[index + 1]
+      let b = source[index + 2]
+      if r >= highlight || g >= highlight || b >= highlight {
+        // Premultiplied red at ~70%.
+        out[index] = 178
+        out[index + 3] = 178
+      } else if r <= shadow && g <= shadow && b <= shadow {
+        out[index + 2] = 178
+        out[index + 3] = 178
+      }
+      index += 4
+    }
+    return out.withUnsafeMutableBytes { buffer -> CGImage? in
+      guard
+        let context = CGContext(
+          data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+          bytesPerRow: bytesPerRow, space: space,
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+      else { return nil }
+      return context.makeImage()
+    }
   }
 }

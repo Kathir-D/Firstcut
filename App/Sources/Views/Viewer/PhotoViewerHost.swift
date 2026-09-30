@@ -39,14 +39,46 @@ protocol PhotoViewerHost: AnyObject {
   var presentedZoom: Double { get }
 }
 
-/// What the window needs to know about the viewer's zoom, mirrored from app-model.md's
-/// `ViewerState` (REV-46). app-logic owns the value; ui mirrors the fields it draws.
+/// What the window tells the viewer: whether zoom is locked across photos, and which overlays to
+/// draw. Mirrored from app-model.md's `ViewerState` (REV-46); app-logic owns the value.
 struct ViewerPresentation: Equatable {
   var isZoomed = false
   var zoomScale: Double = 1
   var isZoomLocked = false
+  /// Autofocus points to draw, in the *upright* image's normalized coordinates (top-left origin).
+  var afRects: [AFRect] = []
+  var showsClipping = false
 
   static let fit = ViewerPresentation()
+
+  struct AFRect: Equatable {
+    /// Centre and size, normalized 0…1.
+    var x: CGFloat
+    var y: CGFloat
+    var w: CGFloat
+    var h: CGFloat
+    var inFocus: Bool
+  }
+
+  /// The AF points of a photo mapped from the sensor's frame into the upright frame the viewer
+  /// displays, by EXIF orientation. `decodeFull` rotates the pixels the same way, so the box lands
+  /// on the thing that was in focus rather than on the same spot of a sideways sensor.
+  static func afRects(from af: AfInfo?, orientation: UInt8) -> [AFRect] {
+    guard let af else { return [] }
+    return af.points.map { point in
+      let (x, y, w, h) = (CGFloat(point.x), CGFloat(point.y), CGFloat(point.w), CGFloat(point.h))
+      switch orientation {
+      case 2: return AFRect(x: 1 - x, y: y, w: w, h: h, inFocus: point.inFocus)
+      case 3: return AFRect(x: 1 - x, y: 1 - y, w: w, h: h, inFocus: point.inFocus)
+      case 4: return AFRect(x: x, y: 1 - y, w: w, h: h, inFocus: point.inFocus)
+      case 5: return AFRect(x: y, y: x, w: h, h: w, inFocus: point.inFocus)
+      case 6: return AFRect(x: 1 - y, y: x, w: h, h: w, inFocus: point.inFocus)
+      case 7: return AFRect(x: 1 - y, y: 1 - x, w: h, h: w, inFocus: point.inFocus)
+      case 8: return AFRect(x: y, y: 1 - x, w: h, h: w, inFocus: point.inFocus)
+      default: return AFRect(x: x, y: y, w: w, h: h, inFocus: point.inFocus)
+      }
+    }
+  }
 }
 
 /// Hosts pipeline's viewer layer without a compile-time dependency on it. `register` is the one

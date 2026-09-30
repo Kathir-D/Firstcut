@@ -31,6 +31,7 @@ final class PreviewCullViewState: CullViewState {
   var isHUDVisible = true
   var showsAFOverlay = false
   var showsClippingOverlay = false
+  var isZoomLocked = false
   var autoAdvanceEnabled = false
   var viewerBackgroundDarkness: Double = 0.13
   private(set) var progress: CullProgress = CullProgress()
@@ -86,6 +87,8 @@ final class PreviewCullViewState: CullViewState {
       showsAFOverlay.toggle()
     case .toggleClippingOverlay:
       showsClippingOverlay.toggle()
+    case .toggleZoomLock:
+      isZoomLocked.toggle()
     case .toggleAutoAdvance:
       autoAdvanceEnabled.toggle()
     case .setRating(let stars):

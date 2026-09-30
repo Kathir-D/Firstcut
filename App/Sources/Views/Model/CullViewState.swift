@@ -24,6 +24,7 @@ protocol CullViewState: AnyObject {
   var isHUDVisible: Bool { get }
   var showsAFOverlay: Bool { get }
   var showsClippingOverlay: Bool { get }
+  var isZoomLocked: Bool { get }
   var autoAdvanceEnabled: Bool { get }
   var viewerBackgroundDarkness: Double { get }
   var progress: CullProgress { get }
@@ -130,6 +131,7 @@ enum CullAction {
   case toggleHUD
   case toggleAFOverlay
   case toggleClippingOverlay
+  case toggleZoomLock
   case toggleAutoAdvance
   case setRating(stars: UInt8)
   case setFlag(Flag)

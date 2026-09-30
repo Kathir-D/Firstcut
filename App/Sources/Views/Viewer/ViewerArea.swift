@@ -14,14 +14,27 @@ struct ViewerArea: View {
     return max(0.2, min(5, width / height))
   }
 
+  /// What the host is told besides the photo: zoom lock and which overlays to draw.
+  private var presentation: ViewerPresentation {
+    var value = ViewerPresentation.fit
+    value.isZoomLocked = state.isZoomLocked
+    value.showsClipping = state.showsClippingOverlay
+    if state.showsAFOverlay, let meta = state.currentPhoto?.meta {
+      value.afRects = ViewerPresentation.afRects(from: meta.af, orientation: meta.orientation)
+    }
+    return value
+  }
+
   var body: some View {
     ZStack {
       Appearance.viewerBackground(darkness: state.viewerBackgroundDarkness)
       if !PhotoViewerHostView.isRegistered {
         ViewerPlaceholder(photo: state.currentPhoto)
       }
-      PhotoViewerHostLayer(photoID: state.currentPhoto?.id, aspectRatio: aspectRatio)
-        .opacity(state.currentPhoto == nil ? 0 : 1)
+      PhotoViewerHostLayer(
+        photoID: state.currentPhoto?.id, aspectRatio: aspectRatio, presentation: presentation
+      )
+      .opacity(state.currentPhoto == nil ? 0 : 1)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -59,16 +72,19 @@ struct ViewerPlaceholder: View {
 struct PhotoViewerHostLayer: NSViewRepresentable {
   let photoID: PhotoID?
   let aspectRatio: Double
+  let presentation: ViewerPresentation
 
   func makeNSView(context: Context) -> PhotoViewerHostView {
     let view = PhotoViewerHostView(frame: .zero)
     view.aspectRatio = aspectRatio
     view.photoID = photoID
+    view.viewerState = presentation
     return view
   }
 
   func updateNSView(_ view: PhotoViewerHostView, context: Context) {
     view.aspectRatio = aspectRatio
     view.photoID = photoID
+    view.viewerState = presentation
   }
 }

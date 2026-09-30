@@ -78,6 +78,7 @@ final class ModelCullViewState: CullViewState {
   var isHUDVisible: Bool { model.hudVisible }
   var showsAFOverlay: Bool { model.afOverlay }
   var showsClippingOverlay: Bool { model.clippingOverlay }
+  var isZoomLocked: Bool { model.viewer.zoomLock }
   var autoAdvanceEnabled: Bool { model.autoAdvance }
   var viewerBackgroundDarkness: Double { model.viewer.backgroundGray }
   var progress: CullProgress { model.progress }
@@ -120,6 +121,7 @@ extension CullAction {
     case .toggleHUD: .toggleHUD
     case .toggleAFOverlay: .toggleAFOverlay
     case .toggleClippingOverlay: .toggleClippingOverlay
+    case .toggleZoomLock: .toggleZoomLock
     case .toggleAutoAdvance: .toggleAutoAdvance
     case .setRating(let stars): .setStars(Int(stars))
     case .setFlag(.pick): .togglePickFlag
