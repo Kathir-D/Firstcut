@@ -734,7 +734,7 @@ fn transfer(op: &FileOp, source: &Path, how: Move) -> ExecutedOp {
 
     let result = match how {
         Move::Rename => move_file(source, &target),
-        Move::Copy => std::fs::copy(source, &target).map(|_| ()),
+        Move::Copy => copy_verified(source, &target),
     };
 
     match result {
@@ -803,6 +803,14 @@ pub fn move_file(source: &Path, target: &Path) -> std::io::Result<()> {
 }
 
 fn copy_then_remove(source: &Path, target: &Path) -> std::io::Result<()> {
+    copy_verified(source, target)?;
+    std::fs::remove_file(source)
+}
+
+/// Copies `source` to a `target` that must not exist, checks the byte count and keeps the
+/// modification time. A failed copy (disk full, a card pulled) removes its partial target, so a
+/// truncated file is never left behind to look like a good copy or block a retry.
+fn copy_verified(source: &Path, target: &Path) -> std::io::Result<()> {
     if target.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
@@ -830,7 +838,7 @@ fn copy_then_remove(source: &Path, target: &Path) -> std::io::Result<()> {
         let _ = std::fs::remove_file(target);
         return Err(error);
     }
-    std::fs::remove_file(source)
+    Ok(())
 }
 
 /// The Trash for `source`'s volume, where Finder would put it: `~/.Trash` on the home volume,
@@ -1014,10 +1022,13 @@ pub fn undo_ops(executed: &[ExecutedOp]) -> Vec<ExecutedOp> {
                 FileOpKind::Move => move_file(&target, &source),
                 FileOpKind::Copy => std::fs::remove_file(&target),
                 FileOpKind::Trash => move_file(&target, &source),
+                // Finish only ever writes a list to a file that did not exist, so the file is ours
+                // to remove.
+                FileOpKind::WriteList => std::fs::remove_file(&target),
                 // A sidecar write is reversed by putting the original bytes back, which is only
                 // possible if something kept them. Rather than guess, this one reports that it
                 // could not be undone, so the UI can say so out loud.
-                FileOpKind::MarkRejected | FileOpKind::WriteList => {
+                FileOpKind::MarkRejected => {
                     return ExecutedOp {
                         kind: op.kind.clone(),
                         src: op.src.clone(),
@@ -2060,6 +2071,36 @@ mod tests {
         // A second run never overwrites the first list.
         let again = execute_ops_with_list(&plan.ops, &names);
         assert!(!again[0].is_done());
+        // Undo removes the list this run wrote.
+        let undone = undo_ops(&done);
+        assert!(undone.iter().all(ExecutedOp::is_done), "{undone:?}");
+        assert!(!list.exists());
+    }
+
+    #[test]
+    fn a_copy_keeps_the_modification_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("IMG_0008.CR3");
+        fs::write(&from, b"raw bytes").unwrap();
+        let then =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&from)
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
+        let to = dir.path().join("kept").join("IMG_0008.CR3");
+        let op = FileOp::new(
+            FileOpKind::Copy,
+            from.to_string_lossy(),
+            Some(to.to_string_lossy().into_owned()),
+        );
+        let done = execute_ops(&[op]);
+        assert!(done[0].is_done(), "{:?}", done[0].error);
+        assert_eq!(fs::read(&to).unwrap(), b"raw bytes");
+        assert_eq!(fs::metadata(&to).unwrap().modified().unwrap(), then);
+        assert!(from.exists(), "a copy leaves the original");
     }
 
     #[test]

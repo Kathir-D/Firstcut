@@ -112,14 +112,17 @@ Not blocking v0.1.0; an agent can do these.
   remove); Trash goes to `~/.Trash` or `<volume>/.Trashes/<uid>`; undo never overwrites a file that
   came back; cross-volume moves count toward the free-space check; **Mark rejected** writes the
   sidecar the plan names (it used to write `X.xmp.xmp` and failed when no sidecar existed yet);
-  **Write kept list** writes the kept names to the chosen file (it never wrote anything before).
+  **Write kept list** writes the kept names to the chosen file (it never wrote anything before) and
+  undo removes it; **Copy** verifies the byte count, keeps the modification time and never leaves a
+  partial copy behind.
 - **Next, in order:**
   1. Wire the keep threshold from the app: `AppModel` must call `session.setKeepThreshold(...)` after
      a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.
   2. Check whether the thumbnail/preview cache flickers or is dropped when the watched folder changes
      (`AppModel` folder-change handling and `Pipeline/ImageProvider.swift`).
-  3. Continue the bug review of code not yet re-read: `fileops` Copy / split-by-tier / Delete paths
-     and undo of a written list, `session.rs` rename reconciliation, `exif/`.
+  3. Continue the bug review of code not yet re-read: `fileops` planning for split-by-tier /
+     split-by-stars and companions (sidecars, JPEG pairs), `session.rs` rename reconciliation,
+     `exif/`.
   4. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
      they flag).
 - **Blocked on the owner:** the screenshots artifact cannot be downloaded from the cloud container (the
