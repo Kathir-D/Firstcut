@@ -30,6 +30,7 @@
 // click, pan and lock cannot disagree about where the photograph is.
 
 import AppKit
+import Observation
 import QuartzCore
 
 @MainActor
@@ -95,6 +96,7 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
       center = CGPoint(x: 0.5, y: 0.5)
     }
     present()
+    layoutImage(animated: false)
   }
 
   func setViewerState(_ state: ViewerPresentation) {
@@ -130,22 +132,39 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
   // MARK: - Presentation
 
   private func present() {
-    guard let photoID else {
+    guard let id = photoID else {
       image = nil
       imageLayer.contents = nil
+      updateOverlays()
       return
     }
     // Synchronous on purpose: `ImageProvider` returns a cached `CGImage` when the photo is inside
-    // the focus window, which is the state navigation moves through. A miss returns nil and the
-    // focus counter records it, so a regression here shows up in a test rather than as a blank
-    // viewer nobody measures.
-    if let decoded = images.displayImage(for: photoID) {
-      image = decoded
-      imageLayer.contents = decoded
+    // the focus window, which is the state navigation moves through. A miss returns nil (and the
+    // focus counter records it, so a regression shows up in a test), and then:
+    //
+    // * the thumbnail stands in, so the photograph on screen is always the one being rated and
+    //   never the previous frame left behind;
+    // * the read is observed, so the full decode replaces the thumbnail the moment it lands.
+    var decoded: CGImage?
+    withObservationTracking {
+      decoded = images.displayImage(for: id)
+    } onChange: { [weak self] in
+      Task { @MainActor [weak self] in
+        guard let self, self.photoID == id, !self.showsFullImage else { return }
+        self.present()
+      }
     }
+    let next = decoded ?? images.thumbnail(for: id, size: CGSize(width: 1024, height: 1024))
+    showsFullImage = decoded != nil
+    guard next !== image else { return }
+    image = next
+    imageLayer.contents = next
     updateOverlays()
     layoutImage(animated: false)
   }
+
+  /// Whether `image` is the full display decode rather than the stand-in thumbnail.
+  private var showsFullImage = false
 
   // MARK: - Geometry
 
