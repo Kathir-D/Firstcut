@@ -44,9 +44,7 @@ public enum FirstcutCoreBridge {
     // `CoreBridgeTests.exportsAreNotStale` checks each one against the generated file, so this
     // inventory cannot rot into a lie.
     //
-    // The three Finish entry points are **not** in the list: `Session::plan_finish`,
-    // `execute_finish` and `undo_finish` have no `#[uniffi::export]` yet, so Finish refuses and
-    // says so (see `UniFFICoreSession`).
+    // The three Finish entry points are in `finishMembers`.
     public static let sessionMembers: [String] = [
         "static func `open`(folder:",
         "static func openIn(folder:",
@@ -67,12 +65,12 @@ public enum FirstcutCoreBridge {
         "func close()",
     ]
 
-    /// The three Finish entry points, named as they will appear when exported. Used by the seam
-    /// and by the test that fails when one of them lands without the app being updated.
-    public static let missingFinishMembers: [String] = [
-        "Session.planFinish",
-        "Session.executeFinish",
-        "Session.undoFinish",
+    /// Finish Cull's entry points, which are exported now. Checked against the generated bindings
+    /// by `CoreBridgeTests`, so the inventory cannot rot into a lie.
+    public static let finishMembers: [String] = [
+        "func planFinish(options:",
+        "func executeFinish(plan:",
+        "func undoFinish()",
     ]
 
     /// Whether the linked `FirstcutCore` really exports the Session API.

@@ -340,16 +340,11 @@ struct CoreSessionBackendTests {
         #expect(core.closed == 1)
     }
 
-    @Test("The session is the real generated one, and Finish is the part that is missing")
-    func whatIsRealAndWhatIsNot() {
-        // The session exports landed, so the shipped factory opens folders through Rust.
+    @Test("The session is the real generated one, and it can run Finish")
+    func whatIsReal() {
         #expect(FirstcutCoreBridge.hasSessionAPI)
         #expect(MainActor.assumeIsolated { SessionFactory.backendName }.contains("SQLite + XMP sidecars"))
-        #expect(MainActor.assumeIsolated { SessionFactory.canFinish } == false)
-        // …and the three Finish entry points are not there, so Finish refuses and says so rather
-        // than moving files it cannot plan.
-        #expect(CoreSessionUnavailable(
-            missing: FirstcutCoreBridge.missingFinishMembers).description.contains("Nothing has been moved"))
+        #expect(MainActor.assumeIsolated { SessionFactory.canFinish })
     }
 
     @Test("A folder moved since the last open is recorded, not dropped")

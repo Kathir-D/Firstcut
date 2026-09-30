@@ -41,14 +41,10 @@ import Testing
     #expect(FirstcutCoreBridge.hasSessionAPI)
 }
 
-@MainActor @Test func finishIsStillNotExported() throws {
-    // The three Finish entry points. When they land, this test is the reminder to delete
-    // `missingFinishMembers`, implement them in `UniFFICoreSession` and flip `canFinish`.
+@MainActor @Test func finishIsExportedAndTheAppCanRunIt() throws {
     let source = try #require(FirstcutCoreBridge.generatedBindingsSource)
-    for member in FirstcutCoreBridge.missingFinishMembers {
-        #expect(!source.contains(member), "\(member) has landed — implement it and drop it from the list")
-    }
-    #expect(FirstcutCoreBridge.missingFinishMembers.count == 3)
-    #expect(SessionFactory.canFinish == false)
+    let missing = FirstcutCoreBridge.finishMembers.filter { !source.contains($0) }
+    #expect(missing.isEmpty, "Finish members the app expects but the core does not export: \(missing)")
+    #expect(SessionFactory.canFinish)
 }
 

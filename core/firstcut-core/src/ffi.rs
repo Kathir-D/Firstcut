@@ -928,6 +928,223 @@ impl Session {
     }
 }
 
+// ─────────────────────────────────────────────────────────── Finish Cull (task.md §9.7)
+
+/// What to do with the photos that were not kept. Mirrors `fileops::UnkeptAction`.
+#[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
+pub enum FfiUnkeptAction {
+    MarkRejectedInXmp,
+    MoveToSubfolder { name: String },
+    MoveToTrash,
+    DeletePermanently,
+    Nothing,
+}
+
+/// What to do with the photos that were kept. Mirrors `fileops::KeptAction`.
+#[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
+pub enum FfiKeptAction {
+    None,
+    CopyTo { folder: String },
+    MoveTo { folder: String },
+    SplitByTier { folder: String },
+    SplitByStars { folder: String },
+    WriteList { file: String },
+}
+
+/// The rating mode is deliberately not here: the session plans with its own, so the preview
+/// cannot disagree with the filmstrip about what a keep is (REV-78).
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiFinishOptions {
+    pub unkept: FfiUnkeptAction,
+    pub kept: FfiKeptAction,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiFileOpKind {
+    Move,
+    Copy,
+    Trash,
+    Delete,
+    MarkRejected,
+    WriteList,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiFileOp {
+    pub kind: FfiFileOpKind,
+    pub from: String,
+    pub to: Option<String>,
+}
+
+/// The dry run.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiFinishPlan {
+    pub ops: Vec<FfiFileOp>,
+    pub bytes_to_copy: u64,
+    pub warnings: Vec<String>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiFileOpFailure {
+    pub path: String,
+    pub reason: String,
+}
+
+/// What an execution, or an undo, did. Never silent: every failure is listed with its reason.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiFinishReport {
+    pub done: u32,
+    pub failed: Vec<FfiFileOpFailure>,
+    /// False once a permanent delete has run.
+    pub undoable: bool,
+    /// Set by an undo when there was no Finish run to reverse.
+    pub nothing_to_undo: bool,
+}
+
+impl From<FfiUnkeptAction> for crate::fileops::UnkeptAction {
+    fn from(action: FfiUnkeptAction) -> Self {
+        use crate::fileops::UnkeptAction as A;
+        match action {
+            FfiUnkeptAction::MarkRejectedInXmp => A::MarkRejectedInXmp,
+            FfiUnkeptAction::MoveToSubfolder { name } => A::MoveToSubfolder(name),
+            FfiUnkeptAction::MoveToTrash => A::MoveToTrash,
+            FfiUnkeptAction::DeletePermanently => A::DeletePermanently,
+            FfiUnkeptAction::Nothing => A::Nothing,
+        }
+    }
+}
+
+impl From<FfiKeptAction> for crate::fileops::KeptAction {
+    fn from(action: FfiKeptAction) -> Self {
+        use crate::fileops::KeptAction as A;
+        match action {
+            FfiKeptAction::None => A::None,
+            FfiKeptAction::CopyTo { folder } => A::CopyTo(folder),
+            FfiKeptAction::MoveTo { folder } => A::MoveTo(folder),
+            FfiKeptAction::SplitByTier { folder } => A::SplitByTier(folder),
+            FfiKeptAction::SplitByStars { folder } => A::SplitByStars(folder),
+            FfiKeptAction::WriteList { file } => A::WriteList(file),
+        }
+    }
+}
+
+impl From<FfiFileOpKind> for crate::fileops::FileOpKind {
+    fn from(kind: FfiFileOpKind) -> Self {
+        use crate::fileops::FileOpKind as K;
+        match kind {
+            FfiFileOpKind::Move => K::Move,
+            FfiFileOpKind::Copy => K::Copy,
+            FfiFileOpKind::Trash => K::Trash,
+            FfiFileOpKind::Delete => K::Delete,
+            FfiFileOpKind::MarkRejected => K::MarkRejected,
+            FfiFileOpKind::WriteList => K::WriteList,
+        }
+    }
+}
+
+impl From<crate::fileops::FileOpKind> for FfiFileOpKind {
+    fn from(kind: crate::fileops::FileOpKind) -> Self {
+        use crate::fileops::FileOpKind as K;
+        match kind {
+            K::Move => FfiFileOpKind::Move,
+            K::Copy => FfiFileOpKind::Copy,
+            K::Trash => FfiFileOpKind::Trash,
+            K::Delete => FfiFileOpKind::Delete,
+            K::MarkRejected => FfiFileOpKind::MarkRejected,
+            K::WriteList => FfiFileOpKind::WriteList,
+        }
+    }
+}
+
+impl From<crate::fileops::FinishPlan> for FfiFinishPlan {
+    fn from(plan: crate::fileops::FinishPlan) -> Self {
+        FfiFinishPlan {
+            ops: plan
+                .ops
+                .into_iter()
+                .map(|op| FfiFileOp {
+                    kind: op.kind.into(),
+                    from: op.from,
+                    to: op.to,
+                })
+                .collect(),
+            bytes_to_copy: plan.bytes_to_copy,
+            warnings: plan.warnings,
+        }
+    }
+}
+
+impl From<FfiFinishPlan> for crate::fileops::FinishPlan {
+    fn from(plan: FfiFinishPlan) -> Self {
+        crate::fileops::FinishPlan {
+            ops: plan
+                .ops
+                .into_iter()
+                .map(|op| crate::fileops::FileOp::new(op.kind.into(), op.from, op.to))
+                .collect(),
+            bytes_to_copy: plan.bytes_to_copy,
+            warnings: plan.warnings,
+        }
+    }
+}
+
+fn report_from(
+    summary: crate::fileops::ExecutionSummary,
+    nothing_to_undo: bool,
+) -> FfiFinishReport {
+    FfiFinishReport {
+        done: summary.done,
+        failed: summary
+            .failed
+            .into_iter()
+            .map(|(path, reason)| FfiFileOpFailure { path, reason })
+            .collect(),
+        undoable: summary.undoable,
+        nothing_to_undo,
+    }
+}
+
+#[uniffi::export]
+impl Session {
+    /// The dry run: everything Finish would do, in order, without touching a file. Planned with the
+    /// session's own rating mode, so the preview and the filmstrip agree about what is kept.
+    pub fn plan_finish(&self, options: FfiFinishOptions) -> Result<FfiFinishPlan, FfiError> {
+        let options = crate::fileops::FinishOptions {
+            unkept: options.unkept.into(),
+            kept: options.kept.into(),
+            rating_mode: self.inner.rating_mode(),
+        };
+        self.inner
+            .plan_finish(&options)
+            .map(FfiFinishPlan::from)
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
+    /// Does what the plan says, logging every operation so `undo_finish` works even after a
+    /// relaunch. A destination that has since become occupied fails that one operation instead of
+    /// overwriting the file that is there.
+    pub fn execute_finish(&self, plan: FfiFinishPlan) -> Result<FfiFinishReport, FfiError> {
+        self.inner
+            .execute_finish(&plan.into())
+            .map(|run| report_from(run.summary, false))
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
+    /// Reverses the last Finish run. Refused, with the reason, if it included a permanent delete.
+    pub fn undo_finish(&self) -> Result<FfiFinishReport, FfiError> {
+        self.inner
+            .undo_finish()
+            .map(|undo| report_from(undo.summary, undo.nothing_to_undo))
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1176,5 +1393,63 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<crate::session::Session>();
         assert_send_sync::<Session>();
+    }
+
+    #[test]
+    fn finish_round_trips_through_the_ffi_and_undoes() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = tempfile::tempdir().unwrap();
+        for index in 1..=3u32 {
+            let stamp = format!("2026:08:27 10:00:{index:02}");
+            std::fs::write(
+                dir.path().join(format!("IMG_{index:04}.JPG")),
+                crate::meta::exif::fixtures::jpeg(
+                    &crate::meta::exif::fixtures::tiff(&stamp, "", 100, "TEST", None),
+                    600,
+                    400,
+                ),
+            )
+            .unwrap();
+        }
+        let session = Session::open_in(
+            dir.path().display().to_string(),
+            sessions.path().display().to_string(),
+            NullListener::new(),
+        )
+        .unwrap();
+        let first = crate::batch::photo_id("IMG_0001.JPG").0;
+        session
+            .set_rating(
+                first,
+                FfiRating {
+                    stars: 5,
+                    flag: FfiFlag::None,
+                    label: None,
+                    keep: false,
+                },
+            )
+            .unwrap();
+
+        let plan = session
+            .plan_finish(FfiFinishOptions {
+                unkept: FfiUnkeptAction::MoveToSubfolder {
+                    name: "_Not kept".to_string(),
+                },
+                kept: FfiKeptAction::None,
+            })
+            .unwrap();
+        assert_eq!(plan.ops.len(), 2, "{:?}", plan.ops);
+
+        let report = session.execute_finish(plan).unwrap();
+        assert_eq!(report.done, 2);
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(dir.path().join("IMG_0001.JPG").exists());
+        assert!(!dir.path().join("IMG_0002.JPG").exists());
+        assert!(dir.path().join("_Not kept/IMG_0002.JPG").exists());
+
+        let undone = session.undo_finish().unwrap();
+        assert_eq!(undone.done, 2);
+        assert!(dir.path().join("IMG_0002.JPG").exists());
+        assert!(session.undo_finish().unwrap().nothing_to_undo);
     }
 }

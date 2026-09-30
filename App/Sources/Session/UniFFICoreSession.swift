@@ -15,10 +15,9 @@
 // `markVisited`, `submitVisualSigs`, `tierCounts`, `rescan`, `flush`, `close`, and four listener
 // callbacks.
 //
+// Also present: `planFinish`, `executeFinish` and `undoFinish` (Finish Cull, task.md §9.7).
+//
 // Still missing, and the app is explicit about it rather than quietly substituting something:
-//   * **`plan_finish` / `execute_finish` / `undo_finish`** — no export. The Finish sheet reaches
-//     `planFinish` and gets a plan with a warning, which the sheet shows verbatim. Nothing is
-//     deleted, moved or copied, so the failure mode is a refused Finish rather than a wrong one.
 //   * **`ratings_imported`** — the listener has no XMP-import callback. Opening a folder with
 //     sidecars and no database therefore reports nothing today; the session DB is still the
 //     source of truth and the ratings in it are still loaded.
@@ -129,22 +128,104 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
         session.submitVisualSigs(sigs: sigs.map { $0.1.ffiEntry(photo: $0.0) })
     }
 
+    // MARK: Finish (task.md §9.7)
+
+    /// The dry run. The session plans with its own rating mode, so the preview cannot disagree with
+    /// the filmstrip about what is kept (REV-78); `options.ratingMode` is not sent.
     public func planFinish(_ options: FinishSettings) throws -> FinishPlanData {
-        throw CoreSessionUnavailable(
-            missing: ["Session.planFinish", "Session.executeFinish", "Session.undoFinish"])
+        FinishPlanData(try session.planFinish(options: options.ffi))
     }
 
     public func executeFinish(_ plan: FinishPlanData) throws -> FinishReportData {
-        throw CoreSessionUnavailable(
-            missing: ["Session.planFinish", "Session.executeFinish", "Session.undoFinish"])
+        FinishReportData(try session.executeFinish(plan: plan.ffi))
     }
 
     public func undoFinish() throws -> FinishReportData {
-        throw CoreSessionUnavailable(
-            missing: ["Session.planFinish", "Session.executeFinish", "Session.undoFinish"])
+        FinishReportData(try session.undoFinish())
     }
 
     public func flush() { session.flush() }
 
     public func close() { session.close() }
+}
+
+// MARK: - Finish types ↔ the generated FFI types
+
+extension FinishSettings {
+    /// Without `ratingMode`: the core plans with the session's own (REV-78).
+    var ffi: FfiFinishOptions { FfiFinishOptions(unkept: unkept.ffi, kept: kept.ffi) }
+}
+
+extension UnkeptAction {
+    var ffi: FfiUnkeptAction {
+        switch self {
+        case .markRejectedInXmp: .markRejectedInXmp
+        case .moveToSubfolder(let name): .moveToSubfolder(name: name)
+        case .moveToTrash: .moveToTrash
+        case .deletePermanently: .deletePermanently
+        case .nothing: .nothing
+        }
+    }
+}
+
+extension KeptAction {
+    var ffi: FfiKeptAction {
+        switch self {
+        case .none: .none
+        case .copyTo(let folder): .copyTo(folder: folder)
+        case .moveTo(let folder): .moveTo(folder: folder)
+        case .splitByTier(let folder): .splitByTier(folder: folder)
+        case .splitByStars(let folder): .splitByStars(folder: folder)
+        case .writeList(let file): .writeList(file: file)
+        }
+    }
+}
+
+extension FileOpKind {
+    init(_ ffi: FfiFileOpKind) {
+        switch ffi {
+        case .move: self = .move
+        case .copy: self = .copy
+        case .trash: self = .trash
+        case .delete: self = .delete
+        case .markRejected: self = .writeXmp
+        case .writeList: self = .writeList
+        }
+    }
+
+    var ffi: FfiFileOpKind {
+        switch self {
+        case .move: .move
+        case .copy: .copy
+        case .trash: .trash
+        case .delete: .delete
+        case .writeXmp: .markRejected
+        case .writeList: .writeList
+        }
+    }
+}
+
+extension FinishPlanData {
+    init(_ ffi: FfiFinishPlan) {
+        self.init(
+            ops: ffi.ops.map { FileOp(kind: FileOpKind($0.kind), from: $0.from, to: $0.to) },
+            bytesToCopy: ffi.bytesToCopy,
+            warnings: ffi.warnings)
+    }
+
+    var ffi: FfiFinishPlan {
+        FfiFinishPlan(
+            ops: ops.map { FfiFileOp(kind: $0.kind.ffi, from: $0.from, to: $0.to) },
+            bytesToCopy: bytesToCopy,
+            warnings: warnings)
+    }
+}
+
+extension FinishReportData {
+    init(_ ffi: FfiFinishReport) {
+        self.init(
+            done: Int(ffi.done),
+            failed: ffi.failed.map { FileOpFailure(path: $0.path, reason: $0.reason) },
+            undoable: ffi.undoable)
+    }
 }

@@ -53,9 +53,9 @@ public enum SessionFactory {
             : "file system (no session database yet)"
     }
 
-    /// Whether Finish can run. The three Finish entry points have no `#[uniffi::export]` yet, so
-    /// the sheet refuses rather than pretending.
-    public static var canFinish: Bool { !FirstcutCoreBridge.missingFinishMembers.isEmpty == false }
+    /// Whether Finish can run: the Rust core exports the three Finish entry points, so this is true
+    /// whenever the session is the real one.
+    public static var canFinish: Bool { FirstcutCoreBridge.hasSessionAPI }
 }
 
 /// A session over a real folder, with no persistence behind it.

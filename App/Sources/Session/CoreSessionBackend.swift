@@ -216,17 +216,34 @@ public final class CoreSessionBackend: SessionBackend {
     // MARK: Finish
 
     public func planFinish(_ settings: FinishSettings) -> FinishPlanData {
-        (try? core.planFinish(settings)) ?? FinishPlanData(
-            warnings: ["The Rust core could not plan this Finish."])
+        do {
+            return try core.planFinish(settings)
+        } catch {
+            return FinishPlanData(warnings: ["Finish could not be planned: \(Self.describe(error))"])
+        }
     }
 
     public func executeFinish(_ plan: FinishPlanData) -> FinishReportData {
-        (try? core.executeFinish(plan))
-            ?? FinishReportData(failed: [FileOpFailure(path: "", reason: "The Rust core refused.")])
+        do {
+            return try core.executeFinish(plan)
+        } catch {
+            return FinishReportData(failed: [FileOpFailure(path: "", reason: Self.describe(error))])
+        }
     }
 
     public func undoFinish() -> FinishReportData {
-        (try? core.undoFinish()) ?? FinishReportData()
+        do {
+            return try core.undoFinish()
+        } catch {
+            return FinishReportData(failed: [FileOpFailure(path: "", reason: Self.describe(error))])
+        }
+    }
+
+    /// The core's own message, which is shown in the Finish sheet verbatim: "cannot be undone" or
+    /// "no such folder" is more use to the user than "an error occurred".
+    private static func describe(_ error: Error) -> String {
+        if let unavailable = error as? CoreSessionUnavailable { return unavailable.description }
+        return String(describing: error)
     }
 
     public func flush() { core.flush() }
