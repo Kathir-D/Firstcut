@@ -825,23 +825,35 @@ impl State {
 
         let mut moved = Vec::new();
         let mut renames: Vec<(PhotoMeta, PhotoRow)> = Vec::new();
+        // Each vanished row is claimed at most once: two new files must never both inherit one
+        // photo's rating.
+        let mut claimed: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let unclaimed = |rows: Option<&Vec<PhotoRow>>, claimed: &std::collections::HashSet<u64>| {
+            rows.and_then(|rows| rows.iter().find(|row| !claimed.contains(&row.id)))
+                .cloned()
+        };
         for meta in &photos {
             if self.photos.contains_key(&meta.id.0) {
                 continue;
             }
+            // A rename never changes the size. The inode alone is not enough: file systems reuse
+            // inode numbers after a delete (exFAT and FAT cards derive them from the directory
+            // slot), so a new photo can land on a deleted one's number.
             let mut row = meta
                 .device
                 .zip(meta.ino)
-                .and_then(|key| by_inode.get(&key))
-                .and_then(|rows| rows.first())
-                .cloned();
-            if row.is_none() {
-                row = by_capture
-                    .get(&(meta.shutter_count, meta.file_size))
-                    .and_then(|rows| rows.first())
-                    .cloned();
+                .and_then(|key| unclaimed(by_inode.get(&key), &claimed))
+                .filter(|row| row.file_size == meta.file_size);
+            // The capture fallback needs a shutter count: size alone is not an identity (uncompressed
+            // RAWs from one body are often byte-for-byte the same size).
+            if row.is_none() && meta.shutter_count.is_some() {
+                row = unclaimed(
+                    by_capture.get(&(meta.shutter_count, meta.file_size)),
+                    &claimed,
+                );
             }
             if let Some(row) = row {
+                claimed.insert(row.id);
                 renames.push((meta.clone(), row));
             }
         }
@@ -1426,6 +1438,7 @@ mod tests {
             use std::os::unix::fs::MetadataExt;
             meta.device = Some(stat.dev() as i64);
             meta.ino = Some(stat.ino() as i64);
+            meta.file_size = stat.len();
         }
         let scan = crate::meta::ScanResult {
             skipped: Vec::new(),
@@ -1805,6 +1818,34 @@ mod tests {
         assert_eq!(counts[&Tier::Maybe], 1);
         assert_eq!(counts[&Tier::Rejected], 1);
         assert_eq!(counts.values().sum::<usize>(), 4);
+    }
+
+    #[test]
+    fn a_new_photo_does_not_inherit_a_deleted_ones_rating() {
+        // Delete a rated photo, then a different one arrives. Linux (like exFAT and FAT cards on
+        // macOS) often hands the new file the deleted one's inode number; a different size shows
+        // it is not a rename, so the rating stays behind.
+        let (_sessions, folder, session) = session_with(burst(3, 90));
+        let meta = session.snapshot().photos[1].clone();
+        session.set_rating(meta.id, Rating::stars(5)).unwrap();
+        session.flush();
+
+        fs::remove_file(folder.path().join(&meta.rel_path)).unwrap();
+        let newcomer_path = folder.path().join("a_different_photo.CR3");
+        write_cr3(folder.path(), "a_different_photo.CR3", 9);
+        // Trailing bytes after the last box: still a readable CR3, a different size.
+        let mut bytes = fs::read(&newcomer_path).unwrap();
+        bytes.extend_from_slice(&[0u8; 64]);
+        fs::write(&newcomer_path, bytes).unwrap();
+
+        session.rescan().unwrap();
+        let after = session.snapshot();
+        let newcomer = after
+            .photos
+            .iter()
+            .find(|photo| photo.rel_path == "a_different_photo.CR3")
+            .expect("the new file is in the shoot");
+        assert_eq!(after.ratings.get(&newcomer.id.0), None);
     }
 
     #[test]
