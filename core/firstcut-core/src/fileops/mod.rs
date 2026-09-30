@@ -259,7 +259,8 @@ pub fn plan_finish(
                 KeptAction::None => {}
                 KeptAction::CopyTo(root) | KeptAction::MoveTo(root) => {
                     let root = resolve(folder, root);
-                    let destination = unique_destination(&root, &photo.rel_path, &mut reserved);
+                    let destination =
+                        unique_destination(&root, &photo.rel_path, &files, &mut reserved);
                     if !root.exists() {
                         plan.warnings.push(format!(
                             "{} does not exist yet, it will be created",
@@ -277,19 +278,30 @@ pub fn plan_finish(
                     } else {
                         FileOpKind::Move
                     };
-                    plan.ops.extend(destination_ops(kind, &files, &destination));
+                    plan.ops
+                        .extend(destination_ops(kind, &photo.rel_path, &files, &destination));
                     kept_names.push(file_name(&destination.to_string_lossy()));
                 }
                 KeptAction::SplitByTier(root) => {
                     let subfolder = Tier::Keep.split_dir(options.rating_mode);
-                    let destination =
-                        split_destination(folder, root, &subfolder, &photo.rel_path, &mut reserved);
+                    let destination = split_destination(
+                        folder,
+                        root,
+                        &subfolder,
+                        &photo.rel_path,
+                        &files,
+                        &mut reserved,
+                    );
                     if crosses_volume(folder, &destination) {
                         copy_bytes += files.iter().map(|file| file.size).sum::<u64>();
                         copy_destinations.push(destination.clone());
                     }
-                    plan.ops
-                        .extend(destination_ops(FileOpKind::Move, &files, &destination));
+                    plan.ops.extend(destination_ops(
+                        FileOpKind::Move,
+                        &photo.rel_path,
+                        &files,
+                        &destination,
+                    ));
                     kept_names.push(file_name(&destination.to_string_lossy()));
                 }
                 KeptAction::SplitByStars(root) => {
@@ -302,14 +314,24 @@ pub fn plan_finish(
                     )
                     .stars
                     .to_string();
-                    let destination =
-                        split_destination(folder, root, &subfolder, &photo.rel_path, &mut reserved);
+                    let destination = split_destination(
+                        folder,
+                        root,
+                        &subfolder,
+                        &photo.rel_path,
+                        &files,
+                        &mut reserved,
+                    );
                     if crosses_volume(folder, &destination) {
                         copy_bytes += files.iter().map(|file| file.size).sum::<u64>();
                         copy_destinations.push(destination.clone());
                     }
-                    plan.ops
-                        .extend(destination_ops(FileOpKind::Move, &files, &destination));
+                    plan.ops.extend(destination_ops(
+                        FileOpKind::Move,
+                        &photo.rel_path,
+                        &files,
+                        &destination,
+                    ));
                     kept_names.push(file_name(&destination.to_string_lossy()));
                 }
                 KeptAction::WriteList(_) => {
@@ -321,15 +343,20 @@ pub fn plan_finish(
                 UnkeptAction::Nothing => {}
                 UnkeptAction::MoveToSubfolder(root) => {
                     let root = resolve(folder, root);
-                    let destination = unique_destination(&root, &photo.rel_path, &mut reserved);
+                    let destination =
+                        unique_destination(&root, &photo.rel_path, &files, &mut reserved);
                     if !root.exists() {
                         plan.warnings.push(format!(
                             "{} does not exist yet, it will be created",
                             root.display()
                         ));
                     }
-                    plan.ops
-                        .extend(destination_ops(FileOpKind::Move, &files, &destination));
+                    plan.ops.extend(destination_ops(
+                        FileOpKind::Move,
+                        &photo.rel_path,
+                        &files,
+                        &destination,
+                    ));
                 }
                 UnkeptAction::MoveToTrash => {
                     for file in &files {
@@ -423,22 +450,25 @@ fn group_files(folder: &Path, photo: &PhotoRow) -> Vec<GroupFile> {
 /// One op per file of the group, all sharing the destination's base name.
 ///
 /// The group is renamed as a group: the destination decides the base name, and every member keeps
-/// its own extension, so `IMG_0001.CR3`, `IMG_0001.JPG` and `IMG_0001.CR3.xmp` become
-/// `IMG_0001-2.CR3`, `IMG_0001-2.JPG` and `IMG_0001-2.CR3.xmp` and never come apart.
-fn destination_ops(kind: FileOpKind, files: &[GroupFile], destination: &Path) -> Vec<FileOp> {
+/// everything after the shared base, so `IMG_0001.CR3`, `IMG_0001.JPG` and `IMG_0001.CR3.xmp`
+/// become `IMG_0001-2.CR3`, `IMG_0001-2.JPG` and `IMG_0001-2.CR3.xmp` and never come apart. (Only
+/// the last extension was kept before, which turned the sidecar into `IMG_0001.xmp`: a name
+/// Firstcut itself does not read back, so the rating was lost after a Finish.)
+fn destination_ops(
+    kind: FileOpKind,
+    primary: &str,
+    files: &[GroupFile],
+    destination: &Path,
+) -> Vec<FileOp> {
     let (Some(directory), Some(stem)) = (destination.parent(), destination.file_stem()) else {
         return Vec::new();
     };
+    let stem = stem.to_string_lossy();
+    let base = base_name(primary);
 
     let mut ops = Vec::with_capacity(files.len());
     for file in files {
-        let name = match file.path.extension() {
-            Some(extension) => {
-                format!("{}.{}", stem.to_string_lossy(), extension.to_string_lossy())
-            }
-            None => stem.to_string_lossy().into_owned(),
-        };
-        let to = directory.join(&name);
+        let to = directory.join(format!("{stem}{}", member_suffix(&file.path, &base)));
         // A file that is already where it would be put is not an operation.
         if to == file.path {
             continue;
@@ -452,39 +482,81 @@ fn destination_ops(kind: FileOpKind, files: &[GroupFile], destination: &Path) ->
     ops
 }
 
+/// The primary's file name without its extension: the base every member of the group shares.
+fn base_name(primary: &str) -> String {
+    Path::new(primary)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// What follows the group's base name in a member's file name: `.CR3`, `.JPG`, `.CR3.xmp`.
+/// A member that does not start with the base keeps just its last extension.
+fn member_suffix(member: &Path, base: &str) -> String {
+    let name = member
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match name.strip_prefix(base) {
+        Some(rest) if rest.starts_with('.') => rest.to_string(),
+        _ => member
+            .extension()
+            .map(|extension| format!(".{}", extension.to_string_lossy()))
+            .unwrap_or_default(),
+    }
+}
+
 fn split_destination(
     folder: &Path,
     root: &str,
     subfolder: &str,
     rel_path: &str,
+    files: &[GroupFile],
     reserved: &mut HashMap<PathBuf, ()>,
 ) -> PathBuf {
     let directory = resolve(folder, &format!("{root}/{subfolder}"));
-    unique_destination(&directory, rel_path, reserved)
+    unique_destination(&directory, rel_path, files, reserved)
 }
 
 /// The destination for one photo, never overwriting anything.
 ///
 /// Two cases: a file with that name is already there, or another photo in this same plan is going
 /// to be written there. Both get the same treatment — `name-2`, `name-3`, … before the extension —
-/// so a group never comes apart and nothing is overwritten.
+/// so nothing is overwritten. A name is free only when it is free for *every* member of the group:
+/// an `IMG_0001.JPG` already at the destination would otherwise fail that one move at execution and
+/// split the pair.
 fn unique_destination(
     directory: &Path,
     rel_path: &str,
+    files: &[GroupFile],
     reserved: &mut HashMap<PathBuf, ()>,
 ) -> PathBuf {
-    let name = Path::new(rel_path)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| rel_path.to_string());
-    let mut candidate = directory.join(&name);
-    let mut counter = 1;
-    while candidate.exists() || reserved.contains_key(&candidate) {
-        counter += 1;
-        candidate = directory.join(suffixed(&name, counter));
+    let base = base_name(rel_path);
+    let primary_suffix = member_suffix(Path::new(rel_path), &base);
+    let mut suffixes: Vec<String> = files
+        .iter()
+        .map(|file| member_suffix(&file.path, &base))
+        .collect();
+    if !suffixes.contains(&primary_suffix) {
+        suffixes.push(primary_suffix.clone());
     }
-    reserved.insert(candidate.clone(), ());
-    candidate
+    let taken = |stem: &str, reserved: &HashMap<PathBuf, ()>| {
+        suffixes.iter().any(|suffix| {
+            let path = directory.join(format!("{stem}{suffix}"));
+            path.exists() || reserved.contains_key(&path)
+        })
+    };
+
+    let mut stem = base.clone();
+    let mut counter = 1;
+    while taken(&stem, reserved) {
+        counter += 1;
+        stem = format!("{base}-{counter}");
+    }
+    for suffix in &suffixes {
+        reserved.insert(directory.join(format!("{stem}{suffix}")), ());
+    }
+    directory.join(format!("{stem}{primary_suffix}"))
 }
 
 /// `IMG_0001.CR3` + 2 → `IMG_0001-2.CR3`, the way Capture One and Lightroom do it.
@@ -1801,6 +1873,61 @@ mod tests {
             0,
         );
         assert_eq!(destination_folders(&by_stars), vec!["4", "5"]);
+    }
+
+    fn targets(plan: &FinishPlan) -> Vec<String> {
+        let mut names: Vec<String> = plan
+            .ops
+            .iter()
+            .filter_map(|op| op.to.as_deref())
+            .map(file_name)
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_moved_group_keeps_its_sidecar_name() {
+        let shoot = Shoot::new();
+        let kept = shoot.path().join("kept");
+        let ratings = HashMap::from([(1, Rating::stars(5))]);
+        let plan = plan_finish(
+            shoot.path(),
+            &shoot.photos(),
+            &ratings,
+            &options(
+                UnkeptAction::Nothing,
+                KeptAction::MoveTo(kept.to_string_lossy().into_owned()),
+            ),
+            0,
+        );
+        assert_eq!(
+            targets(&plan),
+            vec!["IMG_0001.CR3", "IMG_0001.CR3.xmp", "IMG_0001.JPG"]
+        );
+    }
+
+    #[test]
+    fn a_companion_already_at_the_destination_renames_the_whole_group() {
+        let shoot = Shoot::new();
+        let kept = shoot.path().join("kept");
+        fs::create_dir(&kept).unwrap();
+        fs::write(kept.join("IMG_0001.JPG"), b"an older export").unwrap();
+        let ratings = HashMap::from([(1, Rating::stars(5))]);
+        let plan = plan_finish(
+            shoot.path(),
+            &shoot.photos(),
+            &ratings,
+            &options(
+                UnkeptAction::Nothing,
+                KeptAction::MoveTo(kept.to_string_lossy().into_owned()),
+            ),
+            0,
+        );
+        assert_eq!(
+            targets(&plan),
+            vec!["IMG_0001-2.CR3", "IMG_0001-2.CR3.xmp", "IMG_0001-2.JPG"]
+        );
     }
 
     #[test]

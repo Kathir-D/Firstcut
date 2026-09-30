@@ -122,15 +122,16 @@ Not blocking v0.1.0; an agent can do these.
   mode no longer writes a 4-star photo as a keep). Sidecars already written are not rewritten when
   the threshold changes; they update the next time that photo's rating changes. **Rating undo/redo:**
   redo replays in the right order, a new rating clears the redo stack, and ⌘Z with the real core
-  updates the photo on screen (the core and Swift disagreed on which side of an undo is which).
+  updates the photo on screen (the core and Swift disagreed on which side of an undo is which). **Moved
+  groups** keep their sidecar name (`IMG_0001.CR3.xmp` used to become `IMG_0001.xmp`, which Firstcut
+  does not read back), and a companion already at the destination renames the whole group.
 - **Next, in order:**
   1. Wire the keep threshold from the app: `AppModel` must call `session.setKeepThreshold(...)` after
      a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.
   2. Check whether the thumbnail/preview cache flickers or is dropped when the watched folder changes
      (`AppModel` folder-change handling and `Pipeline/ImageProvider.swift`).
   3. Continue the bug review of code not yet re-read: `fileops` planning for split-by-tier /
-     companions (sidecars, JPEG pairs), rating undo/redo and batching on rescan in `session.rs`,
-     the metadata readers in `meta/`. Reviewed and fine: `execute_finish`, `undo_finish`,
+     batching on rescan in `session.rs`, the metadata readers in `meta/`, the XMP import path. Reviewed and fine: `execute_finish`, `undo_finish`,
      `mark_finish_folders`.
   4. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
      they flag).
