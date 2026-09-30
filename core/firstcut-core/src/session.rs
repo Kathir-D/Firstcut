@@ -250,6 +250,9 @@ impl Session {
         let writer = Arc::new(XmpWriter::new(Arc::new(ListenerSink(Arc::clone(
             &listener,
         )))));
+        // A shoot rated in Lightroom and opened here for the first time has its ratings only in
+        // sidecars, and starting from a blank database would silently discard them (task.md §11).
+        let created = matches!(db.matched(), MatchKind::Created);
         let mut state = State {
             rating_mode: db.rating_mode()?,
             db,
@@ -263,6 +266,23 @@ impl Session {
             xmp: XmpSettings::default(),
         };
         state.ingest(scan.photos)?;
+        if created {
+            let photos: Vec<PhotoMeta> = state.photos.values().cloned().collect();
+            for (id, rating) in import_ratings_from_sidecars(folder, &photos) {
+                records::write_rating(
+                    &state.db,
+                    &RatingWrite {
+                        photo_id: id.0,
+                        rating,
+                        xmp_rating: None,
+                        xmp_label: None,
+                    },
+                )?;
+                // The sidecar already says this. Leaving the row pending would queue a write of
+                // "no values", which reads as "remove the rating" and would wipe what was imported.
+                records::mark_xmp_written(&state.db, id.0)?;
+            }
+        }
 
         // The session is shared across threads — the UI calls it while the XMP writer runs — so
         // every mutation goes through this one lock. A public method that needs the lock twice
@@ -2138,5 +2158,40 @@ mod tests {
         session.flush();
         let text = fs::read_to_string(&sidecar).expect("the skipped sidecar is backfilled");
         assert!(text.contains("xmp:Rating=\"4\""), "{text}");
+    }
+
+    #[test]
+    fn a_first_open_imports_the_ratings_already_in_sidecars() {
+        // Rated in Lightroom, opened in Firstcut for the first time: no database, ratings only in
+        // the sidecars. They must be there, and the sidecars must be left exactly as they were.
+        let folder = six_jpegs();
+        for (name, stars) in [("IMG_0001.JPG", 5u8), ("IMG_0003.JPG", 2)] {
+            crate::xmp::write_sidecar(
+                &folder.path().join(format!("{name}.xmp")),
+                &crate::xmp::document::XmpValues::rating(i64::from(stars)),
+            )
+            .unwrap();
+        }
+        let before = fs::read_to_string(folder.path().join("IMG_0001.JPG.xmp")).unwrap();
+
+        let sessions = tempfile::tempdir().unwrap();
+        let session =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        let ratings = session.snapshot().ratings;
+        let stars = |n: u32| {
+            ratings
+                .get(&crate::batch::photo_id(&format!("IMG_{n:04}.JPG")).0)
+                .map(|r| r.stars)
+        };
+        assert_eq!(stars(1), Some(5));
+        assert_eq!(stars(3), Some(2));
+        assert_eq!(stars(2), None, "an unrated photo stays unrated");
+
+        session.flush();
+        assert_eq!(
+            fs::read_to_string(folder.path().join("IMG_0001.JPG.xmp")).unwrap(),
+            before,
+            "importing must not rewrite the sidecar"
+        );
     }
 }
