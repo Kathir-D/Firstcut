@@ -144,6 +144,20 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
         FinishReportData(try session.undoFinish())
     }
 
+    public func applyMetadataSettings(_ settings: MetadataSettings) {
+        var stars: UInt8 = 5
+        var label: ColorLabel?
+        switch settings.keepMapping {
+        case .rating(let value): stars = UInt8(min(5, max(1, value)))
+        case .colorLabel(let value): label = value
+        }
+        try? session.setXmpSettings(
+            writeSidecars: settings.writeXmp,
+            sidecarsForNonRaw: settings.writeSidecarsForJpegs,
+            keepStars: stars,
+            keepLabel: label?.ffi)
+    }
+
     public func flush() { session.flush() }
 
     public func close() { session.close() }

@@ -214,14 +214,13 @@ private struct OptionsStage: View {
     }
   }
 
-  // The pickers select by *kind*, so switching kind keeps the folder text the user already typed.
+  // The pickers select by *kind*, so switching kind keeps the text the user already typed.
 
   private var unkeptKind: Binding<UnkeptAction> {
     Binding(
-      get: { normalized(settings.unkept) },
+      get: { settings.unkept.pickerTag },
       set: { newKind in
-        let typed = settings.unkept.folderName ?? ""
-        state.finish(.setUnkept(withFolder(newKind, typed)))
+        state.finish(.setUnkept(newKind.with(folder: settings.unkept.folderName ?? "")))
       })
   }
 
@@ -233,22 +232,14 @@ private struct OptionsStage: View {
 
   private var keptKind: Binding<KeptAction> {
     Binding(
-      get: { normalized(settings.kept) },
-      set: { newKind in
-        let typed = settings.kept.folderName ?? ""
-        state.finish(.setKept(withFolder(newKind, typed)))
-      })
+      get: { settings.kept.pickerTag },
+      set: { newKind in state.finish(.setKept(newKind.with(folder: settings.kept.text))) })
   }
 
   private var keptFolder: Binding<String> {
     Binding(
-      get: { settings.kept.folderName ?? listName },
-      set: { state.finish(.setKept(withFolder(settings.kept, $0))) })
-  }
-
-  private var listName: String {
-    if case .writeList(let file) = settings.kept { return file }
-    return ""
+      get: { settings.kept.folderName ?? settings.kept.text },
+      set: { state.finish(.setKept(settings.kept.with(folder: $0))) })
   }
 
   private var keptFieldLabel: String {
@@ -260,60 +251,15 @@ private struct OptionsStage: View {
 
   /// A folder name is required wherever the action needs one.
   private var isValid: Bool {
-    let unkeptOK = settings.unkept.folderName.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? true
+    let unkeptOK =
+      settings.unkept.folderName.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? true
     let keptOK: Bool
-    switch settings.kept {
-    case .none: keptOK = true
-    case .copyTo(let f), .moveTo(let f), .splitByTier(let f), .splitByStars(let f), .writeList(let f):
-      keptOK = !f.trimmingCharacters(in: .whitespaces).isEmpty
+    if case .none = settings.kept {
+      keptOK = true
+    } else {
+      keptOK = !settings.kept.text.trimmingCharacters(in: .whitespaces).isEmpty
     }
     return unkeptOK && keptOK
-  }
-
-  /// `allCases` carries placeholder folder names, so a picker tag has to be compared by kind, not
-  /// by the whole value. This returns the `allCases` element with the same kind as `action`.
-  private func normalized(_ action: UnkeptAction) -> UnkeptAction {
-    UnkeptAction.allCases.first { sameKind($0, action) } ?? action
-  }
-
-  private func normalized(_ action: KeptAction) -> KeptAction {
-    KeptAction.allCases.first { sameKind($0, action) } ?? action
-  }
-
-  private func sameKind(_ a: UnkeptAction, _ b: UnkeptAction) -> Bool {
-    switch (a, b) {
-    case (.markRejectedInXmp, .markRejectedInXmp), (.moveToSubfolder, .moveToSubfolder),
-      (.moveToTrash, .moveToTrash), (.deletePermanently, .deletePermanently), (.nothing, .nothing):
-      true
-    default: false
-    }
-  }
-
-  private func sameKind(_ a: KeptAction, _ b: KeptAction) -> Bool {
-    switch (a, b) {
-    case (.none, .none), (.copyTo, .copyTo), (.moveTo, .moveTo), (.splitByTier, .splitByTier),
-      (.splitByStars, .splitByStars), (.writeList, .writeList):
-      true
-    default: false
-    }
-  }
-
-  private func withFolder(_ action: UnkeptAction, _ folder: String) -> UnkeptAction {
-    if case .moveToSubfolder = action {
-      return .moveToSubfolder(folder.isEmpty ? "_Not kept" : folder)
-    }
-    return action
-  }
-
-  private func withFolder(_ action: KeptAction, _ folder: String) -> KeptAction {
-    switch action {
-    case .none: .none
-    case .copyTo: .copyTo(folder)
-    case .moveTo: .moveTo(folder)
-    case .splitByTier: .splitByTier(folder)
-    case .splitByStars: .splitByStars(folder)
-    case .writeList: .writeList(folder.isEmpty ? "kept.txt" : folder)
-    }
   }
 }
 

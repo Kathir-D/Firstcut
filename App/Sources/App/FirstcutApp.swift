@@ -23,6 +23,11 @@ struct FirstcutApp: App {
     }
     .defaultSize(width: 1440, height: 900)
     .commands { FirstcutCommands(environment: environment) }
+
+    // ⌘, opens this (task.md §9.8); SwiftUI adds the "Settings…" item to the app menu itself.
+    Settings {
+      SettingsView(model: environment.model)
+    }
   }
 }
 

@@ -52,6 +52,14 @@ import Foundation
     func executeFinish(_ plan: FinishPlanData) -> FinishReportData
     func undoFinish() -> FinishReportData
 
+    /// Settings → Metadata (task.md §9.8): whether ratings are mirrored to `.xmp` sidecars, for
+    /// which files, and what a Keep is written as. Backends with no sidecars ignore it.
+    func applyMetadataSettings(_ settings: MetadataSettings)
+
     /// Force the debounced XMP queue out. On batch change and on quit (task.md §6.3).
     func flush()
+}
+
+extension SessionBackend {
+    public func applyMetadataSettings(_ settings: MetadataSettings) {}
 }

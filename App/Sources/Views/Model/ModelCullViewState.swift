@@ -80,6 +80,7 @@ final class ModelCullViewState: CullViewState {
   var showsClippingOverlay: Bool { model.clippingOverlay }
   var isZoomLocked: Bool { model.viewer.zoomLock }
   var finishStage: FinishStage { model.finish }
+  var visibleInfoFields: Set<InfoField> { model.settings.viewer.infoFields }
   var folderURL: URL? { model.folderURL }
   var autoAdvanceEnabled: Bool { model.autoAdvance }
   var viewerBackgroundDarkness: Double { model.viewer.backgroundGray }

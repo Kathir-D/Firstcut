@@ -26,6 +26,7 @@ protocol CullViewState: AnyObject {
   var showsClippingOverlay: Bool { get }
   var isZoomLocked: Bool { get }
   var finishStage: FinishStage { get }
+  var visibleInfoFields: Set<InfoField> { get }
   var folderURL: URL? { get }
   var autoAdvanceEnabled: Bool { get }
   var viewerBackgroundDarkness: Double { get }

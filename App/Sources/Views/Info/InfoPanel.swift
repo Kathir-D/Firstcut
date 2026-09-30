@@ -16,9 +16,13 @@ struct InfoPanel: View {
         if let photo = state.currentPhoto {
           ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-              RatingSummary(rating: photo.rating, tier: photo.tier, mode: state.ratingMode)
+              if state.visibleInfoFields.contains(.rating) {
+                RatingSummary(rating: photo.rating, tier: photo.tier, mode: state.ratingMode)
+              }
               rows(for: photo)
-              if let histogram = state.images.histogram(for: photo.id) {
+              if state.visibleInfoFields.contains(.histogram),
+                let histogram = state.images.histogram(for: photo.id)
+              {
                 HistogramView(histogram: histogram)
                   .padding(.horizontal, 14)
                   .padding(.top, 12)
@@ -59,28 +63,32 @@ struct InfoPanel: View {
       "Batch \(state.currentBatchIndex + 1) of \(state.batches.count) · photo \(state.currentPhotoIndex + 1) of \(state.photosInCurrentBatch.count)"
     let camera = [meta.cameraMake, meta.cameraModel].compactMap { $0 }.joined(separator: " ")
     let folder = (meta.relPath as NSString).deletingLastPathComponent
-    let entries: [(String, String)] = [
-      ("File", photo.fileName),
-      ("Captured", PhotoFormatter.captureTime(meta.captureTime)),
-      ("Camera", camera.isEmpty ? "—" : camera),
-      ("Serial", meta.cameraSerial ?? "—"),
-      ("Lens", meta.lensModel ?? "—"),
-      ("Focal length", PhotoFormatter.focalLength(meta.focalLengthMm)),
-      ("Shutter", PhotoFormatter.shutter(meta.exposureTimeS)),
-      ("Aperture", PhotoFormatter.aperture(meta.fNumber)),
-      ("ISO", PhotoFormatter.iso(meta.iso)),
-      ("Exposure comp.", PhotoFormatter.exposureCompensation(meta.exposureCompEv)),
-      ("Metering", meta.meteringMode ?? "—"),
-      ("AF area", meta.af?.areaMode ?? "—"),
-      ("AF points in focus", afPoints(meta)),
-      ("Drive", meta.driveMode ?? "—"),
-      ("Shutter mode", meta.shutterMode ?? "—"),
-      ("Shutter count", meta.shutterCount.map(String.init) ?? "—"),
-      ("Dimensions", PhotoFormatter.dimensions(width: meta.width, height: meta.height)),
-      ("File size", PhotoFormatter.fileSize(meta.fileSize)),
-      ("Folder", folder.isEmpty ? "—" : folder),
-      ("Position", position),
+    // Each row belongs to one `InfoField`, so Settings → Viewer can switch it off (task.md §9.5).
+    let all: [(InfoField, String, String)] = [
+      (.fileName, "File", photo.fileName),
+      (.captureTime, "Captured", PhotoFormatter.captureTime(meta.captureTime)),
+      (.camera, "Camera", camera.isEmpty ? "—" : camera),
+      (.camera, "Serial", meta.cameraSerial ?? "—"),
+      (.lens, "Lens", meta.lensModel ?? "—"),
+      (.focalLength, "Focal length", PhotoFormatter.focalLength(meta.focalLengthMm)),
+      (.shutter, "Shutter", PhotoFormatter.shutter(meta.exposureTimeS)),
+      (.aperture, "Aperture", PhotoFormatter.aperture(meta.fNumber)),
+      (.iso, "ISO", PhotoFormatter.iso(meta.iso)),
+      (.exposureCompensation, "Exposure comp.", PhotoFormatter.exposureCompensation(meta.exposureCompEv)),
+      (.metering, "Metering", meta.meteringMode ?? "—"),
+      (.afMode, "AF area", meta.af?.areaMode ?? "—"),
+      (.afMode, "AF points in focus", afPoints(meta)),
+      (.driveMode, "Drive", meta.driveMode ?? "—"),
+      (.shutterMode, "Shutter mode", meta.shutterMode ?? "—"),
+      (.shutterCount, "Shutter count", meta.shutterCount.map(String.init) ?? "—"),
+      (.dimensions, "Dimensions", PhotoFormatter.dimensions(width: meta.width, height: meta.height)),
+      (.fileSize, "File size", PhotoFormatter.fileSize(meta.fileSize)),
+      (.folderPath, "Folder", folder.isEmpty ? "—" : folder),
+      (.batch, "Position", position),
     ]
+    let entries: [(String, String)] = all.filter { state.visibleInfoFields.contains($0.0) }.map {
+      ($0.1, $0.2)
+    }
     return VStack(alignment: .leading, spacing: 0) {
       ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
         InfoRow(title: entry.0, value: entry.1)

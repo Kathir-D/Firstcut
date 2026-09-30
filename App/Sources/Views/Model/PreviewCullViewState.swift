@@ -33,6 +33,7 @@ final class PreviewCullViewState: CullViewState {
   var showsClippingOverlay = false
   var isZoomLocked = false
   var finishStage: FinishStage = .hidden
+  var visibleInfoFields: Set<InfoField> = InfoField.all
   var folderURL: URL? { nil }
   var autoAdvanceEnabled = false
   var viewerBackgroundDarkness: Double = 0.13

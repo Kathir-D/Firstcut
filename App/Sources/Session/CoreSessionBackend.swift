@@ -81,9 +81,16 @@ public protocol CoreSessionAPI: AnyObject, Sendable {
     func executeFinish(_ plan: FinishPlanData) throws -> FinishReportData
     func undoFinish() throws -> FinishReportData
 
+    /// `Session::set_xmp_settings`. A core with no sidecar support ignores it.
+    func applyMetadataSettings(_ settings: MetadataSettings)
+
     /// Force the debounced XMP queue out. On batch change and on quit (task.md §6.3).
     func flush()
     func close()
+}
+
+extension CoreSessionAPI {
+    public func applyMetadataSettings(_ settings: MetadataSettings) {}
 }
 
 /// The Rust `SessionListener` trait. **Every method may be called on any thread** — FSEvents fires
@@ -244,6 +251,10 @@ public final class CoreSessionBackend: SessionBackend {
     private static func describe(_ error: Error) -> String {
         if let unavailable = error as? CoreSessionUnavailable { return unavailable.description }
         return String(describing: error)
+    }
+
+    public func applyMetadataSettings(_ settings: MetadataSettings) {
+        core.applyMetadataSettings(settings)
     }
 
     public func flush() { core.flush() }

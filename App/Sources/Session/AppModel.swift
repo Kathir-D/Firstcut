@@ -194,6 +194,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         backend.listener = nil
         backendBox.session = session
         session.listener = self
+        session.applyMetadataSettings(settings.metadata)
         self.folderName = folderName ?? (data.folder as NSString).lastPathComponent
         skippedFiles = data.skipped
         allPhotos = data.photos.map {
@@ -547,6 +548,9 @@ public final class AppModel: SessionListener, KeyRouterSource {
         }
         if settings.viewer.backgroundGray != before.viewer.backgroundGray {
             viewer.backgroundGray = settings.viewer.backgroundGray
+        }
+        if settings.metadata != before.metadata {
+            backend.applyMetadataSettings(settings.metadata)
         }
         scheduleSave()
         updatePipelineFocus()
