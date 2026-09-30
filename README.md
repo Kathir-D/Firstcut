@@ -21,7 +21,7 @@ the keyboard — without ever waiting for a photo to load.
 > [!NOTE]
 > Firstcut is a first release (v0.1). It is tested on macOS 26 with Canon EOS R8 files; see
 > [Supported formats](#supported-formats) and [Known limitations](#known-limitations) before you
-> trust it with a shoot you cannot redo. It never modifies your photos.
+> trust it with your time that you can never get back :)
 
 ## Table of contents
 
