@@ -616,7 +616,14 @@ impl ExecutedOp {
 ///
 /// Nothing here is undoable on its own; call [`undo_ops`] with what comes back.
 pub fn execute_ops(ops: &[FileOp]) -> Vec<ExecutedOp> {
-    ops.iter().map(execute_op).collect()
+    execute_ops_with_list(ops, &[])
+}
+
+/// [`execute_ops`], with the kept file names a `WriteList` op writes. The plan names the list file
+/// but does not carry its lines (a `FileOp` is a pair of paths), so the session supplies them from
+/// the same rule the plan used.
+pub fn execute_ops_with_list(ops: &[FileOp], kept_names: &[String]) -> Vec<ExecutedOp> {
+    ops.iter().map(|op| execute_op(op, kept_names)).collect()
 }
 
 /// A count and a list of what could not be done, for the report the UI shows when it finishes.
@@ -653,11 +660,19 @@ pub fn summarize(executed: &[ExecutedOp]) -> ExecutionSummary {
 }
 
 /// One operation, done.
-fn execute_op(op: &FileOp) -> ExecutedOp {
+fn execute_op(op: &FileOp, kept_names: &[String]) -> ExecutedOp {
     let source = PathBuf::from(&op.from);
     let size = std::fs::metadata(&source)
         .map(|meta| meta.len())
         .unwrap_or(0);
+
+    match &op.kind {
+        // Neither needs its `from` to exist: a sidecar is created if the photo has none yet, and a
+        // list's `from` is only its display name.
+        FileOpKind::MarkRejected => return mark_rejected(op),
+        FileOpKind::WriteList => return write_list(op, kept_names),
+        _ => {}
+    }
 
     // A source that has gone is a failure, not a crash: files move underneath a cull app (Finder,
     // another program, the photographer), and one missing file must not abandon the other forty.
@@ -666,8 +681,7 @@ fn execute_op(op: &FileOp) -> ExecutedOp {
     }
 
     match &op.kind {
-        FileOpKind::MarkRejected => mark_rejected(op),
-        FileOpKind::WriteList => write_list(op),
+        FileOpKind::MarkRejected | FileOpKind::WriteList => unreachable!("handled above"),
         FileOpKind::Move => transfer(op, &source, Move::Rename),
         FileOpKind::Copy => transfer(op, &source, Move::Copy),
         FileOpKind::Trash => trash(op, &source, trash_for(&source)),
@@ -897,9 +911,21 @@ fn trash_dir() -> std::io::Result<PathBuf> {
 ///
 /// The sidecar is named after the RAW (`<basename>.xmp`), never after the JPEG: that is the
 /// convention Lightroom reads, and a rejection the other catalog does not see is not a rejection.
+///
+/// The plan's `from` is already the sidecar path (`IMG_0001.CR3.xmp`, or an existing `IMG_0001.xmp`)
+/// and is written as is; it was once passed through `sidecar_path` a second time, which wrote
+/// `IMG_0001.CR3.xmp.xmp`. A photo path is still accepted and mapped to its sidecar, so the RAW
+/// itself is never the file written.
 fn mark_rejected(op: &FileOp) -> ExecutedOp {
-    let source = PathBuf::from(&op.from);
-    let sidecar = crate::xmp::sidecar_path(&source.to_string_lossy());
+    let from = PathBuf::from(&op.from);
+    let is_sidecar = from
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("xmp"));
+    let sidecar = if is_sidecar {
+        from
+    } else {
+        crate::xmp::sidecar_path(&op.from)
+    };
     let mapping = crate::xmp::XmpMapping::default();
     let rejected = crate::store::Rating {
         stars: 0,
@@ -929,27 +955,25 @@ fn mark_rejected(op: &FileOp) -> ExecutedOp {
     }
 }
 
-/// Writes the kept-files list (task.md §9.7: "a text/CSV list of kept file names").
-///
-/// The plan carries the *list file* as `from` and the lines to write as `to`, which is the only
-/// shape available: a `FileOp` is a pair of paths, and inventing a third field would mean the undo
-/// log could not describe the operation it has to reverse.
-fn write_list(op: &FileOp) -> ExecutedOp {
-    let Some(body) = op.to.as_deref() else {
-        return ExecutedOp::failure(op, "the plan gave no list to write");
+/// Writes the kept-files list (task.md §9.7: "a text/CSV list of kept file names"), one name per
+/// line, to the op's destination. The plan's `from` is the list's file name, for the preview.
+fn write_list(op: &FileOp, kept_names: &[String]) -> ExecutedOp {
+    let Some(target) = op.to.as_deref().map(PathBuf::from) else {
+        return ExecutedOp::failure(op, "the plan gave no file to write the list to");
     };
-    let target = PathBuf::from(&op.from);
+    if target.exists() {
+        return ExecutedOp::failure(
+            op,
+            format!("{} already exists, so it was left alone", target.display()),
+        );
+    }
     if let Some(parent) = target.parent()
         && let Err(error) = std::fs::create_dir_all(parent)
     {
         return ExecutedOp::failure(op, format!("could not create the folder: {error}"));
     }
-    let lines: String = body
-        .lines()
-        .map(|line| format!("{}\n", line.trim_end()))
-        .collect::<Vec<_>>()
-        .join("");
-    match std::fs::write(&target, lines) {
+    let body: String = kept_names.iter().map(|name| format!("{name}\n")).collect();
+    match std::fs::write(&target, body) {
         Ok(()) => ExecutedOp {
             kind: op.kind.clone(),
             src: op.from.clone(),
@@ -2003,6 +2027,39 @@ mod tests {
         let undone = undo_ops(&[done]);
         assert_eq!(undone[0].status, "done", "{:?}", undone[0].error);
         assert_eq!(fs::read(&source).unwrap(), b"raw");
+    }
+
+    #[test]
+    fn marking_rejected_writes_the_sidecar_even_when_there_is_none_yet() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("IMG_0002.CR3"), b"raw").unwrap();
+        let sidecar = dir.path().join("IMG_0002.CR3.xmp");
+        let op = FileOp::new(FileOpKind::MarkRejected, sidecar.to_string_lossy(), None);
+        let done = execute_ops(&[op]);
+        assert!(done[0].is_done(), "{:?}", done[0].error);
+        let text = fs::read_to_string(&sidecar).unwrap();
+        assert!(text.contains("-1"), "{text}");
+        assert!(!dir.path().join("IMG_0002.CR3.xmp.xmp").exists());
+    }
+
+    #[test]
+    fn the_kept_list_is_written_where_the_plan_says() {
+        let shoot = Shoot::new();
+        let list = shoot.path().join("lists").join("kept.txt");
+        let plan = shoot.plan(options(
+            UnkeptAction::Nothing,
+            KeptAction::WriteList(list.to_string_lossy().into_owned()),
+        ));
+        let names = vec!["IMG_0001.CR3".to_string(), "IMG_0003.CR3".to_string()];
+        let done = execute_ops_with_list(&plan.ops, &names);
+        assert!(done.iter().all(ExecutedOp::is_done), "{done:?}");
+        assert_eq!(
+            fs::read_to_string(&list).unwrap(),
+            "IMG_0001.CR3\nIMG_0003.CR3\n"
+        );
+        // A second run never overwrites the first list.
+        let again = execute_ops_with_list(&plan.ops, &names);
+        assert!(!again[0].is_done());
     }
 
     #[test]

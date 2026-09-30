@@ -1160,7 +1160,16 @@ impl Session {
     /// of overwriting the file that is there.
     pub fn execute_finish(&self, plan: &crate::fileops::FinishPlan) -> Result<FinishRun> {
         self.writer.flush();
-        let executed = crate::fileops::execute_ops(&plan.ops);
+        let kept_names = if plan
+            .ops
+            .iter()
+            .any(|op| op.kind == crate::fileops::FileOpKind::WriteList)
+        {
+            self.kept_file_names()?
+        } else {
+            Vec::new()
+        };
+        let executed = crate::fileops::execute_ops_with_list(&plan.ops, &kept_names);
         let finish_id = {
             let state = self.state();
             let finish_id = records::last_finish_id(&state.db)?.unwrap_or(0) + 1;
@@ -1191,6 +1200,30 @@ impl Session {
             summary: crate::fileops::summarize(&executed),
             executed,
         })
+    }
+
+    /// The file names of the kept photos, in shoot order, for a kept list: the same rule
+    /// `plan_finish` uses (session mode and keep threshold).
+    fn kept_file_names(&self) -> Result<Vec<String>> {
+        let state = self.state();
+        let ratings = records::ratings(&state.db)?;
+        Ok(records::photos_in_order(&state.db)?
+            .into_iter()
+            .filter(|row| row.present)
+            .filter(|row| {
+                ratings
+                    .get(&row.id)
+                    .copied()
+                    .unwrap_or_default()
+                    .is_kept_at(state.rating_mode, state.keep_stars)
+            })
+            .map(|row| {
+                std::path::Path::new(&row.rel_path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or(row.rel_path)
+            })
+            .collect())
     }
 
     /// Walks the last Finish run backwards.
