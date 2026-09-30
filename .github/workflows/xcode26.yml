@@ -1,0 +1,55 @@
+name: Xcode 26
+
+# Builds and tests the app with the *shipping* toolchain (macOS 26, Xcode 26, Swift 6.2): the one
+# that compiles the Liquid Glass path in `GlassBackground`, which the minimum-toolchain job in
+# ci.yml (Xcode 16) skips with `#if compiler(>=6.2)`. Manual, and on its own concurrency group, so
+# it can never hold up the required CI job if the runner image is busy or missing.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: xcode26-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    name: Swift (Xcode 26)
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Build the Rust core and generate the Swift bindings
+        run: ./scripts/build-core.sh
+
+      - name: Generate the Xcode project
+        run: xcodegen
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build -project Firstcut.xcodeproj -scheme Firstcut \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test -project Firstcut.xcodeproj -scheme Firstcut \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd
