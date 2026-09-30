@@ -68,6 +68,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Firstcut
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Kathir Dev. Released under the GNU General Public License v3."
         # Kept in sync with the VERSION file by hand; scripts/build-app.sh and the release
         # workflow override both on the xcodebuild command line.
         MARKETING_VERSION: "0.0.0"

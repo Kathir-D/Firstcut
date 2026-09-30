@@ -38,7 +38,8 @@ struct PipelineFocus: Sendable {
     var thumbnailProgress: AsyncStream<Double> { get }
 }
 
-struct DisplayImage { let surface: IOSurfaceRef; let pixelSize: CGSize; let orientationApplied: Bool; let colorSpace: CGColorSpace }
+struct DisplayImage { let image: CGImage;  // was `surface: IOSurfaceRef`; see the v0.2 changelog entry
+                       let pixelSize: CGSize; let orientationApplied: Bool; let colorSpace: CGColorSpace }
 ```
 
 ## Viewer view
@@ -66,3 +67,10 @@ overlays. **ui** embeds it and styles the space around it; **app-logic** tells i
 ## Changelog
 
 - v0.1: initial draft.
+- v0.2 (2026-09-30): **REV-38 corrected.** `CALayer.contents` cannot take an `IOSurfaceRef`, so the
+  viewer holds a `CGImage` (`CGImageViewerHost`) and display is a layer-contents swap. The IOSurface
+  path would need a `CAMetalLayer` and buys nothing for v0.1: the cost in task.md §7.1 is the decode,
+  which `ImageProvider` does ahead of time. `DisplayImage.image` replaces `DisplayImage.surface`. The
+  host owns zoom (pinch, click to 100%, pan, zoom lock across photos, synced groups for Compare) and
+  the AF and clipping overlays.
+

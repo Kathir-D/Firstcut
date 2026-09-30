@@ -184,3 +184,13 @@ core is linked. Use the Swift types in `App/Sources/Shared/CoreTypes.swift`.
   `Session::folder/matched/set_rating_mode`, `SessionListener::session_moved` (with a default
   implementation, so consumers are unaffected), the `Progress` trait, the session-location and
   identity rules, the error table, and the import-from-XMP behaviour. No existing signature changed.
+- v0.3 (2026-09-30, after the merge): `Session::plan_finish`, `execute_finish` and `undo_finish` are
+  implemented and exported over UniFFI (`FfiFinishOptions` carries no rating mode: the session plans
+  with its own, so the preview cannot disagree with the filmstrip about what is kept, REV-78). Every
+  operation is logged in `file_ops`, so Undo Finish works after a relaunch; a run that included a
+  permanent delete refuses to undo (`SessionError::CannotUndo`). `Rating::tier` is now the *mapped*
+  answer (what the filmstrip draws), so a 4-star photo in keep mode and a keep in stars mode are both
+  kept. Added `Session::set_xmp_settings` (sidecars on/off, for non-RAW files, keep mapping),
+  `import_ratings_from_sidecars` on a first open, and `compute_visual_sig` (the reference signature,
+  REV-64). `rescan` on a folder that became empty returns an empty result rather than an error.
+

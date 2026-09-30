@@ -59,3 +59,8 @@ pub fn batch(photos: &[PhotoMeta],
 ## Changelog
 
 - v0.1: initial draft.
+- v0.2 (2026-09-30): single-frame grouping is on by default with a 5 s window (owner's decision):
+  consecutive one-photo batches within the window are one batch, but never across camera bodies,
+  orientations or file-system-guessed times. Visual signatures are computed in the background by the
+  app, from the 256 px thumbnail, by calling the exported Rust `compute_visual_sig`.
+
