@@ -40,9 +40,8 @@ struct ViewerArea: View {
   }
 }
 
-/// REV-77: every string here is at least `secondaryLabel` on the near-black viewer background.
-/// The pipeline note is a temporary line, but it is the first text a reviewer reads, and dim greys
-/// are exactly what survives to release.
+/// Drawn only when no viewer layer is registered (previews). REV-77: every string here is at least
+/// `secondaryLabel` on the near-black viewer background.
 struct ViewerPlaceholder: View {
   let photo: CullPhoto?
 
@@ -58,9 +57,6 @@ struct ViewerPlaceholder: View {
         .font(.system(size: 11))
         .foregroundStyle(Appearance.secondaryLabel)
       }
-      Text("Viewer layer pending from the pipeline agent")
-        .font(.system(size: 11))
-        .foregroundStyle(Appearance.secondaryLabel)
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(photo.map { "Viewer placeholder for \($0.fileName)" } ?? "Viewer")

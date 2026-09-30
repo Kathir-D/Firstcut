@@ -44,9 +44,8 @@ struct FirstcutCommands: Commands {
                 .disabled(!isCulling)
         }
 
-        CommandGroup(replacing: .textEditing) {
-            Button("Auto-Advance") { environment.send(.toggleAutoAdvance) }
-        }
+        // Find and spelling have nothing to act on here; Auto-Advance lives in the View menu.
+        CommandGroup(replacing: .textEditing) {}
 
         CommandMenu("Photo") {
             Button("Previous Photo") { environment.send(.photoPrevious) }
@@ -105,7 +104,7 @@ struct FirstcutCommands: Commands {
         }
 
         CommandGroup(after: .toolbar) {
-            Button("As Loupe") { environment.send(.setViewMode(.loupe)) }
+            Button("as Loupe") { environment.send(.setViewMode(.loupe)) }
                 .keyboardShortcut(shortcut(.showLoupe))
                 .disabled(!isCulling)
             Button("as Grid") { environment.send(.setViewMode(.grid)) }
@@ -128,19 +127,19 @@ struct FirstcutCommands: Commands {
 
             Divider()
 
-            Button("Info Panel") { environment.send(.toggleInfoPanel) }
+            Toggle("Info Panel", isOn: toggle({ $0.isInfoPanelVisible }, sends: .toggleInfoPanel))
                 .keyboardShortcut(shortcut(.toggleInfoPanel))
                 .disabled(!isCulling)
-            Button("Progress HUD") { environment.send(.toggleHUD) }
+            Toggle("Progress HUD", isOn: toggle({ $0.isHUDVisible }, sends: .toggleHUD))
                 .keyboardShortcut(shortcut(.toggleHUD))
                 .disabled(!isCulling)
 
             Divider()
 
-            Button("Clipping Overlay") { environment.send(.toggleClippingOverlay) }
+            Toggle("Clipping Overlay", isOn: toggle({ $0.showsClippingOverlay }, sends: .toggleClippingOverlay))
                 .keyboardShortcut(shortcut(.toggleClippingOverlay))
                 .disabled(!isCulling)
-            Button("AF Point Overlay") { environment.send(.toggleAFOverlay) }
+            Toggle("AF Point Overlay", isOn: toggle({ $0.showsAFOverlay }, sends: .toggleAFOverlay))
                 .keyboardShortcut(shortcut(.toggleAFOverlay))
                 .disabled(!isCulling)
 
@@ -156,6 +155,16 @@ struct FirstcutCommands: Commands {
                 }
             }
         }
+    }
+
+    /// A menu checkmark that shows a state and flips it through the model, never set directly.
+    private func toggle(
+        _ value: @escaping @MainActor (any CullViewState) -> Bool, sends action: CullAction
+    ) -> Binding<Bool> {
+        Binding(
+            get: { value(environment.state) },
+            set: { _ in environment.send(action) }
+        )
     }
 
     private var zoomLockBinding: Binding<Bool> {
