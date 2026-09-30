@@ -133,8 +133,8 @@ pub struct BatchParams {
     pub split_threshold: f32,
     pub weights_meta: Weights,
     pub weights_visual: Weights,
-    /// Consecutive one-photo batches closer together than this are merged. 0 keeps them apart,
-    /// which is the default until task.md §5.3 step 5 is decided from the test games.
+    /// Consecutive one-photo batches closer together than this are merged (task.md §5.3 step 5).
+    /// 0 keeps them apart.
     pub single_group_window_ms: i64,
 }
 
@@ -161,7 +161,11 @@ impl Default for BatchParams {
                 deleted: 0.05,
                 visual: 0.45,
             },
-            single_group_window_ms: 0,
+            // Owner's decision, 2026-09-29 (task.md §2): single frames a few seconds apart are one
+            // batch, not a run of one-photo batches. 5 s is the "few seconds": Game1JENKS goes
+            // from 99 one-photo batches to 75, and no batch anywhere grows (only singles merge).
+            // The exact window is still to be confirmed against visually checked ground truth.
+            single_group_window_ms: 5_000,
         }
     }
 }
@@ -463,7 +467,8 @@ fn assemble<P: Photo>(seq: &[&P], splits: &[bool], verdicts: &[BoundaryVerdict])
 /// Task.md §5.3 step 5: consecutive one-photo batches close together in time are one moment that
 /// happened to be broken up, and culling them apart costs the user a keypress per frame.
 ///
-/// Disabled by default (`single_group_window_ms = 0`) until the test games say which is better.
+/// On by default with a 5 s window (owner's decision, task.md §2); `single_group_window_ms = 0`
+/// turns it off.
 fn apply_single_grouping<P: Photo>(batches: &mut Vec<Batch>, seq: &[&P], params: &BatchParams) {
     if params.single_group_window_ms <= 0 {
         return;
@@ -510,7 +515,15 @@ fn singles_close<P: Photo>(
     else {
         return false;
     };
-    match (effective_time_ms(seq[ia]), effective_time_ms(seq[ib])) {
+    let (a, b) = (seq[ia], seq[ib]);
+    // The rules that keep two frames apart in normal joining still apply here: two camera bodies
+    // never share a batch (§5.1), a portrait and a landscape frame are not the same moment (§5.2),
+    // and a file-system timestamp is a guess that must never merge anything (REV-63), so only a
+    // real capture time counts.
+    if a.camera_serial() != b.camera_serial() || a.orientation() != b.orientation() {
+        return false;
+    }
+    match (a.capture_unix_ms(), b.capture_unix_ms()) {
         (Some(x), Some(y)) => (y - x).abs() <= params.single_group_window_ms,
         _ => false,
     }
@@ -865,16 +878,28 @@ mod tests {
     }
 
     #[test]
-    fn single_frames_stand_as_their_own_batches_by_default() {
-        // §5.3 step 5, left off deliberately: a single frame between two bursts is a real moment
-        // of its own, and merging it away hides a frame the user may have wanted.
-        let photos = vec![
-            M::frame(0, 0),
-            M::frame(1, 5_000),
-            M::frame(2, 10_000),
-            M::frame(3, 15_000),
-        ];
-        assert_eq!(batch_ids(&photos), vec![vec![0], vec![1], vec![2], vec![3]]);
+    fn single_frames_a_few_seconds_apart_are_one_batch_by_default() {
+        // Owner's decision (2026-09-29): single frames a few seconds apart are grouped, because a
+        // one-photo batch costs a keypress and a screen for one frame.
+        let photos = vec![M::frame(0, 0), M::frame(1, 3_000)];
+        assert_eq!(batch_ids(&photos), vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn single_frames_far_apart_still_stand_alone() {
+        // 15 s apart is not "a few seconds": it is a different moment, and stays its own batch.
+        let photos = vec![M::frame(0, 0), M::frame(1, 15_000), M::frame(2, 30_000)];
+        assert_eq!(batch_ids(&photos), vec![vec![0], vec![1], vec![2]]);
+    }
+
+    #[test]
+    fn the_grouping_can_be_turned_off() {
+        let photos = vec![M::frame(0, 0), M::frame(1, 3_000)];
+        let off = BatchParams {
+            single_group_window_ms: 0,
+            ..BatchParams::default()
+        };
+        assert_eq!(batch_ids_with(&photos, &off), vec![vec![0], vec![1]]);
     }
 
     #[test]

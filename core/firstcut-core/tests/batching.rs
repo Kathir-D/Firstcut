@@ -525,3 +525,42 @@ fn the_high_speed_tail_of_game1jenks_is_not_one_giant_batch() {
         "the local frame interval should track ~90 ms, saw {frame_intervals:?}"
     );
 }
+
+/// Not a check: prints how the number of batches, and of one-photo batches, moves with the
+/// single-frame grouping window (task.md §2, decided 2026-09-29: "single frames a few seconds
+/// apart are grouped"). Run with
+/// `cargo test --test batching single_window_sweep -- --ignored --nocapture`.
+#[test]
+#[ignore = "a tuning report, not an assertion"]
+fn single_window_sweep() {
+    for game in GAMES {
+        let photos = load_photos(game);
+        let mut row = format!("{game:<11}");
+        for window in [0i64, 2_000, 3_000, 5_000, 8_000, 12_000] {
+            let params = BatchParams {
+                single_group_window_ms: window,
+                ..BatchParams::default()
+            };
+            let out = batch_with(&photos, &HashMap::new(), &[], params);
+            let singles = out
+                .batches
+                .iter()
+                .filter(|b| b.photo_ids.len() == 1)
+                .count();
+            let largest = out
+                .batches
+                .iter()
+                .map(|b| b.photo_ids.len())
+                .max()
+                .unwrap_or(0);
+            row.push_str(&format!(
+                " | {}s: {} batches, {} single, max {}",
+                window / 1000,
+                out.batches.len(),
+                singles,
+                largest
+            ));
+        }
+        println!("{row}");
+    }
+}
