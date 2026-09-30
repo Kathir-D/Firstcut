@@ -1442,6 +1442,14 @@ mod tests {
                 width: 1620,
                 height: 1080,
             }),
+            full_preview: Some(EmbeddedPreview {
+                range: crate::meta::ByteRange {
+                    offset: 201_000,
+                    len: 3_000_000,
+                },
+                width: 6000,
+                height: 4000,
+            }),
             warnings: Vec::new(),
             rel_path,
         }

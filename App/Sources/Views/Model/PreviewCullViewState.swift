@@ -173,7 +173,9 @@ final class PreviewCullViewState: CullViewState {
               AfPoint(x: 0.58, y: 0.38, w: 0.05, h: 0.08, inFocus: true),
             ]
           ),
-          preview: EmbeddedPreview(range: ByteRange(offset: 0, len: 0), width: 6000, height: 4000),
+          preview: EmbeddedPreview(range: ByteRange(offset: 0, len: 0), width: 1620, height: 1080),
+          fullPreview: EmbeddedPreview(
+              range: ByteRange(offset: 0, len: 0), width: 6000, height: 4000),
           warnings: []
         )
         let photo = makePhoto(meta, rating: Rating())

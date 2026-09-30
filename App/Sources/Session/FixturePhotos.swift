@@ -145,7 +145,9 @@ public enum FixturePhotos {
                     width: 6000,
                     height: 4000,
                     af: AfInfo(areaMode: "AF Point Expansion (8 point)", points: []),
-                    preview: EmbeddedPreview(range: ByteRange(offset: 0, len: 0), width: 6000, height: 4000),
+                    preview: EmbeddedPreview(range: ByteRange(offset: 0, len: 0), width: 1620, height: 1080),
+                    fullPreview: EmbeddedPreview(
+                        range: ByteRange(offset: 0, len: 0), width: 6000, height: 4000),
                     warnings: []))
         }
         return photos

@@ -61,7 +61,7 @@ enum ImageFixtures {
                     cameraMake: nil, cameraModel: nil, cameraSerial: nil, lensModel: nil,
                     focalLengthMm: nil, exposureTimeS: nil, fNumber: nil, iso: nil, exposureCompEv: nil,
                     meteringMode: nil, driveMode: nil, shutterMode: nil, orientation: 1,
-                    width: 400, height: 300, af: nil, preview: nil, warnings: []))
+                    width: 400, height: 300, af: nil, preview: nil, fullPreview: nil, warnings: []))
         }
         return (folder, photos)
     }
@@ -305,7 +305,7 @@ struct ImageProviderTests {
                 cameraModel: nil, cameraSerial: nil, lensModel: nil, focalLengthMm: nil,
                 exposureTimeS: nil, fNumber: nil, iso: nil, exposureCompEv: nil, meteringMode: nil,
                 driveMode: nil, shutterMode: nil, orientation: 1, width: 400, height: 300, af: nil,
-                preview: nil, warnings: []))
+                preview: nil, fullPreview: nil, warnings: []))
         provider.open(folder: shoot.folder, photos: grown)
 
         for id in shoot.photos.map(\.id) {
@@ -405,4 +405,91 @@ struct ImageProviderTests {
         #expect(full.width == 400)
         #expect(full.height == 300)
     }
+
+    /// The byte-range read must produce the *same pixels* as reading the container.
+    ///
+    /// This is the whole of the todo.md §7.5 optimisation: hand ImageIO the JPEG's own bytes so it
+    /// never parses the CR3. If the two paths disagreed by a pixel, a user would see one photograph
+    /// in the viewer and a subtly different one after a cache eviction — which is exactly the kind
+    /// of bug that only shows up under load and is impossible to report. So the range is compared
+    /// against the container, pixel for pixel, on a real encoded JPEG.
+    @Test("Decoding from a byte range gives the same image as decoding the container")
+    func byteRangeDecodeMatchesTheContainerDecode() throws {
+        let shoot = ImageFixtures.shoot(count: 1)
+        let url = shoot.folder.appendingPathComponent("IMG_0000.jpg")
+        let fromContainer = try #require(DecodeEngine.decodeFull(url: url))
+        let length = UInt64(
+            try #require(
+                FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)
+                .intValue)
+        #expect(length > 100, "the fixture should be a real JPEG, not a stub")
+
+        // The whole file is a range that covers exactly one JPEG, so it must give the same picture.
+        let whole = ByteRange(offset: 0, len: length)
+        let fromRange = try #require(DecodeEngine.decodeFull(byteRange: whole, in: url))
+        #expect(fromRange.width == fromContainer.width)
+        #expect(fromRange.height == fromContainer.height)
+        #expect(
+            identical(fromRange, fromContainer),
+            "the byte-range path and the container path must be the same pixels")
+
+        // Every range that is not a whole JPEG must be nil, and nil is what lets the caller fall
+        // back. A torn or blank image here would be worse than no image.
+        for range in [
+            ByteRange(offset: 0, len: 2),  // the SOI and nothing else
+            ByteRange(offset: length / 2, len: 2),  // two bytes from the middle
+            ByteRange(offset: length, len: 10),  // starts past the end of the file
+            ByteRange(offset: length + 1_000_000, len: 10),  // far past the end
+            ByteRange(offset: 0, len: 0),  // empty
+        ] {
+            #expect(
+                DecodeEngine.decodeFull(byteRange: range, in: url) == nil,
+                "a partial or out-of-bounds range must not produce an image: \(range)")
+        }
+
+        // A file that does not exist at all, rather than a file with no JPEG in it.
+        let missing = shoot.folder.appendingPathComponent("IMG_9999.jpg")
+        #expect(DecodeEngine.decodeFull(byteRange: whole, in: missing) == nil)
+    }
+
+    /// A display decode is served from the reported byte range when there is one.
+    @Test("A reported full-preview range is used, and the fallback still works without one")
+    func displayPrefersTheReportedRange() async throws {
+        let shoot = ImageFixtures.shoot(count: 1)
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20)
+        var photos = shoot.photos
+        // The fixture is a bare JPEG, so its "full preview" is the whole file.
+        let size = (try FileManager.default.attributesOfItem(
+            atPath: shoot.folder.appendingPathComponent("IMG_0000.jpg").path)[.size] as? NSNumber)
+        photos[0].fullPreview = EmbeddedPreview(
+            range: ByteRange(offset: 0, len: try #require(size).uint64Value),
+            width: 400, height: 300)
+        provider.open(folder: shoot.folder, photos: photos)
+
+        #expect(provider.displayImage(for: photos[0].id) == nil, "a miss returns nil, never blocks")
+        #expect(await provider.waitUntilIdle())
+        #expect(try #require(provider.displayImage(for: photos[0].id)).width == 400)
+        #expect(
+            provider.byteRangeDecodes == 1,
+            "the reported range should have served the decode, not the container")
+    }
+}
+
+/// Two images are identical when every pixel of every row matches.
+private func identical(_ lhs: CGImage, _ rhs: CGImage) -> Bool {
+    guard lhs.width == rhs.width, lhs.height == rhs.height else { return false }
+    func pixels(_ image: CGImage) -> [UInt8]? {
+        guard
+            let context = CGContext(
+                data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let data = context.data else { return nil }
+        let bytes = data.bindMemory(to: UInt8.self, capacity: image.width * image.height * 4)
+        return Array(UnsafeBufferPointer(start: bytes, count: image.width * image.height * 4))
+    }
+    guard let a = pixels(lhs), let b = pixels(rhs) else { return false }
+    return a == b
 }

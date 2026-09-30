@@ -32,7 +32,7 @@ public struct CaptureTime: Sendable, Codable, Equatable {
     public var source: TimeSource
 }
 
-public struct ByteRange: Sendable, Codable, Equatable {
+public struct ByteRange: Sendable, Codable, Equatable, Hashable {
     public var offset: UInt64
     public var len: UInt64
 }
@@ -78,7 +78,12 @@ public struct PhotoMeta: Sendable, Codable, Equatable, Identifiable {
     public var width: UInt32
     public var height: UInt32
     public var af: AfInfo?
+    /// The 1620×1080 `PRVW` JPEG. Good enough for a first-photo fast path; **not** the display
+    /// image — a 14" viewer needs more pixels than this has.
     public var preview: EmbeddedPreview?
+    /// The full-resolution JPEG (6000×4000 on an R8) from the first image track. Display decodes read
+    /// this byte range, so ImageIO never parses the CR3 container (todo.md §7.5).
+    public var fullPreview: EmbeddedPreview?
     public var warnings: [String]
 }
 

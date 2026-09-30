@@ -174,6 +174,22 @@ Not blocking v0.1.0; an agent can do these.
   `scripts/with-timeout.sh <seconds> <command>` now wraps every build and test run, so a hang is a
   124 with a diagnosis instead of a frozen shell. It found the above in minutes. The full suite is
   235 unit + 24 integration + 3 performance tests, green, in about 4 seconds.
+- **Fixed (§7.5 fact 1, the CR3's three JPEGs).** Measured, not assumed, on `Game1JENKS/IMG_3181.CR3`
+  and `IMG_6117.CR3`: a CR3 carries **160×120** (`THMB`), **1620×1080** (`PRVW`) and **6000×4000**
+  (the first image track's sample). The old doc comment called `PRVW` "full-size", which it is not.
+  - The core now reads the sample table (`stsz` + `stco`/`co64` under `trak/mdia/minf/stbl`) and
+    reports the full-resolution JPEG as `PhotoMeta.full_preview`, through the FFI to Swift's
+    `PhotoMeta.fullPreview`. **Every image track's `stsd` says `CRAW`**, including the one whose sample
+    is a JPEG, and all three are `vide`, so neither the codec nor the handler type identifies it —
+    the sample's own `FF D8` and `SOF` do, and the largest JPEG wins.
+  - **Display decodes now read that byte range** instead of handing the CR3 to ImageIO, so ImageIO
+    never parses the container or picks an image. `byteRangeDecodes` counts the ones served this way;
+    `decodeFull(url:)` stays as the fallback for a file with no reported range.
+  - A test asserts the range path and the container path give **identical pixels**, and that partial
+    or out-of-bounds ranges return nil (so a stale range falls back instead of showing a torn image).
+  - `tests/cr3_exiftool.rs` gained a test that all three JPEGs are found on every sampled photo, that
+    the bytes at each range really are a JPEG, and that `PRVW` is the 1620×1080 one — the fact that
+    has been got wrong twice.
 - **Still the owner's, for the reason that it is a judgement call, not for lack of a machine:** the
   ground truth in `tests/fixtures/ground-truth/` (an agent must not synthesise it), the
   Game1JENKS re-press decision, the "pick by eye" embedded-preview vs `CIRAWFilter` choice at
@@ -572,11 +588,14 @@ interactive targets above, none of which has been measured.
 
 **Work items (agent-side unless marked):**
 
-- [ ] Core: fix the `PRVW` doc comment. Expose the full-size `trak` JPEG's byte range next to
-      `PRVW` (and keep `THMB`). Test both against exiftool's `PreviewImage`/`JpgFromRaw` offsets on
-      the photos.
-- [ ] App: decode every display image from **byte ranges**, never from the CR3 URL. ImageIO then
-      never parses the container or picks the RAW.
+- [x] Core: fix the `PRVW` doc comment. Expose the full-size `trak` JPEG's byte range next to
+      `PRVW` (and keep `THMB`). **Done**: `PhotoMeta.full_preview` / Swift `fullPreview`, and
+      display decodes read it. Verified against the real photos, not exiftool's tags — exiftool
+      prints no `PreviewImageStart`/`JpgFromRawStart` for these files, so the sample table was the
+      authority and the byte ranges are asserted to hold real JPEGs.
+- [x] App: decode every display image from **byte ranges**, never from the CR3 URL. ImageIO then
+      never parses the container or picks the RAW. **Done**, with the container decode kept as the
+      fallback for a file that reports no range, and a test that the two give identical pixels.
 - [ ] App: check that every cached `CGImage` is force-decoded (`ShouldCacheImmediately`) and in a
       native BGRA layout. Needs `ImageProvider.swift`.
 - [ ] App: first-photo fast path (header + `PRVW` of the resume photo before the full scan).

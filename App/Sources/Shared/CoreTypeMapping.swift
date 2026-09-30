@@ -150,6 +150,7 @@ extension PhotoMeta {
             height: ffi.height,
             af: ffi.af.map(AfInfo.init),
             preview: ffi.preview.map(EmbeddedPreview.init),
+            fullPreview: ffi.fullPreview.map(EmbeddedPreview.init),
             warnings: ffi.warnings)
     }
 }

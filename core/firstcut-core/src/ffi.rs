@@ -289,7 +289,10 @@ pub struct FfiPhotoMeta {
     pub width: u32,
     pub height: u32,
     pub af: Option<FfiAfInfo>,
+    /// The 1620x1080 `PRVW` JPEG. Not the display image — see `FfiPhotoMeta::full_preview`.
     pub preview: Option<FfiEmbeddedPreview>,
+    /// The full-resolution JPEG, for display decodes straight from its bytes.
+    pub full_preview: Option<FfiEmbeddedPreview>,
     pub warnings: Vec<String>,
 }
 
@@ -321,6 +324,7 @@ impl From<crate::meta::PhotoMeta> for FfiPhotoMeta {
             height: meta.height,
             af: meta.af.map(FfiAfInfo::from),
             preview: meta.preview.map(FfiEmbeddedPreview::from),
+            full_preview: meta.full_preview.map(FfiEmbeddedPreview::from),
             warnings: meta.warnings,
         }
     }

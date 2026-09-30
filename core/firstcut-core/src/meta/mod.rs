@@ -114,7 +114,12 @@ pub struct PhotoMeta {
     pub width: u32,
     pub height: u32,
     pub af: Option<AfInfo>,
+    /// The 1620x1080 `PRVW` JPEG. Cheap to decode, good enough for a first-photo fast path, and
+    /// **not** the display image: a 14" viewer needs more pixels than this has.
     pub preview: Option<EmbeddedPreview>,
+    /// The full-resolution JPEG (6000x4000 on an R8) from the first image track. The app decodes
+    /// display images from this byte range so ImageIO never parses the CR3 container (todo.md §7.5).
+    pub full_preview: Option<EmbeddedPreview>,
     /// `st_dev` of the file, so a session can tell a rename from a reshoot (REV-68).
     pub device: Option<i64>,
     /// `st_ino`, which survives a rename inside a volume and is the cheapest identity there is.
@@ -629,6 +634,7 @@ fn meta_for(
         height: parsed.height,
         af: parsed.af,
         preview: parsed.preview,
+        full_preview: parsed.full_preview,
         device: Some(device),
         ino: Some(ino),
         warnings,

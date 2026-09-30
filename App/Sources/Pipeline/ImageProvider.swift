@@ -106,6 +106,23 @@ public final class ImageProvider: ImageProviding, CullImageSource {
     /// the same shoot with files added or removed (keep what is still there).
     private var folder: URL?
 
+    /// Where each photo's **full-resolution** JPEG lives, as the file it is in plus the byte range
+    /// inside it. Read from the core's `PhotoMeta.fullPreview` (todo.md §7.5, fact 1).
+    ///
+    /// Display decodes are done from these bytes rather than from the CR3 URL. Handing ImageIO the
+    /// container makes it parse the ISO-BMFF, find a track and pick an image — work repeated on
+    /// every single decode, for a file where the answer was already computed once during the scan.
+    /// `CGImageSourceCreateWithData` on the JPEG's own bytes skips all of that.
+    ///
+    /// Absent for a file with no `fullPreview` (a JPEG-only shoot, or a format whose parser does not
+    /// report one), and the decode then falls back to the URL, so nothing depends on this being
+    /// populated.
+    private var fullPreviewRanges: [PhotoID: (url: URL, range: ByteRange)] = [:]
+
+    /// How many display decodes have been served from a byte range rather than the container. The
+    /// number that shows the optimisation is actually being used rather than merely available.
+    public private(set) var byteRangeDecodes = 0
+
     /// Bumped every time a decode lands. `thumbnail(for:size:)` and `histogram(for:)` read it, so
     /// a SwiftUI body that got a `nil` is asked again when the pixels arrive.
     public private(set) var generation: Int = 0
@@ -147,6 +164,9 @@ public final class ImageProvider: ImageProviding, CullImageSource {
         engine.onLand = { [weak self] id in
             Task { @MainActor in self?.engineDidLand(id) }
         }
+        engine.onByteRange = { [weak self] in
+            Task { @MainActor in self?.byteRangeDecodes += 1 }
+        }
     }
 
     /// Points the provider at a shoot. Called once per folder open, and again whenever the watched
@@ -182,6 +202,12 @@ public final class ImageProvider: ImageProviding, CullImageSource {
             sameFolder: self.folder == folder)
         files = newFiles
         orientations = newOrientations
+        fullPreviewRanges = Dictionary(
+            photos.compactMap { meta -> (PhotoID, (url: URL, range: ByteRange))? in
+                guard let preview = meta.fullPreview, let url = newFiles[meta.id] else { return nil }
+                return (meta.id, (url, preview.range))
+            },
+            uniquingKeysWith: { first, _ in first })
         self.folder = folder
         generation &+= 1
     }
@@ -190,6 +216,7 @@ public final class ImageProvider: ImageProviding, CullImageSource {
         engine.reset()
         files = [:]
         orientations = [:]
+        fullPreviewRanges = [:]
         folder = nil
         generation &+= 1
     }
@@ -209,7 +236,10 @@ public final class ImageProvider: ImageProviding, CullImageSource {
         engine.setFocus(
             ids: ordered,
             displayIDs: displayPrefetchIDs(current: focus.currentPhoto, windows: focus.windows),
-            urls: files, orientations: orientations)
+            urls: files, orientations: orientations,
+            fullPreviews: Dictionary(
+                fullPreviewRanges.map { ($0.key, $0.value.range) },
+                uniquingKeysWith: { first, _ in first }))
     }
 
     /// The windows ordered the way the user reaches them (task.md §7.1): the current batch, then
@@ -251,12 +281,14 @@ public final class ImageProvider: ImageProviding, CullImageSource {
 
     func displayImage(for id: PhotoID) -> CGImage? {
         _ = generation
-        return engine.display(id, url: files[id], orientation: orientations[id] ?? 1)
+        return engine.display(
+            id, url: files[id], orientation: orientations[id] ?? 1,
+            fullPreview: fullPreviewRanges[id]?.range)
     }
 
     func histogram(for id: PhotoID) -> CullHistogram? {
         _ = generation  // the info panel redraws when the display image it bins arrives
-        return engine.histogram(id, url: files[id])
+        return engine.histogram(id, url: files[id], fullPreview: fullPreviewRanges[id]?.range)
     }
 
     /// What a system memory-pressure warning does; public so a test can trigger it.
@@ -307,6 +339,10 @@ final class DecodeEngine: @unchecked Sendable {
         /// The size of the file when the job was queued. Checked on landing, so a file that was
         /// replaced under the same name while the decode ran cannot be served as the old one.
         var fileSize: UInt64 = 0
+        /// The full-resolution JPEG's byte range inside `url`, when the core reported one. Nil means
+        /// "decode from the container", which is the fallback and the only path for a file with no
+        /// reported full preview.
+        var fullPreview: ByteRange?
     }
 
     private struct Key: Hashable {
@@ -331,6 +367,9 @@ final class DecodeEngine: @unchecked Sendable {
     let prefetchPixels: Int
     /// Set by the provider after construction: called on the decoding thread when a job lands.
     var onLand: (@Sendable (PhotoID) -> Void)?
+    /// Called on the decoding thread when a display decode was served from a byte range rather than
+    /// from the container, so the provider can count the ones the optimisation actually served.
+    var onByteRange: (@Sendable () -> Void)?
 
     private var thumbnails: [PhotoID: Entry] = [:]
     private var displays: [PhotoID: Entry] = [:]
@@ -412,7 +451,8 @@ final class DecodeEngine: @unchecked Sendable {
     @MainActor
     func setFocus(
         ids: [PhotoID], displayIDs: [PhotoID], urls: [PhotoID: URL],
-        orientations: [PhotoID: UInt8] = [:]
+        orientations: [PhotoID: UInt8] = [:],
+        fullPreviews: [PhotoID: ByteRange] = [:]
     ) {
         let rank = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
         let wanted = Set(displayIDs)
@@ -434,7 +474,8 @@ final class DecodeEngine: @unchecked Sendable {
         // miss, so counting it would make the guarantee impossible to satisfy by construction.
         for id in displayIDs {
             _ = display(id, url: urls[id], orientation: orientations[id] ?? 1,
-                        priority: rank[id] ?? 0, countsAsFocusMiss: false)
+                        priority: rank[id] ?? 0, fullPreview: fullPreviews[id],
+                        countsAsFocusMiss: false)
         }
         for (position, id) in ids.enumerated() {
             _ = thumbnail(id, minimumLongestEdge: Double(prefetchPixels), slack: 1, url: urls[id],
@@ -562,7 +603,7 @@ final class DecodeEngine: @unchecked Sendable {
     @MainActor
     func display(
         _ id: PhotoID, url: URL?, orientation: UInt8 = 1, priority: Int = 0,
-        countsAsFocusMiss: Bool = true
+        fullPreview: ByteRange? = nil, countsAsFocusMiss: Bool = true
     ) -> CGImage? {
         lock.lock()
         clock &+= 1
@@ -577,7 +618,7 @@ final class DecodeEngine: @unchecked Sendable {
         let queued = url.map {
             enqueueLocked(
                 Job(id: id, url: $0, kind: .display, maxPixel: 0, priority: priority,
-                    orientation: orientation))
+                    orientation: orientation, fullPreview: fullPreview))
         } ?? false
         lock.unlock()
         if queued { pump() }
@@ -585,7 +626,9 @@ final class DecodeEngine: @unchecked Sendable {
     }
 
     @MainActor
-    func histogram(_ id: PhotoID, url: URL?) -> CullHistogram? {
+    func histogram(
+        _ id: PhotoID, url: URL?, fullPreview: ByteRange? = nil
+    ) -> CullHistogram? {
         lock.lock()
         if let existing = histograms[id] {
             counters.histogramCacheHits += 1
@@ -598,7 +641,7 @@ final class DecodeEngine: @unchecked Sendable {
         guard let cached else {
             // A histogram is computed from pixels, so it needs the display image. Ask for that;
             // the view asks again once `generation` moves.
-            if let url { _ = display(id, url: url) }
+            if let url { _ = display(id, url: url, fullPreview: fullPreview) }
             return nil
         }
         // 256×256 is 65 k pixels, so this is sub-millisecond and does not need the decode queue.
@@ -652,10 +695,33 @@ final class DecodeEngine: @unchecked Sendable {
             let decoded: CGImage? =
                 switch job.kind {
                 case .thumbnail: Self.decodeThumbnail(url: job.url, maxPixel: job.maxPixel)
-                case .display: Self.decodeFull(url: job.url, orientation: job.orientation)
+                case .display: decodeDisplayJob(job)
                 }
             store(job, decoded)
         }
+    }
+
+    /// A display decode, preferring the reported byte range over the container.
+    ///
+    /// Split out of `drain` so the fallbacks read as fallbacks: three ways to end up here and only
+    /// the middle one is the optimisation. Kept returning rather than branching inline because an
+    /// inline `if/else` expression is where a `return` would silently return from `drain` and
+    /// abandon the rest of the queue.
+    private func decodeDisplayJob(_ job: Job) -> CGImage? {
+        guard let range = job.fullPreview else {
+            // Nothing reported, so the container is the only authority.
+            return Self.decodeFull(url: job.url, orientation: job.orientation)
+        }
+        guard
+            let image = Self.decodeFull(
+                byteRange: range, in: job.url, orientation: job.orientation)
+        else {
+            // The range was there but the bytes were not a JPEG we could read. Fall back rather than
+            // show nothing: a stale range is a display bug, an empty viewer is a crash.
+            return Self.decodeFull(url: job.url, orientation: job.orientation)
+        }
+        onByteRange?()
+        return image
     }
 
     private func takeNext() -> Job? {
@@ -783,6 +849,46 @@ final class DecodeEngine: @unchecked Sendable {
                 source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
         else { return nil }
         return applying(orientation: orientation, to: raw)
+    }
+
+    /// The same read, from the JPEG's own bytes instead of from the CR3.
+    ///
+    /// `CGImageSourceCreateWithData` skips the container entirely: no ISO-BMFF walk, no track
+    /// selection, no "which image is the preview" decision — all of which the core already made
+    /// during the scan and reported as a byte range. todo.md §7.5 expects this to be the cheap path
+    /// for display decodes; `realPhotoDecodeCosts` in the integration suite is what proves it, and
+    /// `decodeFull(url:)` stays as the fallback for a file with no reported range.
+    ///
+    /// The bytes are read with a single `pread`-style `Data(contentsOf:options:)` on an unmapped
+    /// file rather than `Data(contentsOf:)`, so a 3 MB range does not go through `mmap` and then get
+    /// copied out of it.
+    static func decodeFull(byteRange: ByteRange, in url: URL, orientation: UInt8 = 1) -> CGImage? {
+        guard let data = readBytes(byteRange, in: url),
+            let source = CGImageSourceCreateWithData(data as CFData, sourceOptions)
+        else { return nil }
+        guard
+            let raw = CGImageSourceCreateImageAtIndex(
+                source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        else { return nil }
+        return applying(orientation: orientation, to: raw)
+    }
+
+    /// Just the bytes of a range, or nil. A `FileHandle`-free, allocation-honest read: bounds-checked
+    /// against the file's real length so a stale range from a truncated file cannot read past the
+    /// end, and a short read is a failure rather than a short image.
+    static func readBytes(_ range: ByteRange, in url: URL) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        guard range.offset < size else { return nil }
+        let length = Int(min(UInt64(range.len), size - range.offset))
+        guard length > 0 else { return nil }
+        do {
+            try handle.seek(toOffset: range.offset)
+            return try handle.read(upToCount: length) ?? nil
+        } catch {
+            return nil
+        }
     }
 
     /// EXIF orientation 1–8 → the pixels, upright.

@@ -5,13 +5,20 @@
 //! ```text
 //! ftyp
 //! moov
-//!   trak ×3                     the JPEG, the preview and the RAW image
-//!   trak (handler "meta")       a CTMD sample holding a *second* copy of the EXIF
-//!   uuid 85c0b687-…             CNCV, CCTP, CTBO, CMT1, CMT2, CMT3, CMT4, THMB
+//!   trak (handler "pict")     the full-resolution JPEG: 6000×4000 on an R8
+//!   trak (handler "meta")     a CTMD sample holding a *second* copy of the EXIF
+//!   uuid 85c0b687-…             CNCV, CCTP, CTBO, CMT1, CMT2, CMT3, CMT4, THMB (160×120)
 //! uuid eaf42b5e-…               XMP
-//! uuid b9fbb7dc-…               PRVW, the full-size preview JPEG
+//! uuid b9fbb7dc-…               PRVW, a 1620×1080 preview JPEG
 //! mdat                         the sensor data
 //! ```
+//!
+//! **A CR3 carries three JPEGs and they are not interchangeable** (todo.md §7.5, fact 1). `THMB` is
+//! 160×120, `PRVW` is 1620×1080, and the first `trak` is the sensor's full 6000×4000. Measured on
+//! `Game1JENKS/IMG_6117.CR3`, not assumed. The loupe needs the `trak` one — "100%" has to mean the
+//! full frame — while `PRVW` is the cheap one to decode for a first-photo fast path, and conflating
+//! them silently caps the viewer at 1620 px. They are separate fields for that reason: `thumbnail`,
+//! `preview` (PRVW) and `full_preview` (the `trak` sample).
 //!
 //! The four `CMT` boxes are the primary copy of the metadata and are small, fixed-offset TIFF
 //! streams: `CMT1` is IFD0, `CMT2` the Exif IFD, `CMT3` the MakerNote, `CMT4` GPS. The R8's
@@ -140,8 +147,14 @@ pub struct Cr3 {
     pub height: u32,
     pub shutter_count: Option<u64>,
     pub af: Option<AfInfo>,
-    /// The full-size preview JPEG, if the file has a `PRVW` box.
+    /// The `PRVW` box's preview JPEG: **1620×1080**, not full size. Cheap to decode and a good
+    /// first-photo fast path, but a 14" viewer needs more than that.
     pub preview: Option<EmbeddedPreview>,
+    /// The full-resolution JPEG (6000×4000 on an R8) carried in the first `trak`. This is what the
+    /// loupe draws and what "100%" means; ImageIO finds it by parsing the container itself, which
+    /// is why a display decode costs ~166 ms. Decoding it from this byte range instead skips the
+    /// container parse (todo.md §7.5).
+    pub full_preview: Option<EmbeddedPreview>,
     /// The 160×120 thumbnail from `THMB`, if the file has one.
     pub thumbnail: Option<EmbeddedPreview>,
     /// Non-fatal problems worth showing in the log.
@@ -177,6 +190,7 @@ impl Cr3 {
         let mut meta = Cr3::default();
         let mut cmt = CmtBoxes::default();
         let mut moov: Option<(usize, usize)> = None;
+        let mut traks: Vec<(usize, usize)> = Vec::new();
 
         for box_ in Boxes::new(&head, 0, head.len()) {
             match &box_.kind {
@@ -185,6 +199,9 @@ impl Cr3 {
                     for child in Boxes::new(&head, box_.body, box_.end) {
                         if child.kind == *b"uuid" && child.usertype() == Some(UUID_CANON) {
                             cmt.scan_canon_uuid(&head, child.usertype_end());
+                        }
+                        if child.kind == *b"trak" {
+                            traks.push((child.body, child.end));
                         }
                     }
                 }
@@ -202,6 +219,12 @@ impl Cr3 {
                 },
                 _ => {}
             }
+        }
+
+        // The full-resolution JPEG is whichever track's sample is actually a JPEG. The first `trak`
+        // in an R8 CR3 is the *RAW* one, so this has to look at all of them.
+        if !traks.is_empty() {
+            meta.full_preview = trak_jpeg(&head, &traks);
         }
 
         cmt.apply_thumbnail(&mut meta);
@@ -838,7 +861,168 @@ fn af_info(record: &[u8]) -> Option<AfInfo> {
 
 // ─────────────────────────────────────────────────────────────────────────── previews
 
-/// The `PRVW` box: a big-endian sub-box whose 20-byte header precedes a full-size JPEG.
+/// The full-resolution JPEG, found through the sample table of whichever `trak` holds one.
+///
+/// A CR3 holds three JPEGs, and which one you get decides the cost of everything downstream
+/// (todo.md §7.5, fact 1). Measured on `Game1JENKS/IMG_3181.CR3` and `IMG_6117.CR3`:
+///
+/// | where | size | what it is for |
+/// | --- | --- | --- |
+/// | `THMB` | 160×120 | the file's own thumbnail box; the core reads it for a cheap existence check |
+/// | `PRVW` | 1620×1080 | 7% of the pixels — a fast first photo, not the viewer |
+/// | first `trak` sample | **6000×4000** | the sensor's full size, and what "100%" has to mean |
+///
+/// **The sample entry's codec is `CRAW` for every image track, including the one whose sample is a
+/// JPEG.** The first `trak` in an R8 CR3 is the *RAW* track, and its `stsd` says `CRAW` while its
+/// sample is in fact the full-size JPEG — so the four-character code is no help at all, and neither
+/// is a handler type (all three image tracks are `vide`; only the `meta` track is `meta`). What
+/// identifies the JPEG is the sample's own bytes: `FF D8` at its offset, and an `SOF` marker that
+/// gives the dimensions. So every track's sample table is read, each sample is tested, and the
+/// largest JPEG wins.
+///
+/// The returned range deliberately may extend past the 1 MiB header window — the JPEG itself is
+/// megabytes. Only its first bytes are needed to identify it, and the app seeks to the range.
+fn trak_jpeg(head: &[u8], traks: &[(usize, usize)]) -> Option<EmbeddedPreview> {
+    let mut best: Option<EmbeddedPreview> = None;
+    for &(body, end) in traks {
+        let Some(sample) = trak_sample(head, body, end) else {
+            continue;
+        };
+        // Only the leading bytes are needed to identify it, and `jpeg_dimensions` stops at the first
+        // `SOF`. It is bounds-checked, so handing it the rest of the header window is safe — and the
+        // window has to be generous, because a Canon's EXIF and ICC segments can push `SOF` well
+        // past the first few dozen bytes.
+        let offset = sample.offset as usize;
+        // A later track can start past the 1 MiB header window, which is not a reason to give up on
+        // the track that was already identified: `continue`, not `?`. Using `?` here returned from
+        // the whole function and threw the good answer away.
+        let Some(tail) = head.get(offset..) else {
+            continue;
+        };
+        if !tail.starts_with(&[0xff, 0xd8]) {
+            continue;
+        }
+        let (width, height) = match jpeg_dimensions(tail) {
+            Some(dimensions) if dimensions.0 > 0 && dimensions.1 > 0 => dimensions,
+            _ => continue,
+        };
+        let better = best.as_ref().is_none_or(|current| {
+            u64::from(width) * u64::from(height)
+                > u64::from(current.width) * u64::from(current.height)
+        });
+        if better {
+            best = Some(EmbeddedPreview {
+                range: sample,
+                width,
+                height,
+            });
+        }
+    }
+    best
+}
+
+/// A track's single sample: its size from `stsz` and its offset from `stco`/`co64`.
+///
+/// The JPEG and `meta` tracks each hold exactly one sample, so the first table entry is the sample
+/// and `stsc`/`stts` — which only matter for a track with several samples or a varying frame rate —
+/// are not needed. A track that uses neither `stco` nor `co64`, or an `stsz` with no entries,
+/// yields `None` rather than a guess.
+fn trak_sample(head: &[u8], start: usize, end: usize) -> Option<ByteRange> {
+    let mut stbl: Option<(usize, usize)> = None;
+    for box_ in Boxes::new(head, start, end) {
+        if box_.kind == *b"mdia" {
+            for child in Boxes::new(head, box_.body, box_.end) {
+                if child.kind != *b"minf" {
+                    continue;
+                }
+                for grandchild in Boxes::new(head, child.body, child.end) {
+                    if grandchild.kind == *b"stbl" {
+                        stbl = Some((grandchild.body, grandchild.end));
+                    }
+                }
+            }
+        }
+    }
+    let (stbl_start, stbl_end) = stbl?;
+
+    let mut size: Option<u64> = None;
+    let mut offset: Option<u64> = None;
+    for box_ in Boxes::new(head, stbl_start, stbl_end) {
+        match &box_.kind {
+            // Both are FullBoxes: 4 bytes of version+flags before the payload.
+            b"stsz" => size = first_sample_size(head, box_.body + 4, box_.end),
+            b"stco" => offset = first_chunk_offset32(head, box_.body + 4, box_.end),
+            b"co64" => offset = first_chunk_offset64(head, box_.body + 4, box_.end),
+            _ => {}
+        }
+    }
+    let len = size.filter(|value| *value >= 2)?;
+    Some(ByteRange {
+        offset: offset?,
+        len,
+    })
+}
+
+/// An `hdlr` box's handler type, which is the four bytes after its 8-byte header + 4-byte
+/// version/flags + 4-byte pre_defined.
+#[allow(dead_code)]
+fn handler_type(head: &[u8], body: usize) -> Option<[u8; 4]> {
+    head.get(body + 8..body + 12)
+        .and_then(|bytes| <[u8; 4]>::try_from(bytes).ok())
+}
+
+/// `stsz`: a uniform `sample_size`, or — when it is zero — a table whose first entry is the size.
+///
+/// `end` is the box's own end, used to reject an entry that runs past it. `Boxes` has already
+/// bounded the box itself, so this is belt and braces: a truncated file must not make the parser
+/// read a sample size out of whatever bytes follow.
+fn first_sample_size(head: &[u8], start: usize, end: usize) -> Option<u64> {
+    if start + 4 > end {
+        return None;
+    }
+    let uniform = be32(head, start)?;
+    if uniform != 0 {
+        return Some(u64::from(uniform));
+    }
+    // sample_count sits between the uniform size and the table; the first entry is 4 bytes past it.
+    if start + 12 > end {
+        return None;
+    }
+    be32(head, start + 8).map(u64::from)
+}
+
+/// `stco`: a 32-bit chunk offset table; the first entry is the one sample's offset.
+fn first_chunk_offset32(head: &[u8], start: usize, end: usize) -> Option<u64> {
+    // 4 bytes of entry_count, then the first entry.
+    if start + 8 > end {
+        return None;
+    }
+    be32(head, start + 4).map(u64::from)
+}
+
+/// `co64`: the same table in 64 bits, for a file over 4 GB.
+fn first_chunk_offset64(head: &[u8], start: usize, end: usize) -> Option<u64> {
+    if start + 12 > end {
+        return None;
+    }
+    be64(head, start + 4)
+}
+
+fn be32(head: &[u8], at: usize) -> Option<u32> {
+    head.get(at..at + 4)
+        .map(|b| u32::from_be_bytes(b.try_into().expect("four bytes")))
+}
+
+fn be64(head: &[u8], at: usize) -> Option<u64> {
+    head.get(at..at + 8)
+        .map(|b| u64::from_be_bytes(b.try_into().expect("eight bytes")))
+}
+
+/// The `PRVW` box: a big-endian sub-box whose 20-byte header precedes a **1620×1080** JPEG.
+///
+/// Not the full-size image — that is the first `trak`'s sample, which [`trak_jpeg`] reads. The two
+/// are kept apart because they cost very different amounts to decode, and a caller that wants "the
+/// picture" and gets `PRVW` has silently capped the viewer at 1620 px.
 fn prvw_preview(head: &[u8], start: usize, end: usize) -> Option<EmbeddedPreview> {
     let marker = head[start..end].windows(4).position(|w| w == b"PRVW")? + start;
     let be16 = |at: usize| -> Option<u32> {

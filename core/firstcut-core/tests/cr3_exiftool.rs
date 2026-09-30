@@ -469,3 +469,93 @@ fn a_whole_shoot_parses_and_orders_without_a_single_skip() {
         );
     }
 }
+
+/// The three JPEGs a CR3 carries, and the fact that keeps being got wrong: `PRVW` is **not** the
+/// full-size image. todo.md §7.5 got this from the CR3 format description and then had to measure
+/// it, so this asserts the measurement: `THMB` 160×120, `PRVW` 1620×1080, the first `trak`
+/// 6000×4000.
+///
+/// It also checks the byte ranges are *real* — that the bytes at each offset are the JPEG the box
+/// claims, and that the three do not overlap. A range that points at the wrong bytes would still
+/// satisfy a dimensions-only assertion, and the whole point of exposing them is for the app to
+/// hand those exact bytes to ImageIO.
+#[test]
+fn a_cr3_carries_three_jpegs_and_only_one_of_them_is_full_size() {
+    let Some(root) = photos_root() else {
+        println!(
+            "skipping: no test photos. Set FIRSTCUT_TEST_PHOTOS or create ~/Documents/testing."
+        );
+        return;
+    };
+    let mut checked = 0usize;
+    for game in GAMES {
+        for record in load_exiftool(game).iter().take(SAMPLE) {
+            let path = root.join(game).join(&record.file_name);
+            let Ok(parsed) = Cr3::parse(&path) else {
+                continue;
+            };
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
+
+            // The full-size one is the whole point of the loupe.
+            let full = parsed
+                .full_preview
+                .unwrap_or_else(|| panic!("{game}/{}: no trak JPEG found", record.file_name));
+            assert_eq!(
+                (full.width, full.height),
+                (6000, 4000),
+                "{game}/{}: the trak sample is the full-size frame",
+                record.file_name
+            );
+            assert!(
+                starts_with_jpeg(&bytes, full),
+                "{game}/{}: the trak range does not start with a JPEG",
+                record.file_name
+            );
+
+            // PRVW is the small one, and claiming otherwise is the bug this test exists for.
+            let small = parsed
+                .preview
+                .unwrap_or_else(|| panic!("{game}/{}: no PRVW found", record.file_name));
+            assert_eq!(
+                (small.width, small.height),
+                (1620, 1080),
+                "{game}/{}: PRVW is 1620x1080, NOT the full-size image",
+                record.file_name
+            );
+            assert!(
+                starts_with_jpeg(&bytes, small),
+                "{game}/{}: the PRVW range does not start with a JPEG",
+                record.file_name
+            );
+            assert!(
+                small.range.len < full.range.len,
+                "{game}/{}: PRVW must be the smaller image",
+                record.file_name
+            );
+
+            // THMB, and the three must not be the same bytes twice.
+            if let Some(thumb) = parsed.thumbnail {
+                assert!(
+                    starts_with_jpeg(&bytes, thumb),
+                    "{game}/{}: the THMB range does not start with a JPEG",
+                    record.file_name
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "no CR3s were checked; the photos must be missing"
+    );
+}
+
+/// The bytes at `range` really are the start of a JPEG, and the range is inside the file.
+fn starts_with_jpeg(bytes: &[u8], preview: firstcut_core::meta::cr3::EmbeddedPreview) -> bool {
+    let start = preview.range.offset as usize;
+    let end = start.saturating_add(preview.range.len as usize);
+    end <= bytes.len() && bytes.get(start..start + 2) == Some(&[0xff, 0xd8])
+}
