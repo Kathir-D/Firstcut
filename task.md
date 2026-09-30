@@ -460,6 +460,11 @@ The single most important property of the app: **navigation never waits for deco
 | 100% zoom from embedded preview | < 150 ms first time, instant with zoom-lock prefetch |
 | Idle memory after full cull of 1,500 photos | within budget, no leaks |
 
+**Measured so far (2026-09-30, and only this):** `order()` + `batch()` on the metadata of a whole
+shoot take **0.4 ms for 1,500 photos** (release build, Linux x86_64, `firstcut bench`; the target is
+2 s). That is one step of "provisional batches ready", not the metadata scan, the decode or any of the
+interactive targets above, none of which has been measured.
+
 - [ ] Instrument with `os_signpost` + a hidden debug HUD (cache hits/misses, decode queue depth,
       memory by tier, frame times).
 - [ ] Automated benchmark (`firstcut-cli bench` + XCTest perf tests) run against `~/Documents/testing`.
