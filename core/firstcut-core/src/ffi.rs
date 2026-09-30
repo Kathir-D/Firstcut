@@ -1106,6 +1106,31 @@ fn report_from(
 
 #[uniffi::export]
 impl Session {
+    /// Settings → Metadata: whether ratings are mirrored to `.xmp` sidecars, for which files, and
+    /// what a Keep is written as. `keep_stars` is 1...=5, or `keep_label` replaces it.
+    pub fn set_xmp_settings(
+        &self,
+        write_sidecars: bool,
+        sidecars_for_non_raw: bool,
+        keep_stars: u8,
+        keep_label: Option<FfiColorLabel>,
+    ) -> Result<(), FfiError> {
+        let mapping = crate::xmp::XmpMapping {
+            keep_rating: i64::from(keep_stars.clamp(1, 5)),
+            keep_label: keep_label.map(Into::into),
+            ..Default::default()
+        };
+        self.inner.set_xmp_mapping(mapping);
+        self.inner
+            .set_xmp_settings(crate::session::XmpSettings {
+                write_sidecars,
+                sidecars_for_non_raw,
+            })
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
     /// The dry run: everything Finish would do, in order, without touching a file. Planned with the
     /// session's own rating mode, so the preview and the filmstrip agree about what is kept.
     pub fn plan_finish(&self, options: FfiFinishOptions) -> Result<FfiFinishPlan, FfiError> {

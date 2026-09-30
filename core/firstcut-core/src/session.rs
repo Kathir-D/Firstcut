@@ -147,6 +147,27 @@ impl SessionListener for NoListener {
     fn xmp_error(&self, _photo: PhotoId, _message: String) {}
 }
 
+/// Whether and how ratings are mirrored to `.xmp` sidecars (Settings → Metadata, task.md §9.8).
+///
+/// Sidecars are the only thing Firstcut ever writes beside a photo, and never into the photo
+/// itself, so these switches decide *whether* a sidecar appears, never whether an original changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct XmpSettings {
+    /// Off: ratings live only in the session database.
+    pub write_sidecars: bool,
+    /// JPEG/HEIF/PNG/TIFF photos get a sidecar too. Off leaves them without one.
+    pub sidecars_for_non_raw: bool,
+}
+
+impl Default for XmpSettings {
+    fn default() -> XmpSettings {
+        XmpSettings {
+            write_sidecars: true,
+            sidecars_for_non_raw: true,
+        }
+    }
+}
+
 /// The state behind the `Mutex`. Split out so the lock is held for one operation at a time and the
 /// public methods stay readable.
 struct State {
@@ -165,6 +186,7 @@ struct State {
     change_seq: u64,
     rating_mode: RatingMode,
     mapping: XmpMapping,
+    xmp: XmpSettings,
 }
 
 pub struct Session {
@@ -238,6 +260,7 @@ impl Session {
             skipped: scan.skipped,
             change_seq: 0,
             mapping: XmpMapping::default(),
+            xmp: XmpSettings::default(),
         };
         state.ingest(scan.photos)?;
 
@@ -297,7 +320,53 @@ impl Session {
 
     /// How ratings are spelled in XMP (docs/contracts/session-api.md `XmpMapping`).
     pub fn set_xmp_mapping(&self, mapping: XmpMapping) {
-        self.state().mapping = mapping;
+        let changed = {
+            let mut state = self.state();
+            let changed = state.mapping != mapping;
+            state.mapping = mapping;
+            changed
+        };
+        // A different spelling of a Keep changes what the existing sidecars should say.
+        if changed {
+            let _ = self.write_all_sidecars();
+        }
+    }
+
+    /// Whether sidecars are written at all, and for which kinds of file. Ratings already in the
+    /// database are re-queued, so turning sidecars on writes the ones that were skipped.
+    pub fn set_xmp_settings(&self, settings: XmpSettings) -> Result<()> {
+        let changed = {
+            let mut state = self.state();
+            let changed = state.xmp != settings;
+            state.xmp = settings;
+            changed
+        };
+        if changed {
+            self.write_all_sidecars()?;
+        }
+        Ok(())
+    }
+
+    /// Queues a sidecar for every photo that has a rating. Idempotent (a write merges), which is
+    /// what makes it safe to run whenever a setting that could add sidecars changes: the pending
+    /// flag is cleared when a write is *queued*, so a skipped one has to be rebuilt from the
+    /// ratings themselves rather than from the queue.
+    fn write_all_sidecars(&self) -> Result<()> {
+        let (ratings, mode, mapping) = {
+            let state = self.state();
+            (
+                records::ratings(&state.db)?,
+                state.rating_mode,
+                state.mapping.clone(),
+            )
+        };
+        for (id, rating) in ratings {
+            if rating.is_neutral() {
+                continue;
+            }
+            self.queue_sidecar(PhotoId(id), &mapping.values_for(rating, mode));
+        }
+        Ok(())
     }
 
     /// Everything the UI draws from, in one value.
@@ -576,11 +645,19 @@ impl Session {
     /// The rating itself is already committed; this only schedules the mirror, so a failure here
     /// is reported to the listener and nothing more.
     fn queue_sidecar(&self, photo: PhotoId, values: &crate::xmp::document::XmpValues) {
-        let rel = self
-            .state()
-            .photos
-            .get(&photo.0)
-            .map(|meta| meta.rel_path.clone());
+        let rel = {
+            let state = self.state();
+            let wanted = state.xmp.write_sidecars
+                && state.photos.get(&photo.0).is_some_and(|meta| {
+                    state.xmp.sidecars_for_non_raw
+                        || matches!(meta.kind, crate::meta::FileKind::Raw(_))
+                });
+            if wanted {
+                state.photos.get(&photo.0).map(|meta| meta.rel_path.clone())
+            } else {
+                None
+            }
+        };
         let Some(rel) = rel else {
             // A photo the session has never seen has no path to write next to. The rating is safe
             // in the database, which is the source of truth.
@@ -2023,5 +2100,43 @@ mod tests {
             session.undo_finish(),
             Err(SessionError::CannotUndo(_))
         ));
+    }
+
+    #[test]
+    fn sidecar_settings_decide_whether_a_sidecar_appears() {
+        let folder = six_jpegs();
+        let sessions = tempfile::tempdir().unwrap();
+        let session =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        let sidecar = folder.path().join("IMG_0001.JPG.xmp");
+        let id = crate::batch::photo_id("IMG_0001.JPG");
+
+        // Off: the rating is in the database and nothing is written beside the photo.
+        session
+            .set_xmp_settings(XmpSettings {
+                write_sidecars: false,
+                sidecars_for_non_raw: true,
+            })
+            .unwrap();
+        session.set_rating(id, Rating::stars(4)).unwrap();
+        session.flush();
+        assert!(!sidecar.exists(), "sidecars are off");
+        assert_eq!(session.snapshot().ratings[&id.0].stars, 4);
+
+        // On, but not for a JPEG: still nothing.
+        session
+            .set_xmp_settings(XmpSettings {
+                write_sidecars: true,
+                sidecars_for_non_raw: false,
+            })
+            .unwrap();
+        session.flush();
+        assert!(!sidecar.exists(), "no sidecars for non-RAW files");
+
+        // Fully on: the rating that was skipped is written now.
+        session.set_xmp_settings(XmpSettings::default()).unwrap();
+        session.flush();
+        let text = fs::read_to_string(&sidecar).expect("the skipped sidecar is backfilled");
+        assert!(text.contains("xmp:Rating=\"4\""), "{text}");
     }
 }
