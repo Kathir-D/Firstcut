@@ -38,7 +38,8 @@ launch, `screencapture`, *look at the image*, compare with Finder, fix, repeat (
 | `cargo test --manifest-path core/Cargo.toml` | **green**: 300+ tests; runs on Linux and macOS |
 | `cargo fmt --check`, `cargo clippy --all-targets -D warnings` | **green** |
 | CI Swift job (Xcode 16.4 / macOS 15 SDK): build and unit tests | **green** on `main` |
-| `Xcode 26` workflow (the shipping toolchain, `.github/workflows/xcode26.yml`, manual) | see the run history; this is the one that compiles the Liquid Glass path |
+| `Xcode 26` workflow (the shipping toolchain, `.github/workflows/xcode26.yml`, manual) | **green** (build and tests) on `086443f` / `main` |
+| `release.yml` rehearsal (dispatch, no tag, macos-26) | **green**: notices check, Rust tests, Release build, ad-hoc sign, zip and SHA-256 (`Firstcut-0.0.0.zip`, 5.7 MB); the tap bump and GitHub release steps are skipped without a tag or secret |
 | Boundary F1 (batching) | **UNMEASURED**. No visually verified ground truth exists (§5.4), and none may be synthesised. The suite prints a loud SKIPPED |
 | §7.3 performance targets | **UNMEASURED**. Nothing here runs on a Mac with the test photos |
 | The app launched and looked at | **Not by this agent.** The last session had no macOS: everything Swift is compiled and unit-tested by CI, and nothing has been visually checked (§15 B) |
