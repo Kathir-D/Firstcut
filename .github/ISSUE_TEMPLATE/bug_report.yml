@@ -1,0 +1,40 @@
+name: Bug report
+description: Something is wrong, missing or surprising.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. If a **photo is missing, mis-ordered or mis-batched**, the camera model
+        and file format are the most useful things you can tell us. Please don't attach photos.
+  - type: input
+    id: version
+    attributes:
+      label: Firstcut version
+      description: "Firstcut menu > About Firstcut, or the version in the release you downloaded."
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: "macOS 26.0, MacBook Pro M1 Pro, 16 GB"
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Camera model and file format
+      placeholder: "Canon EOS R8, .CR3 (C-RAW)  /  Sony A7 IV, .ARW"
+  - type: textarea
+    id: steps
+    attributes:
+      label: What happened, and what did you expect?
+      description: The steps to reproduce it, and how many photos were in the folder.
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: A screenshot, or the warning shown under a photo in the info panel.

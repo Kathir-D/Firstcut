@@ -1,0 +1,19 @@
+name: Feature request
+description: An idea for making culling faster or better.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Firstcut deliberately does one job: deciding what to keep. It has no editing, no AI
+        auto-culling and no import; see the non-goals in `task.md`.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Firstcut to do?

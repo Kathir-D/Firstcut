@@ -83,15 +83,16 @@ jobs:
 
       - name: Bump the Homebrew cask in Kathir-D/homebrew-tap
         if: startsWith(github.ref, 'refs/tags/')
-        # Needs a token with write access to the tap. Until HOMEBREW_TAP_TOKEN is configured this
-        # step is skipped with a warning instead of failing the release; the cask in the release
-        # assets is the source of truth until then.
+        # Needs write access to the tap: a deploy key (preferred, as the tap's other projects use)
+        # or a token. Until one is configured this step is skipped with a warning instead of
+        # failing the release; the cask in the release assets is the source of truth until then.
         env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
-            echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the tap update. The cask is attached to this release; copy it into the tap by hand."
+          if [ -z "$HOMEBREW_TAP_DEPLOY_KEY" ] && [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::warning::Neither HOMEBREW_TAP_DEPLOY_KEY nor HOMEBREW_TAP_TOKEN is set; skipping the tap update. The cask is attached to this release; copy it into the tap by hand."
             exit 0
           fi
           ./scripts/bump-cask.sh

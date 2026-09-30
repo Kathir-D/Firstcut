@@ -4,9 +4,13 @@
 # `brew upgrade --cask firstcut` works without a human editing a file (task.md §13).
 #
 # Run by .github/workflows/release.yml after the cask in this repo has been stamped with the
-# release's version and SHA-256. Needs HOMEBREW_TAP_TOKEN: a token with write access to the tap.
-# The workflow's default GITHUB_TOKEN cannot write to another repository, which is why this is a
-# separate secret.
+# release's version and SHA-256. Needs write access to the tap, in either of two forms (the
+# workflow's default GITHUB_TOKEN cannot write to another repository, so it is a separate secret):
+#
+#   HOMEBREW_TAP_DEPLOY_KEY   the private half of a deploy key with write access, on the tap only.
+#                             This is how the tap's other projects publish, and it is preferred:
+#                             it can touch one repository and nothing else.
+#   HOMEBREW_TAP_TOKEN        a fine-grained token with contents:write on the tap.
 #
 # Usage (locally, to rehearse): HOMEBREW_TAP_TOKEN=… scripts/bump-cask.sh
 #   DRY_RUN=1 prints the diff and writes nothing.
@@ -25,19 +29,28 @@ grep -q "REPLACE_WITH_RELEASE_SHA256" "$SOURCE_CASK" \
 
 if [ -n "${DRY_RUN:-}" ]; then
   log "DRY RUN: would update $TAP_REPO/$TAP_CASK_PATH to $VERSION ($SHA)"
-  diff -u <(gh api "repos/$TAP_REPO/contents/$TAP_CASK_PATH" --jq '.content' 2>/dev/null | base64 -d) \
+  diff -u <(curl -fsSL "https://raw.githubusercontent.com/$TAP_REPO/main/$TAP_CASK_PATH" 2>/dev/null) \
     "$SOURCE_CASK" && log "no change"
   exit 0
 fi
 
-command -v gh >/dev/null 2>&1 || die "the GitHub CLI (gh) is required"
-[ -n "${HOMEBREW_TAP_TOKEN:-}" ] || die "HOMEBREW_TAP_TOKEN is not set"
-
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+if [ -n "${HOMEBREW_TAP_DEPLOY_KEY:-}" ]; then
+  KEY="$WORK/deploy_key"
+  printf '%s\n' "$HOMEBREW_TAP_DEPLOY_KEY" > "$KEY"
+  chmod 600 "$KEY"
+  export GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+  CLONE_URL="git@github.com:$TAP_REPO.git"
+elif [ -n "${HOMEBREW_TAP_TOKEN:-}" ]; then
+  CLONE_URL="https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/$TAP_REPO.git"
+else
+  die "neither HOMEBREW_TAP_DEPLOY_KEY nor HOMEBREW_TAP_TOKEN is set"
+fi
+
 log "Cloning $TAP_REPO"
-gh repo clone "$TAP_REPO" "$WORK/tap" -- --depth=1 --quiet
+git clone --depth=1 --quiet "$CLONE_URL" "$WORK/tap"
 mkdir -p "$WORK/tap/Casks"
 cp "$SOURCE_CASK" "$WORK/tap/$TAP_CASK_PATH"
 
