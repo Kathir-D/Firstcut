@@ -266,9 +266,13 @@ pub fn plan_finish(
                             root.display()
                         ));
                     }
-                    let kind = if matches!(options.kept, KeptAction::CopyTo(_)) {
+                    // A move to another volume is a copy as far as free space goes.
+                    let copies = matches!(options.kept, KeptAction::CopyTo(_));
+                    if copies || crosses_volume(folder, &destination) {
                         copy_bytes += files.iter().map(|file| file.size).sum::<u64>();
                         copy_destinations.push(destination.clone());
+                    }
+                    let kind = if copies {
                         FileOpKind::Copy
                     } else {
                         FileOpKind::Move
@@ -280,6 +284,10 @@ pub fn plan_finish(
                     let subfolder = Tier::Keep.split_dir(options.rating_mode);
                     let destination =
                         split_destination(folder, root, &subfolder, &photo.rel_path, &mut reserved);
+                    if crosses_volume(folder, &destination) {
+                        copy_bytes += files.iter().map(|file| file.size).sum::<u64>();
+                        copy_destinations.push(destination.clone());
+                    }
                     plan.ops
                         .extend(destination_ops(FileOpKind::Move, &files, &destination));
                     kept_names.push(file_name(&destination.to_string_lossy()));
@@ -288,6 +296,10 @@ pub fn plan_finish(
                     let subfolder = rating.stars.to_string();
                     let destination =
                         split_destination(folder, root, &subfolder, &photo.rel_path, &mut reserved);
+                    if crosses_volume(folder, &destination) {
+                        copy_bytes += files.iter().map(|file| file.size).sum::<u64>();
+                        copy_destinations.push(destination.clone());
+                    }
                     plan.ops
                         .extend(destination_ops(FileOpKind::Move, &files, &destination));
                     kept_names.push(file_name(&destination.to_string_lossy()));
@@ -708,7 +720,7 @@ fn transfer(op: &FileOp, source: &Path, how: Move) -> ExecutedOp {
     }
 
     let result = match how {
-        Move::Rename => std::fs::rename(source, &target),
+        Move::Rename => move_file(source, &target),
         Move::Copy => std::fs::copy(source, &target).map(|_| ()),
         Move::Trash => move_to_trash(source, &target),
     };
@@ -737,10 +749,11 @@ fn move_to_trash(source: &Path, planned: &Path) -> std::io::Result<()> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "file".to_string());
-    let trash = trash_dir()?;
+    let trash = trash_for(source)?;
     let mut target = planned.to_path_buf();
-    // The plan's destination may live somewhere other than ~/.Trash (it only guarantees a free
-    // name); re-resolve it in the real trash so a stale plan cannot put two files in one place.
+    // The plan's destination may live somewhere other than this volume's trash (it only guarantees
+    // a free name); re-resolve it in the real trash so a stale plan cannot put two files in one
+    // place.
     if target.parent() != Some(trash.as_path()) {
         target = trash.join(&name);
     }
@@ -749,7 +762,114 @@ fn move_to_trash(source: &Path, planned: &Path) -> std::io::Result<()> {
         counter += 1;
         target = trash.join(suffixed(&name, counter));
     }
-    std::fs::rename(source, &target)
+    move_file(source, &target)
+}
+
+/// Moves `source` to `target`, across volumes if it has to.
+///
+/// `rename` is atomic but only works within one file system; a shoot culled straight off a card or
+/// an external SSD, with the kept files going to the internal disk, gets `EXDEV` for every file.
+/// Then the file is copied, the copy's size checked, and only then is the source removed. A failed
+/// copy removes its partial target and leaves the source where it was.
+pub fn move_file(source: &Path, target: &Path) -> std::io::Result<()> {
+    match std::fs::rename(source, target) {
+        Err(error) if error.raw_os_error() == Some(libc::EXDEV) => copy_then_remove(source, target),
+        other => other,
+    }
+}
+
+fn copy_then_remove(source: &Path, target: &Path) -> std::io::Result<()> {
+    if target.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "the destination already exists",
+        ));
+    }
+    let expected = std::fs::metadata(source)?;
+    let copied = std::fs::copy(source, target).and_then(|bytes| {
+        if bytes != expected.len() {
+            return Err(std::io::Error::other(format!(
+                "copied {bytes} of {} bytes",
+                expected.len()
+            )));
+        }
+        // Keep the capture-era modification time; Finder and other catalogs sort by it.
+        if let Ok(modified) = expected.modified() {
+            let _ = std::fs::File::options()
+                .write(true)
+                .open(target)
+                .and_then(|file| file.set_modified(modified));
+        }
+        Ok(())
+    });
+    if let Err(error) = copied {
+        let _ = std::fs::remove_file(target);
+        return Err(error);
+    }
+    std::fs::remove_file(source)
+}
+
+/// The Trash for `source`'s volume, where Finder would put it: `~/.Trash` on the home volume,
+/// `<volume>/.Trashes/<uid>` on any other (a card, an external disk), so trashing a file is a
+/// rename and "Put Back" works. Falls back to `~/.Trash` (a cross-volume move) when the volume's
+/// trash cannot be used, e.g. a read-only or foreign file system.
+fn trash_for(source: &Path) -> std::io::Result<PathBuf> {
+    let home_trash = trash_dir()?;
+    let Some(root) = volume_root(source) else {
+        return Ok(home_trash);
+    };
+    if volume_root(&home_trash).as_deref() == Some(root.as_path()) {
+        return Ok(home_trash);
+    }
+    let volume_trash = root.join(".Trashes");
+    // SAFETY: getuid cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let mine = volume_trash.join(uid.to_string());
+    if mine.is_dir() {
+        return Ok(mine);
+    }
+    let created = (|| {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        if !volume_trash.is_dir() {
+            // Finder's permissions: anyone may add a folder, no one may list or remove others'.
+            std::fs::DirBuilder::new()
+                .mode(0o1333)
+                .create(&volume_trash)?;
+            std::fs::set_permissions(&volume_trash, std::fs::Permissions::from_mode(0o1333))?;
+        }
+        std::fs::DirBuilder::new().mode(0o700).create(&mine)
+    })();
+    Ok(if created.is_ok() { mine } else { home_trash })
+}
+
+/// True when `destination` (which may not exist yet) is on a different volume from `folder`, so
+/// moving there copies the bytes.
+fn crosses_volume(folder: &Path, destination: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let device = |path: &Path| {
+        path.ancestors()
+            .find_map(|ancestor| std::fs::metadata(ancestor).ok())
+            .map(|meta| meta.dev())
+    };
+    match (device(folder), device(destination)) {
+        (Some(a), Some(b)) => a != b,
+        _ => false,
+    }
+}
+
+/// The mount point of the file system `path` is on: the highest ancestor on the same device.
+fn volume_root(path: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let path = std::fs::canonicalize(path).ok()?;
+    let device = std::fs::metadata(&path).ok()?.dev();
+    let mut root = path.clone();
+    for ancestor in path.ancestors().skip(1) {
+        match std::fs::metadata(ancestor) {
+            Ok(meta) if meta.dev() == device => root = ancestor.to_path_buf(),
+            _ => break,
+        }
+    }
+    Some(root)
 }
 
 fn trash_dir() -> std::io::Result<PathBuf> {
@@ -849,9 +969,17 @@ pub fn undo_ops(executed: &[ExecutedOp]) -> Vec<ExecutedOp> {
             let target = PathBuf::from(op.dst.as_deref().unwrap_or_default());
             let source = PathBuf::from(&op.src);
             let undone = match op.kind {
-                FileOpKind::Move => std::fs::rename(&target, &source),
+                // Something new at the original path (a re-import, a file the user made) is never
+                // overwritten to put ours back.
+                FileOpKind::Move | FileOpKind::Trash if source.exists() => {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        format!("{} is already there again", op.src),
+                    ))
+                }
+                FileOpKind::Move => move_file(&target, &source),
                 FileOpKind::Copy => std::fs::remove_file(&target),
-                FileOpKind::Trash => std::fs::rename(&target, &source),
+                FileOpKind::Trash => move_file(&target, &source),
                 // A sidecar write is reversed by putting the original bytes back, which is only
                 // possible if something kept them. Rather than guess, this one reports that it
                 // could not be undone, so the UI can say so out loud.
@@ -1764,6 +1892,111 @@ mod tests {
                 .iter()
                 .all(|op| !op.to.as_deref().unwrap_or_default().contains("/tmp/kept"))
         );
+    }
+
+    /// A second file system for the cross-volume tests, when this machine has one.
+    fn other_volume() -> Option<tempfile::TempDir> {
+        use std::os::unix::fs::MetadataExt;
+        let shm = Path::new("/dev/shm");
+        let here = tempfile::tempdir().ok()?;
+        let dev = |p: &Path| std::fs::metadata(p).ok().map(|m| m.dev());
+        if !shm.is_dir() || dev(shm) == dev(here.path()) {
+            return None;
+        }
+        tempfile::tempdir_in(shm).ok()
+    }
+
+    #[test]
+    fn a_move_across_volumes_copies_then_removes() {
+        let Some(other) = other_volume() else {
+            eprintln!("no second file system here; skipped");
+            return;
+        };
+        let here = tempfile::tempdir().unwrap();
+        let source = here.path().join("IMG_0001.CR3");
+        std::fs::write(&source, vec![7u8; 100_000]).unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&source)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        let target = other.path().join("IMG_0001.CR3");
+        move_file(&source, &target).unwrap();
+        assert!(!source.exists());
+        assert_eq!(std::fs::read(&target).unwrap(), vec![7u8; 100_000]);
+        assert_eq!(std::fs::metadata(&target).unwrap().modified().unwrap(), old);
+
+        // And back, which is what undo does.
+        move_file(&target, &source).unwrap();
+        assert!(source.exists() && !target.exists());
+    }
+
+    #[test]
+    fn a_cross_volume_move_never_overwrites() {
+        let here = tempfile::tempdir().unwrap();
+        let source = here.path().join("a.jpg");
+        let target = here.path().join("b.jpg");
+        std::fs::write(&source, b"mine").unwrap();
+        std::fs::write(&target, b"theirs").unwrap();
+        assert!(copy_then_remove(&source, &target).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), b"mine");
+        assert_eq!(std::fs::read(&target).unwrap(), b"theirs");
+    }
+
+    #[test]
+    fn a_move_to_another_volume_counts_as_bytes_to_copy() {
+        let Some(other) = other_volume() else {
+            return;
+        };
+        let shoot = Shoot::new();
+        let kept_root = other.path().join("Kept").to_string_lossy().into_owned();
+        let plan = plan_finish(
+            shoot.path(),
+            &shoot.photos(),
+            &HashMap::from([(1u64, Rating::stars(5))]),
+            &FinishOptions {
+                kept: KeptAction::MoveTo(kept_root),
+                ..Default::default()
+            },
+            0,
+        );
+        assert!(plan.bytes_to_copy > 0, "{plan:?}");
+        assert!(!crosses_volume(shoot.path(), &shoot.path().join("Kept")));
+    }
+
+    #[test]
+    fn the_volume_root_is_the_mount_point() {
+        let Some(other) = other_volume() else {
+            return;
+        };
+        let file = other.path().join("x.jpg");
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(volume_root(&file).unwrap(), Path::new("/dev/shm"));
+    }
+
+    #[test]
+    fn undo_does_not_overwrite_a_file_that_came_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("IMG_0001.JPG");
+        let moved = dir.path().join("_Not kept").join("IMG_0001.JPG");
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::write(&moved, b"ours").unwrap();
+        std::fs::write(&original, b"new file").unwrap();
+        let executed = ExecutedOp {
+            kind: FileOpKind::Move,
+            src: original.to_string_lossy().into_owned(),
+            dst: Some(moved.to_string_lossy().into_owned()),
+            size_bytes: 4,
+            status: "done",
+            error: None,
+        };
+        let undone = undo_ops(&[executed]);
+        assert_eq!(undone[0].status, "failed");
+        assert_eq!(std::fs::read(&original).unwrap(), b"new file");
+        assert_eq!(std::fs::read(&moved).unwrap(), b"ours");
     }
 
     #[test]
