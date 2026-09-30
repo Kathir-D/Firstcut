@@ -123,9 +123,13 @@ Not blocking v0.1.0; an agent can do these.
   2. Check whether the thumbnail/preview cache flickers or is dropped when the watched folder changes
      (`AppModel` folder-change handling and `Pipeline/ImageProvider.swift`).
   3. Continue the bug review of code not yet re-read: `fileops` planning for split-by-tier /
-     companions (sidecars, JPEG pairs), the rest of `session.rs` (undo/redo, batching on rescan),
-     `exif/`.
-  4. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
+     companions (sidecars, JPEG pairs), rating undo/redo and batching on rescan in `session.rs`,
+     the metadata readers in `meta/`. Reviewed and fine: `execute_finish`, `undo_finish`,
+     `mark_finish_folders`.
+  4. Small gap found: `undo_finish` clears the whole run's log even when some reversals failed
+     (e.g. a file reappeared at its old path), so they cannot be retried. Keep failed rows instead
+     (`records::clear_file_ops` → delete only the undone ones).
+  5. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
      they flag).
 - **Blocked on the owner:** the screenshots artifact cannot be downloaded from the cloud container (the
   Actions artifact host is not on its network allow-list); the owner downloads it from the
