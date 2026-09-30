@@ -117,6 +117,8 @@ Not blocking v0.1.0; an agent can do these.
   partial copy behind; **split by stars** puts a keep-mode keep in `5`, not `0`. **Rename
   recognition** (rescan): a new photo no longer inherits a deleted one's rating through a reused inode
   number or a same-size file without a shutter count, and one vanished photo is claimed at most once.
+  **Undo Finish** keeps reversals that failed (a file back at the old path) in the log, so the next
+  Undo retries them instead of skipping to an older run.
 - **Next, in order:**
   1. Wire the keep threshold from the app: `AppModel` must call `session.setKeepThreshold(...)` after
      a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.
@@ -126,10 +128,7 @@ Not blocking v0.1.0; an agent can do these.
      companions (sidecars, JPEG pairs), rating undo/redo and batching on rescan in `session.rs`,
      the metadata readers in `meta/`. Reviewed and fine: `execute_finish`, `undo_finish`,
      `mark_finish_folders`.
-  4. Small gap found: `undo_finish` clears the whole run's log even when some reversals failed
-     (e.g. a file reappeared at its old path), so they cannot be retried. Keep failed rows instead
-     (`records::clear_file_ops` → delete only the undone ones).
-  5. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
+  4. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
      they flag).
 - **Blocked on the owner:** the screenshots artifact cannot be downloaded from the cloud container (the
   Actions artifact host is not on its network allow-list); the owner downloads it from the

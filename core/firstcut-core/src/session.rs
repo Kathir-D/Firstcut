@@ -1289,9 +1289,36 @@ impl Session {
         let undone = crate::fileops::undo_ops(&executed);
         {
             // The run is consumed, so a second "Undo Finish" reverses the one before it instead
-            // of trying the same files again.
+            // of trying the same files again; except a reversal that failed for a reason that can
+            // go away (a file back at the old path, a disk that was not mounted). Those stay in the
+            // log, as the same run, so the next "Undo Finish" retries them. A sidecar change can
+            // never be undone, so keeping it would pin the run forever.
             let state = self.state();
             records::clear_file_ops(&state.db, finish_id)?;
+            let now = crate::store::now_ms();
+            // `undone` runs newest first; the log keeps the original order.
+            let retry = undone.iter().rev().filter(|op| {
+                !op.is_done()
+                    && op.dst.is_some()
+                    && op.kind != crate::fileops::FileOpKind::MarkRejected
+            });
+            for (seq, op) in retry.enumerate() {
+                records::log_file_op(
+                    &state.db,
+                    &records::FileOpRow {
+                        id: 0,
+                        finish_id,
+                        seq: seq as i64,
+                        kind: op.kind.as_str().to_string(),
+                        src: op.src.clone(),
+                        dst: op.dst.clone(),
+                        size_bytes: op.size_bytes,
+                        status: "done".to_string(),
+                        error: None,
+                        at_ms: now,
+                    },
+                )?;
+            }
         }
         self.after_files_moved();
         Ok(FinishUndo {
@@ -2247,6 +2274,37 @@ mod tests {
         );
 
         // A second undo has nothing left to reverse.
+        assert!(session.undo_finish().unwrap().nothing_to_undo);
+    }
+
+    #[test]
+    fn a_reversal_that_failed_is_retried_by_the_next_undo() {
+        let folder = six_jpegs();
+        let sessions = tempfile::tempdir().unwrap();
+        let session =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        let id = |n: u32| crate::batch::photo_id(&format!("IMG_{n:04}.JPG"));
+        session.set_rating(id(1), Rating::stars(5)).unwrap();
+        let options = crate::fileops::FinishOptions {
+            unkept: crate::fileops::UnkeptAction::MoveToSubfolder("_Not kept".to_string()),
+            ..Default::default()
+        };
+        let plan = session.plan_finish(&options).unwrap();
+        assert!(session.execute_finish(&plan).unwrap().summary.is_clean());
+
+        // Something new appears where IMG_0004 was, so putting it back would overwrite it.
+        let blocker = folder.path().join("IMG_0004.JPG");
+        fs::write(&blocker, b"someone else's file").unwrap();
+        let first = session.undo_finish().unwrap();
+        assert_eq!(first.summary.failed.len(), 1, "{:?}", first.summary.failed);
+        assert_eq!(fs::read(&blocker).unwrap(), b"someone else's file");
+
+        // Once the way is clear, undo finishes the job instead of moving on to an older run.
+        fs::remove_file(&blocker).unwrap();
+        let second = session.undo_finish().unwrap();
+        assert!(!second.nothing_to_undo);
+        assert!(second.summary.is_clean(), "{:?}", second.summary.failed);
+        assert_eq!(names(folder.path()).len(), 6, "every file is back");
         assert!(session.undo_finish().unwrap().nothing_to_undo);
     }
 
