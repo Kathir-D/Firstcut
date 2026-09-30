@@ -139,9 +139,12 @@ Not blocking v0.1.0; an agent can do these.
      a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.
   2. Check whether the thumbnail/preview cache flickers or is dropped when the watched folder changes
      (`AppModel` folder-change handling and `Pipeline/ImageProvider.swift`).
-  3. Continue the bug review of code not yet re-read: `fileops` planning for split-by-tier /
-     batching on rescan in `session.rs`, the metadata readers in `meta/`, the XMP import path. Reviewed and fine: `execute_finish`, `undo_finish`,
-     `mark_finish_folders`.
+  3. Continue the bug review of code not yet re-read: `fileops` planning for split-by-tier, the
+     metadata readers in `meta/` (CR3/NEF/ARW header parsing). Reviewed and fine: `execute_finish`,
+     `undo_finish`, `mark_finish_folders`, rescan/rebatch in `session.rs`, the scanner's grouping,
+     the XMP import path. Known and left: sidecar ratings are imported only when a folder's session
+     is first created, so a Lightroom-rated second card copied into an open shoot is not imported;
+     a different file saved under a known name (same path) inherits that name's rating.
   4. UI polish from the `Screenshots` workflow output (the owner reviews the PNGs; iterate on what
      they flag).
 - **Blocked on the owner:** the screenshots artifact cannot be downloaded from the cloud container (the
