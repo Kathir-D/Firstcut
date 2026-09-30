@@ -293,7 +293,15 @@ pub fn plan_finish(
                     kept_names.push(file_name(&destination.to_string_lossy()));
                 }
                 KeptAction::SplitByStars(root) => {
-                    let subfolder = rating.stars.to_string();
+                    // The stars shown, not the stored ones: a keep made in keep mode is stored
+                    // with 0 stars and belongs in "5", not "0".
+                    let subfolder = crate::store::rating::display_rating_at(
+                        &rating,
+                        RatingMode::Stars,
+                        options.keep_stars,
+                    )
+                    .stars
+                    .to_string();
                     let destination =
                         split_destination(folder, root, &subfolder, &photo.rel_path, &mut reserved);
                     if crosses_volume(folder, &destination) {
@@ -1793,6 +1801,24 @@ mod tests {
             0,
         );
         assert_eq!(destination_folders(&by_stars), vec!["4", "5"]);
+    }
+
+    #[test]
+    fn a_keep_made_in_keep_mode_splits_into_the_five_star_folder() {
+        // Stored as keep with 0 stars; it shows as 5 stars, so "0" would be the wrong folder.
+        let shoot = Shoot::new();
+        let ratings = HashMap::from([(1, Rating::keep())]);
+        let plan = plan_finish(
+            shoot.path(),
+            &shoot.photos(),
+            &ratings,
+            &options(
+                UnkeptAction::Nothing,
+                KeptAction::SplitByStars("/tmp/kept".into()),
+            ),
+            0,
+        );
+        assert_eq!(destination_folders(&plan), vec!["5"]);
     }
 
     #[test]
