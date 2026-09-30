@@ -1062,6 +1062,13 @@ pub fn tier_counts(snapshot: &SessionSnapshot, mode: RatingMode) -> HashMap<Tier
 
 // ─────────────────────────────────────────────────────────── finish cull (task.md §9.7)
 
+fn fs_write_marker(path: &Path) -> std::io::Result<()> {
+    std::fs::write(
+        path,
+        "Firstcut moved photos here in a Finish Cull run, so this folder is skipped when the shoot is scanned.\n",
+    )
+}
+
 /// What a Finish run did, for the report the app shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinishRun {
@@ -1151,6 +1158,7 @@ impl Session {
             }
             finish_id
         };
+        self.mark_finish_folders(&executed);
         self.after_files_moved();
         Ok(FinishRun {
             finish_id,
@@ -1220,6 +1228,30 @@ impl Session {
             summary: crate::fileops::summarize(&undone),
             nothing_to_undo: false,
         })
+    }
+
+    /// Marks the top-level folders Finish put files into *inside the shoot*, so a rescan does not
+    /// find the photos it just moved and bring them back into the cull.
+    fn mark_finish_folders(&self, executed: &[crate::fileops::ExecutedOp]) {
+        for op in executed.iter().filter(|op| op.is_done()) {
+            let Some(dst) = op.dst.as_deref() else {
+                continue;
+            };
+            let Ok(relative) = Path::new(dst).strip_prefix(&self.folder) else {
+                continue;
+            };
+            let mut parts = relative.components();
+            let (Some(first), Some(_file)) = (parts.next(), parts.next()) else {
+                continue; // a file straight in the shoot folder is not inside a new folder
+            };
+            let marker = self
+                .folder
+                .join(first.as_os_str())
+                .join(crate::meta::FINISH_MARKER);
+            if !marker.exists() {
+                let _ = fs_write_marker(&marker);
+            }
+        }
     }
 
     /// Re-reads the folder after files have moved: the session's idea of where things are is
@@ -2015,7 +2047,7 @@ mod tests {
             .flatten()
             .filter(|e| e.path().is_file())
             .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| !n.ends_with(".xmp"))
+            .filter(|n| !n.ends_with(".xmp") && !n.starts_with('.'))
             .collect();
         out.sort();
         out
@@ -2063,6 +2095,11 @@ mod tests {
         assert!(!undo.nothing_to_undo);
         assert!(undo.summary.is_clean(), "{:?}", undo.summary.failed);
         assert_eq!(names(folder.path()).len(), 6, "every file is back");
+        assert_eq!(
+            session.rescan().unwrap().photos.len(),
+            6,
+            "and they are in the cull again"
+        );
 
         // A second undo has nothing left to reverse.
         assert!(session.undo_finish().unwrap().nothing_to_undo);

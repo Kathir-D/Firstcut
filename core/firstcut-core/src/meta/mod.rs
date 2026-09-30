@@ -182,6 +182,10 @@ impl std::error::Error for ScanError {
 /// Mirrors `IMAGE_EXTENSIONS` in `store::identity`, which hashes the same set to identify a shoot.
 /// The two lists must agree or a reshoot would be invisible to the session identity, so both are
 /// derived from the table below.
+/// Dropped by Finish Cull into a folder it creates inside the shoot; the scanner skips any folder
+/// that holds one.
+pub const FINISH_MARKER: &str = ".firstcut-finished";
+
 /// The RAW extensions, listed so the test that keeps this table and the scanner in step has
 /// something to iterate over. `raw_format_of` is the authority on which are which.
 #[cfg(test)]
@@ -477,6 +481,12 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<Candidate>) -> Result<(), Scan
             continue;
         };
         if metadata.is_dir() {
+            // A folder Finish Cull created inside the shoot (`_Not kept`, `5 Keep`, …) holds photos
+            // that have been dealt with. Without this the next scan would find them again, and the
+            // photos the user just moved away would reappear in the cull.
+            if path.join(FINISH_MARKER).exists() {
+                continue;
+            }
             collect(root, &path, out)?;
             continue;
         }
