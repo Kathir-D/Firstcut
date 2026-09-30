@@ -47,9 +47,60 @@ enum ImageFixtures {
         return url
     }
 
+    /// A `CGImage` in a chosen layout, so the display-layout normaliser can be handed something
+    /// ImageIO would never produce on this machine. 8×6 with a gradient, because a solid fill cannot
+    /// distinguish a resample from a colour conversion.
+    static func image(
+        bitsPerComponent: Int, alpha: CGImageAlphaInfo, littleEndian: Bool = false
+    ) -> CGImage? {
+        let width = 8
+        let height = 6
+        let components = bitsPerComponent == 16 ? 3 : 4
+        let bytesPerRow = width * components * (bitsPerComponent / 8)
+        var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
+        for row in 0..<height {
+            for column in 0..<width {
+                let offset = row * bytesPerRow + column * components * (bitsPerComponent / 8)
+                let value = UInt8((row * 40 + column * 30) % 256)
+                pixels[offset] = value
+                pixels[offset + components * (bitsPerComponent / 8) / 2] = 255 - value
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData) else { return nil }
+        // A 16-bit three-component image cannot be built through `CGImage` at all (Core Graphics
+        // refuses 48 bpp), so the deep one is drawn through a context instead. Same point: the
+        // normaliser has to cope with a layout it cannot be handed directly.
+        guard bitsPerComponent == 8 else { return deepImage() }
+        let order = littleEndian ? CGBitmapInfo.byteOrder32Little : CGBitmapInfo.byteOrderDefault
+        let info = CGBitmapInfo(rawValue: alpha.rawValue | order.rawValue)
+        return CGImage(
+            width: width, height: height, bitsPerComponent: bitsPerComponent,
+            bitsPerPixel: components * bitsPerComponent, bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info, provider: provider,
+            decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+    }
+
+    /// A 16-bit-per-component bitmap, which is what ImageIO produces for a 16-bit JPEG and what
+    /// Core Animation would have to narrow on the main thread.
+    private static func deepImage() -> CGImage? {
+        let info = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue
+        guard
+            let context = CGContext(
+                data: nil, width: 8, height: 6, bitsPerComponent: 16, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info)
+        else { return nil }
+        for row in 0..<6 {
+            for column in 0..<8 {
+                let value = CGFloat((row * 40 + column * 30) % 256) / 255
+                context.setFillColor(CGColor(red: value, green: 1 - value, blue: 0.5, alpha: 1))
+                context.fill(CGRect(x: column, y: row, width: 1, height: 1))
+            }
+        }
+        return context.makeImage()
+    }
+
     /// N photos in one folder, ids 1...n, which is what `ImageProvider.open` wants.
-    static func shoot(count: Int) -> (folder: URL, photos: [PhotoMeta]) {
-        let folder = folder()
+    static func shoot(count: Int) -> (folder: URL, photos: [PhotoMeta]) {        let folder = folder()
         var photos: [PhotoMeta] = []
         for index in 0..<count {
             let name = "IMG_\(String(format: "%04d", index)).jpg"
@@ -401,9 +452,76 @@ struct ImageProviderTests {
         #expect(thumb.width <= 64)
         #expect(thumb.height <= 64)
         let full = try #require(
-            DecodeEngine.decodeFull(url: shoot.folder.appendingPathComponent("IMG_0000.jpg")))
+            DecodeEngine.decodeDisplay(
+                url: shoot.folder.appendingPathComponent("IMG_0000.jpg"), maxPixel: 400))
         #expect(full.width == 400)
         #expect(full.height == 300)
+    }
+
+    /// Every cached bitmap must be in the layout Core Animation can use without converting it.
+    ///
+    /// This is what makes §7.5's "display = pointer swap" true rather than aspirational. ImageIO
+    /// hands back whatever the file's own colour description implies, and Core Animation converts
+    /// anything else to the display's format *inside the commit* — which is the commit the
+    /// key-to-frame interval closes on. So the conversion belongs in the decode queue, once, and this
+    /// test is what stops it being quietly dropped again: a decoded image in a foreign layout is a
+    /// silent regression, not a crash.
+    @Test("Decoded bitmaps are in the layout a layer can take without a conversion (todo.md §7.5)")
+    func cachedBitmapsAreInDisplayLayout() throws {
+        let shoot = ImageFixtures.shoot(count: 1)
+        let url = shoot.folder.appendingPathComponent("IMG_0000.jpg")
+        let length = UInt64(
+            try #require(
+                FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)
+                .intValue)
+
+        for (what, image) in [
+            ("thumbnail", DecodeEngine.decodeThumbnail(url: url, maxPixel: 256)),
+            ("container decode", DecodeEngine.decodeDisplay(url: url, maxPixel: 400)),
+            (
+                "byte-range decode",
+                DecodeEngine.decodeDisplay(
+                    byteRange: ByteRange(offset: 0, len: length), in: url, maxPixel: 400)),
+            ("rotated decode", DecodeEngine.decodeDisplay(url: url, orientation: 8, maxPixel: 400)),
+        ] {
+            let decoded = try #require(image, "\(what) should decode")
+            #expect(
+                DecodeEngine.isDisplayLayout(decoded),
+                """
+                \(what) is \(decoded.width)×\(decoded.height), \
+                \(decoded.bitsPerComponent)bpc/\(decoded.bitsPerPixel)bpp, \
+                alpha \(decoded.alphaInfo.rawValue), info \(decoded.bitmapInfo.rawValue) — \
+                Core Animation will convert this on the main thread during the commit.
+                """)
+        }
+    }
+
+    /// The normalisation itself: a foreign layout becomes the display layout with the same pixels,
+    /// an already-correct one is returned untouched, and a 16-bit decode is narrowed to 8.
+    @Test("Normalising to the display layout preserves the pixels and skips a needless redraw")
+    func normalisingPreservesPixels() throws {
+        // 32-bit, but RGBA rather than BGRX: legal, common, and a conversion on every commit.
+        let rgba = try #require(ImageFixtures.image(bitsPerComponent: 8, alpha: .premultipliedLast))
+        #expect(DecodeEngine.isDisplayLayout(rgba) == false)
+        let normalised = DecodeEngine.inDisplayLayout(rgba)
+        #expect(DecodeEngine.isDisplayLayout(normalised))
+        #expect(normalised.width == rgba.width)
+        #expect(normalised.height == rgba.height)
+        #expect(identical(normalised, rgba), "a colour conversion at 1:1 must not change the picture")
+
+        // 16 bits per component: the case ImageIO actually produces for a 16-bit JPEG, and the one
+        // that costs the most to convert on the display thread.
+        let deep = try #require(ImageFixtures.image(bitsPerComponent: 16, alpha: .noneSkipFirst))
+        #expect(DecodeEngine.isDisplayLayout(deep) == false)
+        let narrowed = try #require(DecodeEngine.inDisplayLayout(deep))
+        #expect(narrowed.bitsPerComponent == 8)
+        #expect(DecodeEngine.isDisplayLayout(narrowed))
+
+        // Already right: the same object comes back, so the common path costs one comparison.
+        let already = try #require(
+            ImageFixtures.image(bitsPerComponent: 8, alpha: .noneSkipFirst, littleEndian: true))
+        #expect(DecodeEngine.isDisplayLayout(already))
+        #expect(DecodeEngine.inDisplayLayout(already) === already)
     }
 
     /// The byte-range read must produce the *same pixels* as reading the container.
@@ -417,7 +535,7 @@ struct ImageProviderTests {
     func byteRangeDecodeMatchesTheContainerDecode() throws {
         let shoot = ImageFixtures.shoot(count: 1)
         let url = shoot.folder.appendingPathComponent("IMG_0000.jpg")
-        let fromContainer = try #require(DecodeEngine.decodeFull(url: url))
+        let fromContainer = try #require(DecodeEngine.decodeDisplay(url: url, maxPixel: 400))
         let length = UInt64(
             try #require(
                 FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)
@@ -426,7 +544,8 @@ struct ImageProviderTests {
 
         // The whole file is a range that covers exactly one JPEG, so it must give the same picture.
         let whole = ByteRange(offset: 0, len: length)
-        let fromRange = try #require(DecodeEngine.decodeFull(byteRange: whole, in: url))
+        let fromRange = try #require(
+            DecodeEngine.decodeDisplay(byteRange: whole, in: url, maxPixel: 400))
         #expect(fromRange.width == fromContainer.width)
         #expect(fromRange.height == fromContainer.height)
         #expect(
@@ -443,13 +562,13 @@ struct ImageProviderTests {
             ByteRange(offset: 0, len: 0),  // empty
         ] {
             #expect(
-                DecodeEngine.decodeFull(byteRange: range, in: url) == nil,
+                DecodeEngine.decodeDisplay(byteRange: range, in: url, maxPixel: 400) == nil,
                 "a partial or out-of-bounds range must not produce an image: \(range)")
         }
 
         // A file that does not exist at all, rather than a file with no JPEG in it.
         let missing = shoot.folder.appendingPathComponent("IMG_9999.jpg")
-        #expect(DecodeEngine.decodeFull(byteRange: whole, in: missing) == nil)
+        #expect(DecodeEngine.decodeDisplay(byteRange: whole, in: missing, maxPixel: 400) == nil)
     }
 
     /// A display decode is served from the reported byte range when there is one.
@@ -472,6 +591,110 @@ struct ImageProviderTests {
         #expect(
             provider.byteRangeDecodes == 1,
             "the reported range should have served the decode, not the container")
+    }
+
+    /// T2 is decoded at the viewer's backing size, and T3 at the photograph's own size when zoomed.
+    ///
+    /// This is todo.md §7.1's T2/T3 split as a rule, and it is pure arithmetic over the focus
+    /// request — no decoder involved — because the mistake it prevents (decoding 6000 px for a
+    /// 2000 px window, or 2000 px for a 100% zoom) is a memory and sharpness bug, not a crash.
+    @Test("The display window is decoded at the viewer's size, and at full size when zoomed (§7.1)")
+    func displayEdgesFollowTheViewport() {
+        let ids: [PhotoID] = [10, 11, 12, 13]
+        let edges = Dictionary(uniqueKeysWithValues: ids.map { ($0, 6000) })
+        let viewport = CGSize(width: 2880, height: 1800)
+
+        let fitted = ImageProvider.displayEdges(
+            current: 11, ids: ids, photoEdges: edges, viewport: viewport, zoomed: false, zoomLock: false)
+        #expect(Set(fitted.values) == [2880], "T2 is the viewer's backing size: \(fitted)")
+
+        // Zoomed: the frame on screen is T3. The neighbours stay at T2, because 92 MB a photo is not
+        // a thing to hold for the whole window.
+        let zoomed = ImageProvider.displayEdges(
+            current: 11, ids: ids, photoEdges: edges, viewport: viewport, zoomed: true, zoomLock: false)
+        #expect(zoomed[11] == 6000)
+        #expect(zoomed[10] == 2880 && zoomed[12] == 2880)
+
+        // Zoom lock exists to compare a burst at 100%, so the frame the user arrows to is T3 too —
+        // and only that one, or holding → through a burst would fill the cache with 92 MB frames.
+        let locked = ImageProvider.displayEdges(
+            current: 11, ids: ids, photoEdges: edges, viewport: viewport, zoomed: true, zoomLock: true)
+        #expect(locked[11] == 6000)
+        #expect(locked[12] == 6000, "the next frame in the window, which is the next one ⇧→ lands on")
+        #expect(locked[10] == 2880 && locked[13] == 2880)
+
+        // No viewport yet: a plausible full-screen size rather than nothing, because "no size" would
+        // decode the full 6000 px for a window that has not been laid out.
+        let unlaid = ImageProvider.displayEdges(
+            current: 11, ids: ids, photoEdges: edges, viewport: .zero, zoomed: false, zoomLock: false)
+        #expect(Set(unlaid.values) == [ImageProvider.fallbackDisplayEdge])
+
+        // A file smaller than the window is asked for at its own size, never padded.
+        let small = ImageProvider.displayEdges(
+            current: 1, ids: [1], photoEdges: [1: 800], viewport: viewport, zoomed: true, zoomLock: false)
+        #expect(small[1] == 800)
+    }
+
+    /// A window that grows re-decodes, and the old picture stays on screen meanwhile.
+    ///
+    /// todo.md §7.1 asks for exactly this: "Re-decode T2 when the window/screen size changes
+    /// (debounced), **keeping old bitmaps visible until new ones are ready**". The second half is the
+    /// part that is easy to get wrong — returning nil for a too-small-but-present entry would blank
+    /// the viewer for a tenth of a second on every resize, which looks exactly like a stutter.
+    @Test("Growing the window re-decodes and keeps the old bitmap on screen (§7.1)")
+    func aResizeKeepsTheOldBitmapAndDecodesBigger() async throws {
+        let shoot = ImageFixtures.shoot(count: 1)
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20)
+        provider.open(folder: shoot.folder, photos: shoot.photos)
+        let id = shoot.photos[0].id
+
+        provider.setFocus(
+            FocusRequest(
+                windows: [FocusWindow(batchID: 1, photoIDs: [id])], currentPhoto: id,
+                viewportPixelSize: CGSize(width: 200, height: 150)))
+        #expect(await provider.waitUntilIdle())
+        let small = try #require(provider.displayImage(for: id))
+        #expect(max(small.width, small.height) == 200, "T2 was decoded at the window's size")
+        #expect(provider.stats.displayResizes == 0)
+
+        // The window grows. The ask for the bigger size is answered with the *old* picture...
+        let hitsBefore = provider.stats.displayCacheHits
+        #expect(
+            try #require(provider.displayImage(for: id, minimumLongestEdge: 400)) === small,
+            "a resize must not blank the viewer")
+        #expect(provider.stats.displayResizes == 1, "and it is counted, because it is a resize")
+        #expect(
+            provider.stats.displayCacheHits == hitsBefore,
+            "a too-small entry is a resize, not a hit")
+
+        // ...and the bigger decode is scheduled, which then replaces it.
+        #expect(await provider.waitUntilIdle())
+        let grown = try #require(provider.displayImage(for: id, minimumLongestEdge: 400))
+        #expect(max(grown.width, grown.height) == 400)
+        #expect(grown !== small)
+        // And that ask was a plain cache hit, because the new entry covers it — the resize counted
+        // once, the hit counted once, and nothing else moved.
+        #expect(provider.stats.displayCacheHits == hitsBefore + 1)
+        #expect(provider.stats.displayResizes == 1)
+    }
+
+    /// A display decode comes back at the size that was asked for, not the file's full size.
+    @Test("A display decode is sized to the request, not to the file")
+    func displayDecodesAtTheRequestedSize() async throws {
+        let shoot = ImageFixtures.shoot(count: 1)
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20)
+        provider.open(folder: shoot.folder, photos: shoot.photos)
+        let id = shoot.photos[0].id
+
+        // A 400 px JPEG asked for at 200: ImageIO subsamples, so the answer is 200 px and the
+        // memory budget is spent on what the layer shows.
+        #expect(provider.displayImage(for: id, minimumLongestEdge: 200) == nil)
+        #expect(await provider.waitUntilIdle())
+        let image = try #require(provider.displayImage(for: id, minimumLongestEdge: 200))
+        #expect(max(image.width, image.height) == 200)
+        #expect(DecodeEngine.isDisplayLayout(image))
+        // One decode, not two: the smaller ask afterwards is satisfied by the same entry.
+        #expect(provider.stats.displayDecodes == 1)
     }
 }
 

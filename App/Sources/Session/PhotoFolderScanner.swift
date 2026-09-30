@@ -9,11 +9,19 @@
 //
 // Verified on `~/Documents/testing/Game1JENKS/IMG_3181.CR3` (Canon EOS R8, body 122022006902):
 // ImageIO returns 6000 × 4000, orientation 8, `DateTimeOriginal` 2026:08:27 19:54:49 with
-// `SubsecTimeOriginal` 84, 200 mm ƒ/2.8 at 1/2000 s, ISO 800, EF70-200mm f/2.8L IS II USM.
+// `SubsecTimeOriginal` 84, 200 mm ƒ/2.8 at 1/2000 s, EF70-200mm f/2.8L IS II USM.
 //
-// Two things it deliberately does **not** fake:
-// - `shutterCount`, `driveMode` and `shutterMode` are not in the EXIF ImageIO exposes. `nil` and a
-//   "—" in the info panel, rather than a plausible-looking number.
+// **Not** the ISO, despite what an earlier version of this comment claimed: ImageIO does not expose
+// `kCGImagePropertyExifISOSpeedRatings` for a CR3 on this OS, so `iso` comes back nil here. The Rust
+// core reads it (CMT2, tag 0x8827) and the shipped app uses the core, so the info panel is correct in
+// the app and empty only in a mock shoot. Measured, not assumed:
+// `RealRawDecodeTests.testAFolderOfCR3sScansBatchesPrefetchesAndAnswersFromCache` goes through the
+// core and asserts the ISO, the shutter count and the full-preview byte range all arrive.
+//
+// Three things it deliberately does **not** fake:
+// - `shutterCount`, `driveMode` and `shutterMode` are not in the EXIF ImageIO exposes, and neither is
+//   a CR3's ISO (see above). `nil` and a "—" in the info panel, rather than a plausible-looking
+//   number.
 // - `EmbeddedPreview.range` needs the byte offset of the embedded JPEG inside the CR3 container,
 //   which is core-meta's job (`PhotoMeta.preview`). `nil` here; the pipeline opens files by
 //   `PhotoID` → path, so nothing depends on it yet.

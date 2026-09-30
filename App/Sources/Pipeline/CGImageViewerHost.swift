@@ -53,6 +53,14 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
   /// tests, which is why every call site tolerates it.
   var onFramePresented: ((PresentedFrame) -> Void)?
 
+  /// See `PhotoViewerHost.onViewportPixelSize`: this host's frame in **backing pixels**, which is
+  /// what the pipeline has to decode T2 at.
+  var onViewportPixelSize: ((CGSize) -> Void)?
+
+  /// The last size reported, so a resize is not re-reported on every `layout()` and the debug HUD can
+  /// show what the decode is being sized from.
+  private(set) var reportedViewportPixels: CGSize = .zero
+
   /// Set by Compare: the other panes follow whatever the user does to this one.
   var syncGroup: ViewerSyncGroup?
 
@@ -125,12 +133,40 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
 
   func setViewportSize(_ size: CGSize) {
     // A size change is a transform, not a decode: §7.1's budget is about decodes.
+    reportViewportSize()
     layoutImage(animated: false)
   }
 
   override func layout() {
     super.layout()
+    reportViewportSize()
     layoutImage(animated: false)
+  }
+
+  /// Tells the model how many pixels this view covers, so T2 is decoded at exactly that size
+  /// (todo.md §7.2: no double resampling, no GPU minification blur). Reported on every layout but
+  /// only *sent* when it changes, because `layout()` runs constantly and a window resize storm
+  /// would otherwise re-report the size on every pass.
+  private func reportViewportSize() {
+    guard bounds.width > 0, bounds.height > 0 else { return }
+    let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    let pixels = CGSize(
+      width: (bounds.width * scale).rounded(), height: (bounds.height * scale).rounded())
+    guard pixels != reportedViewportPixels else { return }
+    reportedViewportPixels = pixels
+    onViewportPixelSize?(pixels)
+  }
+
+  /// The longest edge the display bitmap has to have for what this view is showing right now:
+  /// the window's own pixels when the photograph is fitted to it, and the photograph's own pixels at
+  /// 100% — which is todo.md §7.1's T3, and the only thing that makes 100% honest now that T2 is
+  /// smaller than the file.
+  private var neededEdge: Int {
+    guard zoom > 1.001 else {
+      return Int(max(reportedViewportPixels.width, reportedViewportPixels.height).rounded(.up))
+    }
+    let photoEdge = max(presentation.pixelSize.width, presentation.pixelSize.height)
+    return photoEdge > 0 ? Int(photoEdge.rounded(.up)) : 0
   }
 
   // MARK: - Presentation
@@ -151,7 +187,7 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     // * the read is observed, so the full decode replaces the thumbnail the moment it lands.
     var decoded: CGImage?
     withObservationTracking {
-      decoded = images.displayImage(for: id)
+      decoded = images.displayImage(for: id, minimumLongestEdge: neededEdge)
     } onChange: { [weak self] in
       Task { @MainActor [weak self] in
         guard let self, self.photoID == id, !self.showsFullImage else { return }
@@ -192,11 +228,17 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     return CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale)
   }
 
-  /// `zoom` at which one image pixel is one screen pixel: 100%.
+  /// `zoom` at which one **photograph** pixel is one screen pixel: 100%.
+  ///
+  /// From `presentation.pixelSize`, not from the bitmap: T2 is decoded at the viewer's size, so a
+  /// view that took the bitmap's own width would report a 3000 px half-size photograph as 100% and
+  /// the user would see a soft picture labelled as the sharpest thing the app can show.
   private var oneToOne: CGFloat {
     guard let image, fitSize.width > 0 else { return 1 }
     let pointsPerPixel = 1 / (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
-    return max(1, CGFloat(image.width) * pointsPerPixel / fitSize.width)
+    let photoWidth =
+      presentation.pixelSize.width > 0 ? presentation.pixelSize.width : CGFloat(image.width)
+    return max(1, photoWidth * pointsPerPixel / fitSize.width)
   }
 
   private var maxZoom: CGFloat { max(oneToOne * 3, 4) }

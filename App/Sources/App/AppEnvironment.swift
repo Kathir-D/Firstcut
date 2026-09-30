@@ -95,6 +95,9 @@ final class AppEnvironment {
       // intervals (todo.md §7.3): the model opens them, and only a committed frame can close them.
       // Weak, so a torn-down window cannot keep the model alive.
       host.onFramePresented = { [weak model] frame in model?.frameDidPresent(frame) }
+      // The opening end of the same story: the viewer is the only thing that knows how many pixels
+      // it covers, and T2 is decoded at exactly that many (todo.md §7.1/§7.2).
+      host.onViewportPixelSize = { [weak model] size in model?.setViewportPixelSize(size) }
       return host
     }
 

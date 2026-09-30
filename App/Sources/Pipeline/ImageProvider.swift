@@ -77,6 +77,11 @@ public struct PipelineStats: Equatable, Sendable {
     public var focusSize: Int = 0
     /// Times a system memory-pressure warning made the cache drop everything outside the focus.
     public var pressureSheds: Int = 0
+    /// Display bitmaps that were cached but **smaller than the viewer needs**, so a window resize
+    /// or a zoom to 100% asked for more and got the old picture back while the bigger decode ran.
+    /// Not a focus miss — nothing was decoded on demand by navigating — but the counter that says
+    /// "T2 is being decoded at the wrong size" (todo.md §7.1).
+    public var displayResizes: Int = 0
 
     public init() {}
 }
@@ -107,9 +112,17 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
     /// upside down in the viewer.
     private(set) var orientations: [PhotoID: UInt8] = [:]
 
+    /// Each photo's longest stored edge, from the scan. The decode size is capped at it, because
+    /// asking ImageIO for 3456 px of a 1200 px JPEG only wastes the comparison.
+    private(set) var longestEdges: [PhotoID: Int] = [:]
+
     /// The folder the cache belongs to. Decides whether `open` is a new shoot (drop everything) or
     /// the same shoot with files added or removed (keep what is still there).
     private var folder: URL?
+
+    /// The viewer's backing size, in pixels, as of the last focus report. Zero until the window
+    /// reports one, and a view's on-demand ask is answered at the fallback until then.
+    private var viewportPixelSize: CGSize = .zero
 
     /// Where each photo's **full-resolution** JPEG lives, as the file it is in plus the byte range
     /// inside it. Read from the core's `PhotoMeta.fullPreview` (todo.md §7.5, fact 1).
@@ -165,7 +178,8 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         engine = DecodeEngine(
             memoryBudgetBytes: memoryBudgetBytes,
             maxConcurrent: max(1, maxConcurrentDecodes),
-            prefetchPixels: self.prefetchPixels)
+            prefetchPixels: self.prefetchPixels,
+            defaultDisplayEdge: Self.fallbackDisplayEdge)
         // Assigned rather than passed, because the closure needs `self` and `self` needs the
         // engine. The hop to the main actor happens here, once, so no other file knows about it.
         engine.onLand = { [weak self] id in
@@ -204,6 +218,9 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         let newOrientations = Dictionary(
             photos.map { ($0.id, $0.orientation) },
             uniquingKeysWith: { first, _ in first })
+        let newLongestEdges = Dictionary(
+            photos.map { ($0.id, Int(max($0.width, $0.height))) },
+            uniquingKeysWith: { max($0, $1) })
         engine.beginShoot(
             urls: newFiles,
             orientations: newOrientations,
@@ -212,6 +229,7 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
             sameFolder: self.folder == folder)
         files = newFiles
         orientations = newOrientations
+        longestEdges = newLongestEdges
         fullPreviewRanges = Dictionary(
             photos.compactMap { meta -> (PhotoID, (url: URL, range: ByteRange))? in
                 guard let preview = meta.fullPreview, let url = newFiles[meta.id] else { return nil }
@@ -226,6 +244,7 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         engine.reset()
         files = [:]
         orientations = [:]
+        longestEdges = [:]
         fullPreviewRanges = [:]
         folder = nil
         generation &+= 1
@@ -243,14 +262,66 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         where seen.insert(id).inserted {
             ordered.append(id)
         }
+        // The last size the window reported, so an on-demand ask from a view (which knows nothing
+        // about the focus request) still decodes at the right size.
+        if focus.viewportPixelSize != .zero { viewportPixelSize = focus.viewportPixelSize }
+        engine.setDefaultDisplayEdge(t2Edge)
+        let displayIDs = displayPrefetchIDs(current: focus.currentPhoto, windows: focus.windows)
         engine.setFocus(
             ids: ordered,
-            displayIDs: displayPrefetchIDs(current: focus.currentPhoto, windows: focus.windows),
+            displayIDs: displayIDs,
+            displaySizes: Self.displayEdges(
+                current: focus.currentPhoto, ids: displayIDs, photoEdges: longestEdges,
+                viewport: focus.viewportPixelSize, zoomed: focus.zoomed, zoomLock: focus.zoomLock),
             urls: files, orientations: orientations,
             fullPreviews: Dictionary(
                 fullPreviewRanges.map { ($0.key, $0.value.range) },
                 uniquingKeysWith: { first, _ in first }))
     }
+
+    /// The longest edge each display bitmap in the focus window should have, in pixels.
+    ///
+    /// todo.md §7.1's tiers, as a rule rather than as prose: **T2 is the viewer's backing size**,
+    /// because that is the number of pixels the layer will actually show and decoding more is
+    /// memory spent on detail nobody can see. **T3 is the photograph's own size**, asked only for
+    /// the frame being looked at while zoomed — and, with zoom lock, for the frame the user is
+    /// about to arrow to, since zoom lock exists so a burst can be compared at 100% and a soft
+    /// frame in the middle of it defeats the point. That is two photos at 92 MB, which is the whole
+    /// T3 tier; the rest of the window stays at T2.
+    ///
+    /// `viewport` is in **backing pixels** (the caller multiplies by the display's scale factor), so
+    /// there is no scale here and no second place to get it wrong. A zero viewport — the window has
+    /// not laid out yet — falls back to `fallbackDisplayEdge`, which is a plausible full-screen
+    /// viewer on any of the machines this ships to: too big costs memory for a moment, too small
+    /// costs a visible soft first frame and a second decode.
+    static func displayEdges(
+        current: PhotoID, ids: [PhotoID], photoEdges: [PhotoID: Int], viewport: CGSize,
+        zoomed: Bool, zoomLock: Bool
+    ) -> [PhotoID: Int] {
+        let viewportEdge = max(viewport.width, viewport.height)
+        let t2 = viewportEdge > 0
+            ? max(Self.minimumDisplayEdge, Int(viewportEdge.rounded(.up)))
+            : Self.fallbackDisplayEdge
+        var full: Set<PhotoID> = []
+        if zoomed {
+            full.insert(current)
+            if zoomLock, let index = ids.firstIndex(of: current), ids.indices.contains(index + 1) {
+                full.insert(ids[index + 1])
+            }
+        }
+        var edges: [PhotoID: Int] = [:]
+        for id in ids {
+            let photoEdge = max(photoEdges[id] ?? t2, Self.minimumDisplayEdge)
+            edges[id] = min(max(full.contains(id) ? photoEdge : t2, Self.minimumDisplayEdge), photoEdge)
+        }
+        return edges
+    }
+
+    /// ImageIO's own floor, and the same floor `decodeThumbnail` uses.
+    static let minimumDisplayEdge = 64
+    /// What T2 is decoded at before the window has reported a size: a 2048 px viewer is a
+    /// full-screen fit on every display this ships to, at 10 MB a photo.
+    static let fallbackDisplayEdge = 2048
 
     /// The windows ordered the way the user reaches them (task.md §7.1): the current batch, then
     /// the next, then the previous, then further out, next before previous at each distance.
@@ -289,16 +360,33 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
             url: files[id])
     }
 
-    func displayImage(for id: PhotoID) -> CGImage? {
+    /// The display bitmap, at least `minimumLongestEdge` pixels on its longest side.
+    ///
+    /// The size is the viewer's, not a guess: a view that knows it is showing the picture at 100%
+    /// asks for the photograph's own pixels, and one that is fitting it to the window asks for the
+    /// window's. Zero asks for T2, which is the right answer for a view that has not been laid out
+    /// yet and the only one available to a caller that does not track zoom.
+    func displayImage(for id: PhotoID, minimumLongestEdge: Int = 0) -> CGImage? {
         _ = generation
         return engine.display(
-            id, url: files[id], orientation: orientations[id] ?? 1,
+            id, minimumLongestEdge: minimumLongestEdge > 0 ? minimumLongestEdge : t2Edge,
+            url: files[id], orientation: orientations[id] ?? 1,
             fullPreview: fullPreviewRanges[id]?.range)
     }
 
     func histogram(for id: PhotoID) -> CullHistogram? {
         _ = generation  // the info panel redraws when the display image it bins arrives
         return engine.histogram(id, url: files[id], fullPreview: fullPreviewRanges[id]?.range)
+    }
+
+    /// The edge an on-demand ask is answered at when the caller does not say: the viewer's backing
+    /// size, or the fallback before the window has reported one. Split out because the focus path
+    /// and the view path must agree — a prefetch at 3000 px and an on-demand ask at 6000 px would
+    /// decode the same photograph twice and call one of them a cache miss.
+    var t2Edge: Int {
+        let edge = max(viewportPixelSize.width, viewportPixelSize.height)
+        return edge > 0 ? max(Self.minimumDisplayEdge, Int(edge.rounded(.up)))
+            : Self.fallbackDisplayEdge
     }
 
     /// What a system memory-pressure warning does; public so a test can trigger it.
@@ -351,6 +439,10 @@ final class DecodeEngine: @unchecked Sendable {
         var id: PhotoID
         var url: URL
         var kind: Kind
+        /// For a thumbnail, the longest edge to decode. For a **display** job, the longest edge the
+        /// viewer needs: T2 at the viewer's backing size, T3 at the photograph's own size when
+        /// zoomed. Zero means "whatever the view asked for", which only happens for a photo with no
+        /// reported size.
         var maxPixel: Int
         var priority: Int
         /// EXIF orientation, applied on the full read only. Part of the key: the same photo at the
@@ -378,6 +470,9 @@ final class DecodeEngine: @unchecked Sendable {
     private struct Entry {
         let image: CGImage
         let bytes: Int
+        /// The longest edge the decode was asked for. A display entry is only good for a viewer
+        /// smaller than this; anything larger is a resize, not a hit (todo.md §7.1).
+        let pixels: Int
         var stamp: UInt64
     }
 
@@ -390,6 +485,9 @@ final class DecodeEngine: @unchecked Sendable {
     private let maxConcurrent: Int
     private let budgetBytes: Int
     let prefetchPixels: Int
+    /// The size a display decode is queued at when the caller does not say. Set by the provider from
+    /// the viewer's backing size, so the engine and the provider cannot disagree about what T2 is.
+    private var defaultDisplayEdge: Int
     /// Set by the provider after construction: called on the decoding thread when a job lands.
     var onLand: (@Sendable (PhotoID) -> Void)?
     /// Called on the decoding thread after a display decode, with whether it was served from the
@@ -415,11 +513,19 @@ final class DecodeEngine: @unchecked Sendable {
     private var bytes = 0
     private var counters = PipelineStats()
 
-    init(memoryBudgetBytes: Int, maxConcurrent: Int, prefetchPixels: Int) {
+    init(memoryBudgetBytes: Int, maxConcurrent: Int, prefetchPixels: Int, defaultDisplayEdge: Int) {
         self.maxConcurrent = max(1, maxConcurrent)
         self.budgetBytes = max(1, memoryBudgetBytes)
         self.prefetchPixels = max(16, prefetchPixels)
+        self.defaultDisplayEdge = max(16, defaultDisplayEdge)
         watchMemoryPressure()
+    }
+
+    /// T2 moved. Called on every focus report, which is every window resize.
+    func setDefaultDisplayEdge(_ edge: Int) {
+        lock.lock()
+        defaultDisplayEdge = max(16, edge)
+        lock.unlock()
     }
 
     deinit {
@@ -475,8 +581,8 @@ final class DecodeEngine: @unchecked Sendable {
     /// The ids that must never be decoded on demand, and the prefetch that makes that true.
     @MainActor
     func setFocus(
-        ids: [PhotoID], displayIDs: [PhotoID], urls: [PhotoID: URL],
-        orientations: [PhotoID: UInt8] = [:],
+        ids: [PhotoID], displayIDs: [PhotoID], displaySizes: [PhotoID: Int] = [:],
+        urls: [PhotoID: URL], orientations: [PhotoID: UInt8] = [:],
         fullPreviews: [PhotoID: ByteRange] = [:]
     ) {
         let interval = SignpostInterval.begin(Signposts.setFocus)
@@ -500,7 +606,8 @@ final class DecodeEngine: @unchecked Sendable {
         // `countsAsFocusMiss: false` on both: the prefetch *is* the thing that prevents a focus
         // miss, so counting it would make the guarantee impossible to satisfy by construction.
         for id in displayIDs {
-            _ = display(id, url: urls[id], orientation: orientations[id] ?? 1,
+            _ = display(id, minimumLongestEdge: displaySizes[id] ?? 0, url: urls[id],
+                        orientation: orientations[id] ?? 1,
                         priority: rank[id] ?? 0, fullPreview: fullPreviews[id],
                         countsAsFocusMiss: false)
         }
@@ -627,24 +734,51 @@ final class DecodeEngine: @unchecked Sendable {
         return nil
     }
 
+    /// A display bitmap, at least `needed` pixels on its longest side.
+    ///
+    /// Three answers, and which one is correct depends on what is in the cache:
+    ///
+    /// * **big enough** — a hit, returned as is;
+    /// * **present but too small** — returned *anyway*, so a window resize or a zoom to 100% never
+    ///   blanks the viewer while the bigger decode runs, and the bigger decode is scheduled. This is
+    ///   todo.md §7.1's "re-decode on resize, keeping old bitmaps visible until new ones are ready",
+    ///   and `displayResizes` is the counter for it. It is deliberately **not** a focus miss: nothing
+    ///   was decoded on demand by navigating, the photographer is looking at the same photograph;
+    /// * **absent** — a miss, `focusMisses` if it is in the focus window, and nil so the view shows
+    ///   the 256 px stand-in rather than nothing.
     @MainActor
     func display(
-        _ id: PhotoID, url: URL?, orientation: UInt8 = 1, priority: Int = 0,
-        fullPreview: ByteRange? = nil, countsAsFocusMiss: Bool = true
+        _ id: PhotoID, minimumLongestEdge needed: Int = 0, url: URL?, orientation: UInt8 = 1,
+        priority: Int = 0, fullPreview: ByteRange? = nil, countsAsFocusMiss: Bool = true
     ) -> CGImage? {
         lock.lock()
+        // Zero means "whatever T2 is", which is what the histogram's ask and a view that has not
+        // been laid out both mean. Resolved here so the engine and the provider cannot disagree.
+        let wanted = max(needed > 0 ? needed : defaultDisplayEdge, 1)
         clock &+= 1
         if var entry = displays[id] {
+            let bigEnough = entry.pixels >= wanted || entry.image.longestEdge >= Double(wanted)
             entry.stamp = clock
             displays[id] = entry
-            counters.displayCacheHits += 1
+            let queued = (!bigEnough && url != nil)
+                ? enqueueLocked(
+                    Job(id: id, url: url!, kind: .display, maxPixel: wanted, priority: priority,
+                        orientation: orientation, fullPreview: fullPreview))
+                : false
+            if bigEnough {
+                counters.displayCacheHits += 1
+                lock.unlock()
+                return entry.image
+            }
+            counters.displayResizes += 1
             lock.unlock()
+            if queued { pump() }
             return entry.image
         }
         if countsAsFocusMiss, focus.contains(id) { counters.focusMisses += 1 }
         let queued = url.map {
             enqueueLocked(
-                Job(id: id, url: $0, kind: .display, maxPixel: 0, priority: priority,
+                Job(id: id, url: $0, kind: .display, maxPixel: wanted, priority: priority,
                     orientation: orientation, fullPreview: fullPreview))
         } ?? false
         lock.unlock()
@@ -748,7 +882,8 @@ final class DecodeEngine: @unchecked Sendable {
         }
         let interval = SignpostInterval.begin(Signposts.decodeDisplay)
         guard
-            let image = decodeFromBytes(range, in: job.url, orientation: job.orientation)
+            let image = decodeFromBytes(
+                range, in: job.url, orientation: job.orientation, maxPixel: job.maxPixel)
         else {
             // The range was there but the bytes were not a JPEG we could read. Fall back rather than
             // show nothing: a stale range is a display bug, an empty viewer is a crash.
@@ -765,18 +900,20 @@ final class DecodeEngine: @unchecked Sendable {
     /// The display decode from the reported byte range, nested inside `decodeDisplay` so a trace can
     /// tell it apart from the container read and compare the two — which is the whole claim in §7.5.
     private func decodeFromBytes(
-        _ range: ByteRange, in url: URL, orientation: UInt8
+        _ range: ByteRange, in url: URL, orientation: UInt8, maxPixel: Int
     ) -> CGImage? {
         let interval = SignpostInterval.begin(Signposts.decodeFromBytes)
         defer { interval.end() }
-        return Self.decodeFull(byteRange: range, in: url, orientation: orientation)
+        return Self.decodeDisplay(
+            byteRange: range, in: url, orientation: orientation, maxPixel: maxPixel)
     }
 
     private func decodeFromContainer(_ job: Job) -> CGImage? {
         let interval = SignpostInterval.begin(Signposts.decodeDisplay)
         defer { interval.end() }
         onByteRange?(false)
-        return Self.decodeFull(url: job.url, orientation: job.orientation)
+        return Self.decodeDisplay(
+            url: job.url, orientation: job.orientation, maxPixel: job.maxPixel)
     }
 
     private func takeNext() -> Job? {
@@ -807,12 +944,23 @@ final class DecodeEngine: @unchecked Sendable {
         }
         inFlight.remove(Key(id: job.id, kind: job.kind))
         if let image {
-            let entry = Entry(image: image, bytes: image.pixelBytes, stamp: clock)
+            // The size the *pixels* have, not the size that was asked for: a file smaller than the
+            // request comes back at its own size, and recording the request would make a 1200 px JPEG
+            // look like a 3456 px T2 to every later reader.
+            let entry = Entry(
+                image: image, bytes: image.pixelBytes,
+                pixels: max(job.maxPixel, Int(image.longestEdge)), stamp: clock)
             switch job.kind {
             case .thumbnail:
                 counters.thumbnailDecodes += 1
                 insert(&thumbnails, job.id, entry)
             case .display:
+                // A decode that finished after a bigger one must not shrink the cache: the window
+                // grew while this was in flight, and putting the small one back would make every
+                // later ask a resize.
+                if let existing = displays[job.id], existing.pixels > entry.pixels {
+                    break
+                }
                 counters.displayDecodes += 1
                 insert(&displays, job.id, entry)
             }
@@ -889,7 +1037,11 @@ final class DecodeEngine: @unchecked Sendable {
         let key = Key(id: id, kind: .thumbnail)
         guard !inFlight.contains(key) else { return false }
         counters.thumbnailDecodes += 1
-        insert(&thumbnails, id, Entry(image: image, bytes: image.pixelBytes, stamp: clock))
+        insert(
+            &thumbnails, id,
+            Entry(
+                image: image, bytes: image.pixelBytes, pixels: max(image.width, image.height),
+                stamp: clock))
         evictLocked()
         return true
     }
@@ -920,33 +1072,50 @@ final class DecodeEngine: @unchecked Sendable {
     /// decode instead of decoding 24 MP and discarding most of it.
     static func decodeThumbnail(url: URL, maxPixel: Int) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(
-            source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceThumbnailMaxPixelSize: max(16, maxPixel),
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true,
-            ] as CFDictionary)
+        guard
+            let raw = CGImageSourceCreateThumbnailAtIndex(
+                source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceThumbnailMaxPixelSize: max(16, maxPixel),
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceShouldCacheImmediately: true,
+                ] as CFDictionary)
+        else { return nil }
+        return inDisplayLayout(raw)
     }
 
-    /// The full-resolution read for the loupe. This is the *camera's* preview, not a RAW decode: a
-    /// Canon R8 CR3's embedded JPEG is 6000×4000, i.e. the sensor's full size, so "100%" is
-    /// honest. A viewport-sized `decodeThumbnail` would be far cheaper to cache for fit-to-viewport
-    /// and is a one-line change if the 96 MB per photo ever matters more than the decode time.
+    /// The display read, at the size the viewer needs.
     ///
-    /// `kCGImageSourceShouldCacheImmediately` alone does **not** apply the EXIF orientation, and
-    /// 26 of Game1JENKS's 708 frames are orientation 8 (rotate 270°) — measured, not assumed. The
-    /// loupe rendered those upside down while the filmstrip, which goes through
-    /// `decodeThumbnail` with `kCGImageSourceCreateThumbnailWithTransform`, showed them right way
-    /// up, so the same photo appeared twice in two orientations. `CGImageSourceCreateImageAtIndex`
-    /// has no transform option, so the rotation is applied here from the parsed orientation.
-    static func decodeFull(url: URL, orientation: UInt8 = 1) -> CGImage? {
+    /// ## Why the thumbnail call and not `CreateImageAtIndex`
+    ///
+    /// Measured on a real CR3 (`RealRawDecodeTests.testDisplayDecodeCosts`, todo.md §7.5), a Canon
+    /// R8's embedded preview is 6000 × 4000, and the two ImageIO calls for it are not two spellings
+    /// of the same read:
+    ///
+    /// | call | pixels | decode | + layout fix | memory |
+    /// | --- | --- | --- | --- | --- |
+    /// | `CreateImageAtIndex` | 6000×4000, **16-bit**, Display P3 | ~850 ms | +850 ms | **183 MB** |
+    /// | `CreateThumbnailAtIndex`, 6000 | 6000×4000, 8-bit, sRGB | ~85 ms | +28 ms | 92 MB |
+    /// | `CreateThumbnailAtIndex`, 3456 | 3456×2304, 8-bit | ~156 ms | +10 ms | 30 MB |
+    /// | `CreateThumbnailAtIndex`, 3000 | 3000×2000, 8-bit | ~140 ms | +7 ms | 23 MB |
+    ///
+    /// So the old path was not merely "a full decode scaled by the layer": it decoded **16 bits per
+    /// component into a P3 space**, which is twice the memory of anything a display needs and costs
+    /// most of a second to narrow to 8-bit device RGB. The thumbnail call subsamples in the DCT and
+    /// hands back 8 bits, which is 6× faster at the same size and 5× faster *including* the layout
+    /// fix at 3456 px.
+    ///
+    /// `kCGImageSourceCreateThumbnailWithTransform` is deliberately **false**: the orientation is
+    /// applied by `applying(orientation:to:)` instead, so the byte-range and container paths stay
+    /// byte-for-byte comparable and there is one rotation in the codebase rather than two. The
+    /// thumbnail *pass* does set it, because that image is never rotated twice and the filmstrip
+    /// needs it right way up.
+    static func decodeDisplay(url: URL, orientation: UInt8 = 1, maxPixel: Int) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
         guard
-            let raw = CGImageSourceCreateImageAtIndex(
-                source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+            let raw = displayImage(at: source, maxPixel: maxPixel)
         else { return nil }
-        return applying(orientation: orientation, to: raw)
+        return inDisplayLayout(applying(orientation: orientation, to: raw))
     }
 
     /// The same read, from the JPEG's own bytes instead of from the CR3.
@@ -954,21 +1123,107 @@ final class DecodeEngine: @unchecked Sendable {
     /// `CGImageSourceCreateWithData` skips the container entirely: no ISO-BMFF walk, no track
     /// selection, no "which image is the preview" decision — all of which the core already made
     /// during the scan and reported as a byte range. todo.md §7.5 expects this to be the cheap path
-    /// for display decodes; `realPhotoDecodeCosts` in the integration suite is what proves it, and
-    /// `decodeFull(url:)` stays as the fallback for a file with no reported range.
+    /// for display decodes; the integration suite's byte-range test is what proves it, and
+    /// `decodeDisplay(url:…)` stays as the fallback for a file with no reported range.
     ///
     /// The bytes are read with a single `pread`-style `Data(contentsOf:options:)` on an unmapped
     /// file rather than `Data(contentsOf:)`, so a 3 MB range does not go through `mmap` and then get
     /// copied out of it.
-    static func decodeFull(byteRange: ByteRange, in url: URL, orientation: UInt8 = 1) -> CGImage? {
+    static func decodeDisplay(
+        byteRange: ByteRange, in url: URL, orientation: UInt8 = 1, maxPixel: Int
+    ) -> CGImage? {
         guard let data = readBytes(byteRange, in: url),
             let source = CGImageSourceCreateWithData(data as CFData, sourceOptions)
         else { return nil }
         guard
-            let raw = CGImageSourceCreateImageAtIndex(
-                source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+            let raw = displayImage(at: source, maxPixel: maxPixel)
         else { return nil }
-        return applying(orientation: orientation, to: raw)
+        return inDisplayLayout(applying(orientation: orientation, to: raw))
+    }
+
+    /// The one ImageIO call every display decode makes, whichever source it came from. Split out so
+    /// the container path and the byte-range path cannot drift apart in their options — they must
+    /// produce identical pixels, and a test asserts it.
+    private static func displayImage(at source: CGImageSource, maxPixel: Int) -> CGImage? {
+        CGImageSourceCreateThumbnailAtIndex(
+            source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: max(16, maxPixel),
+                kCGImageSourceCreateThumbnailWithTransform: false,
+                kCGImageSourceShouldCacheImmediately: true,
+            ] as CFDictionary)
+    }
+
+    // MARK: - The layout a layer can be handed without a copy
+    //
+    // todo.md §7.5's claim for the arrow-key row is "only a pointer swap on the main thread". That
+    // is only true if the bitmap is already in the layout Core Animation wants. ImageIO hands back
+    // whatever the file's own colour description implies — three components, 16 bits, a YCbCr-backed
+    // decode, an embedded ICC — and *any* of those makes Core Animation convert the image to the
+    // display's format during the very commit that the key-to-frame interval closes on. So the
+    // conversion is hoisted out of the commit and into the decode queue, where it happens on a
+    // background thread and is paid once instead of every time the frame is shown.
+    //
+    // It is not free: one extra buffer and one draw per decode, ~96 MB for a full-resolution CR3
+    // today. That is the trade §7.5 asks for, and it is only worth making because the alternative
+    // spends the same conversion on the main thread inside the navigation path.
+
+    /// 8 bits per component, 32-bit little-endian words, so the bytes come out B, G, R, X.
+    ///
+    /// `noneSkipFirst` rather than an alpha channel: a photograph is opaque, and an unused alpha is
+    /// another thing for the compositor to look at. An image that *does* carry transparency keeps
+    /// it — see `inDisplayLayout(_:)`.
+    static let displayBitmapInfo = CGBitmapInfo(
+        rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+
+    /// The colour space a cached bitmap has to be in to skip the conversion. `deviceRGB` compares
+    /// equal to `CGColorSpace(name: sRGB)`, so both spellings pass.
+    private static let deviceRGB = CGColorSpaceCreateDeviceRGB()
+
+    /// Whether `image` can be assigned to `layer.contents` with no conversion at all.
+    ///
+    /// The colour space has to be the device one, not merely "some RGB space": a JPEG carrying an
+    /// embedded ICC profile decodes into a colour space that is RGB but is not the display's, and
+    /// Core Animation has to convert *that* anyway. A nil colour space is "unknown", not "fine", so
+    /// it fails: an image the decoder cannot describe is exactly the one whose layout you cannot
+    /// promise.
+    static func isDisplayLayout(_ image: CGImage) -> Bool {
+        guard image.bitsPerComponent == 8, image.bitsPerPixel == 32 else { return false }
+        guard let space = image.colorSpace, space == deviceRGB else { return false }
+        // `CGBitmapInfo.byteOrder` is a `CGImageByteOrderInfo`, which has no `byteOrder32Little`
+        // case of its own, so the comparison is on the raw value.
+        guard
+            image.bitmapInfo.byteOrder.rawValue == CGBitmapInfo.byteOrder32Little.rawValue
+        else { return false }
+        return image.alphaInfo == .noneSkipFirst || image.alphaInfo == .premultipliedFirst
+    }
+
+    /// `image` in the display layout, redrawn only when it is not already there.
+    ///
+    /// Returns the same object when nothing needs doing, so a JPEG that ImageIO happened to decode
+    /// the way we want costs nothing. The redraw is the only place a cached bitmap is ever
+    /// resampled, and it is at 1:1 with `interpolationQuality = .none`-equivalent settings, so it
+    /// cannot soften a photograph.
+    static func inDisplayLayout(_ image: CGImage) -> CGImage {
+        guard !isDisplayLayout(image) else { return image }
+        // Transparency is preserved rather than dropped: the formats Firstcut opens are opaque, but
+        // a PNG in a mixed folder is not, and a black rectangle where a cut-out PNG used to be
+        // would be a worse bug than a few milliseconds of extra decode.
+        let opaque = image.alphaInfo == .none || image.alphaInfo == .noneSkipFirst
+            || image.alphaInfo == .noneSkipLast
+        let alpha = opaque ? CGImageAlphaInfo.noneSkipFirst : CGImageAlphaInfo.premultipliedFirst
+        let info = CGBitmapInfo(
+            rawValue: alpha.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        guard
+            let context = CGContext(
+                data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                bytesPerRow: 0, space: deviceRGB, bitmapInfo: info.rawValue)
+        else { return image }
+        // `.none`, not `.high`: this is a colour conversion at identical geometry, and an
+        // interpolating filter at 1:1 would read every pixel's neighbours for nothing.
+        context.interpolationQuality = .none
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return context.makeImage() ?? image
     }
 
     /// Just the bytes of a range, or nil. A `FileHandle`-free, allocation-honest read: bounds-checked

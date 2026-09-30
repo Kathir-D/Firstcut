@@ -133,7 +133,10 @@ enum CullViewBackground: Equatable, Sendable {
 protocol CullImageSource: AnyObject {
   var thumbnailProgress: Double { get }
   func thumbnail(for id: PhotoID, size: CGSize) -> CGImage?
-  func displayImage(for id: PhotoID) -> CGImage?
+  /// The display bitmap, at least `minimumLongestEdge` pixels on its longest side. Zero asks for
+  /// whatever T2 is, which is the right answer for a view that fits the photograph to the window and
+  /// has not been laid out yet; a view showing it at 100% asks for the photograph's own pixels.
+  func displayImage(for id: PhotoID, minimumLongestEdge: Int) -> CGImage?
   func histogram(for id: PhotoID) -> CullHistogram?
 }
 

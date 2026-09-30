@@ -289,7 +289,12 @@ These numbers shape the architecture — re-measure when anything changes.
 | Test set | 4 games, **2,880 CR3 files, 42 GB** (Game1JENKS 708, Gane2NC 529, Game3KC 920, Game4VRE 723) |
 | Camera | Canon EOS R8, `Quality = CRAW` (compressed CR3), 6000×4000 (24 MP), ~15 MB/file |
 | Embedded preview in each CR3 | **Full resolution 6000×4000 JPEG** |
-| Decode embedded preview, full res, 1 thread (ImageIO) | **~166 ms / image** |
+| What `CGImageSourceCreateImageAtIndex` gives for it | **16 bits per component, Display P3** → 6000×4000×8 B = **183 MB**, and **~850 ms** to narrow to 8-bit device RGB |
+| Display decode through `CreateThumbnailAtIndex`, full size (6000 px) | **~85–150 ms**, 8-bit, **92 MB** |
+| Display decode at 3456 px (a full-screen 16" viewer) | **~156 ms**, **30 MB** |
+| Display decode at 3000 px | **~147 ms**, **23 MB** |
+| Display decode at 2000 px | **~61 ms**, **10 MB** |
+| Thumbnail decode at 256 px, 1 thread (`CreateThumbnailAtIndex`) | **~280–310 ms** (per *file*, not per pixel) |
 | Full RAW decode, 1 thread (ImageIO) | **~570 ms / image** |
 | Drive mode tag | Always `Continuous, High+` → useless as a burst boundary signal |
 | Sub-second time | `SubSecTimeOriginal` present, **10 ms resolution** |
@@ -305,8 +310,15 @@ These numbers shape the architecture — re-measure when anything changes.
 **Implications:**
 - The embedded preview *is* a full-resolution image, so the default view never needs a RAW decode
   and 100% zoom can use it instantly. True RAW decode becomes an optional "exact" toggle.
-- 166 ms/image single-threaded is too slow to do on keypress but trivially fast to do *ahead of
+- **Never read the display preview with `CGImageSourceCreateImageAtIndex`.** It is the same pixels
+  but at 16 bits per component in Display P3, which costs ~850 ms and 183 MB; the thumbnail call on
+  the same file returns 8-bit pixels and subsamples in the DCT — **~5.8× faster at the same size, and
+  5.8× less memory at a viewer's size** (§7.1, `RealRawDecodeTests.testDisplayDecodeCosts`).
+- 61–156 ms/image single-threaded is too slow to do on keypress but trivially fast to do *ahead of
   time* across 8–10 performance cores → the whole design is **prefetch everything reachable**.
+- Every cached bitmap is normalised to 8-bit BGRA (`noneSkipFirst | byteOrder32Little`) in the
+  **device** colour space, because a bitmap in any other layout makes Core Animation convert it
+  *inside the commit* the key-to-frame interval closes on (§7.1, §7.5).
 - Game1JENKS is the **high-speed test case**. No file in the set is 25 ms apart (true 40 fps), so the
   thresholds must be derived from the local frame interval, not hard-coded to one speed.
 - The ~80 gaps between 0.2 s and 2 s are the ambiguous zone where timing alone can't decide a
@@ -489,7 +501,7 @@ The single most important property of the app: **navigation never waits for deco
 | T0 | 256 px thumbnails (filmstrip, grid, perceptual hash input) | **Whole shoot**, generated on open | ~30–60 MB |
 | T1 | Compressed embedded preview bytes (JPEG, as stored in the RAW) | As many batches as the RAM budget allows, nearest first | ~3–6 MB each |
 | T2 | **Decoded display-resolution bitmaps** (fit to the viewer's pixel size, IOSurface/Metal textures) | **Previous + current + next batch, always**; extends further ahead/behind while under budget | ~10–25 MB each |
-| T3 | Decoded full-resolution (6000×4000) bitmaps for 100% zoom | Current frame ±N in the current batch, only while zoomed / zoom-locked | ~96 MB each |
+| T3 | Decoded full-resolution (6000×4000, 8-bit) bitmaps for 100% zoom | The photo on screen while zoomed, plus the next one in the batch when zoom is locked | 92 MB each |
 | T4 | True RAW decode (`CIRAWFilter`) | Only when "Exact RAW" is toggled | on demand + neighbours |
 
 - [x] **Memory budget**: default = 40% of physical RAM (≈6.4 GB on 16 GB), configurable in Settings
@@ -508,15 +520,31 @@ The single most important property of the app: **navigation never waits for deco
       generation at `.utility` so it never competes with the current batch. *Partly:* 4 concurrent
       decodes at `.userInitiated`, thumbnails ranked below the current batch but on the same QoS.
 - [ ] Pre-upload decoded bitmaps to the GPU (IOSurface-backed) so display = pointer swap, < 1 frame.
-- [ ] Re-decode T2 when the window/screen size changes (debounced), keeping old bitmaps visible
-      until new ones are ready.
+- [x] Re-decode T2 when the window/screen size changes, keeping old bitmaps visible until new ones
+      are ready. **Done**: a display entry carries the size it was decoded at; a request for more
+      returns the smaller entry *and* schedules the bigger decode, so a resize never blanks the
+      viewer, and a decode that lands after a bigger one does not shrink the cache back. Not
+      debounced: `FocusRequest` is debounced by the fact that it is only re-sent when the size
+      actually changes, and a stale T2 for a tenth of a second is not worth a timer.
 
 ### 7.2 Image quality rules (don't make a grainy high-ISO shot look soft)
 
-- [ ] Display at **native pixel scale**: T2 bitmaps are decoded at exactly the viewer's backing
-      pixel size (Retina aware) — no double resampling, no GPU minification blur.
-- [ ] Downscale with a high-quality filter (Lanczos / area average via ImageIO's DCT scaling +
-      vImage) — never nearest/bilinear.
+- [x] Display at **native pixel scale**: T2 bitmaps are decoded at exactly the viewer's backing
+      pixel size (Retina aware) — no double resampling, no GPU minification blur. **Done**: the
+      viewer reports its frame in backing pixels to the model, the model puts it in every
+      `FocusRequest`, and the queue sizes each display decode from it (§7.1). A window that grows
+      re-decodes and **keeps the old bitmap on screen** meanwhile; `PipelineStats.displayResizes`
+      counts that and must settle at 0 while the window is still.
+- [x] Downscale with a high-quality filter (Lanczos / area average via ImageIO's DCT scaling +
+      vImage) — never nearest/bilinear. **Done by construction**: the decode asks ImageIO for the
+      target size and it subsamples *in the DCT*, so there is no second resample to get wrong, and
+      the 1:1 redraw into the display layout uses `interpolationQuality = .none` so it cannot
+      soften anything. Measured on a real CR3: 6000 px → 146 ms/92 MB, 3456 → 156 ms/30 MB,
+      3000 → 147 ms/23 MB, 2000 → 61 ms/10 MB.
+- [x] Every cached bitmap is force-decoded (`kCGImageSourceShouldCacheImmediately`) **and** in a
+      native 32-bit BGRA layout in the device colour space, so `layer.contents` is a pointer swap
+      with no conversion inside the commit. A bitmap in a foreign layout fails
+      `DecodeEngine.isDisplayLayout`, which two tests assert for every decode path.
 - [x] Never re-encode to JPEG/HEIC for caching; cache decoded pixels or the camera's original
       compressed bytes only.
 - [ ] Preserve color: honor the embedded ICC profile, render in the display's color space
@@ -629,11 +657,11 @@ and their rows in that file are still empty.
 | Metadata scan < 3 s | Already header-only and multi-threaded (`meta::parallel_map`). Keep one bounded `pread` per file and do not pull `PRVW` bytes into the head read. Measure **cold** (`sudo purge` first) as well as warm, since a freshly copied card is often warm. | 2 ms/file × 1,500 ÷ 8 threads < 1 s | Extend `firstcut bench` to run the scan on a folder |
 | Provisional batches < 3.5 s | Scan + `order()` + `batch()` (0.4 ms, measured) + the DB insert. Write the photos in one transaction with a prepared statement. | Dominated by the scan | `firstcut bench` prints each phase |
 | Thumbnails + hashes < 20 s | 75 photos/s. Decode `PRVW` bytes to 256 px (DCT 1/4 → 405 px, then downscale), never the full JPEG or the RAW. Make one 256 px decode feed both the filmstrip (T0) and `VisualSigWorker`. Check whether they decode twice today: `VisualSigWorker` calls `DecodeEngine.decodeThumbnail(url:)` on the file URL. Keep this work at `.utility`, off the performance cores' queue. | A few ms per photo on 3 threads → well under 20 s | Signpost per chunk; total in the perf suite |
-| T2 ready before the user can reach it | Decode the **full-size** JPEG by byte range (a new core field for the `trak` JPEG, next to `PRVW`) at the viewer's backing-pixel size, with `ShouldCacheImmediately`. Use a native 32-bit BGRA layout (`noneSkipFirst \| byteOrder32Little`), so Core Animation does not convert it. On a 14" viewer (≤ 3000 px) that is the cheap DCT-1/2 path. On a larger viewer, choose by eye (§7.2): decode the full image and downscale with vImage, or accept 3000 px. | 1/2-scale ≈ ¼ of 166 ms ≈ 40–50 ms per photo; 4–8 in flight ≫ key-repeat rate | `focusMisses` = 0 in the hold-→ stress test |
+| T2 ready before the user can reach it | **Done, as written.** The full-size JPEG by byte range (the core's `PhotoMeta.fullPreview`), at the viewer's backing-pixel size, `ShouldCacheImmediately`, normalised to a native 32-bit BGRA layout so Core Animation does not convert it. ImageIO subsamples in the DCT, and **measured** (not estimated): 147 ms/23 MB at 3000 px, 156 ms/30 MB at 3456 px, versus 146 ms/92 MB at the camera's full 6000 px. The by-eye choice §7.2 asked for turned out to be unnecessary: the thumbnail call *is* the DCT path, so there is nothing to choose between. | **measured**: 147–156 ms per photo at a viewer's size, 61 ms at 2000 px; 4 in flight ≫ key-repeat rate | `focusMisses` = 0 in the hold-→ stress test; `displayResizes` = 0 while the window is still |
 | Arrow → sharp photo ≤ 8 ms | Only a pointer swap on the main thread: a cached, already-decoded bitmap assigned to `layer.contents`. Make sure nothing on that path decodes, color-converts, resizes or touches SQLite. Write the rating off the main thread. If the commit is still too slow (it copies up to ~24 MB), make the bitmap IOSurface-backed and set `contents` to the `IOSurfaceRef`. That works on macOS: Chromium's `ca_renderer_layer_tree.mm` does it. The claim in `CGImageViewerHost.swift` (REV-38) that it cannot is wrong. Only do this if the measurement asks for it. | Assignment < 1 ms; commit to be measured | Signpost from `keyDown` to the next presented frame (`NSView.displayLink` / `CADisplayLink`), p50/p95/p99, `XCTOSSignpostMetric` |
 | Batch switch ≤ 1 frame | Same path; the next/previous batch is already in T2 by the priority rules | — | Same signpost for `⌘→` |
-| 100% zoom < 150 ms first time | The full decode is ~166 ms on one thread, so the first 100% needs a head start. On click, upscale T2 at once, so the zoom responds in one frame. Then start the full-resolution decode (T3). Also decode T3 speculatively for the current photo once the user has stayed on it for ~300 ms. With zoom lock, decode T3 ahead for the next photos in the batch. ImageIO cannot decode one JPEG on several threads or decode just a region, so speculation is the only lever. | Zoom feels instant; the sharp 100% lands ≤ 166 ms after the click, 0 ms when speculated | Signpost click → T3 on screen |
-| Memory within budget, no leaks | 3000×2000×4 B = 24 MB per T2. Three batches of up to ~50 frames (Game1JENKS bursts) ≈ 3.6 GB, inside the 6.4 GB default. Hold T1 (compressed bytes, 1–6 MB) for further batches instead of T2. Keep only ±1 T3 (96 MB each). | Peak ≈ 4 GB on the worst burst | `footprint`/`phys_footprint` sampled in the stress test; `leaks` at the end |
+| 100% zoom < 150 ms first time | The full-size decode is **~146 ms** on one thread (measured, §3), so the first 100% needs a head start. Zooming shows the T2 upscaled at once, so the zoom responds in one frame, and the full-resolution decode (T3) for the photo on screen and — with zoom lock — the next one in the batch is already in flight. ImageIO cannot decode one JPEG on several threads or decode just a region, so speculation is the only lever, and the zoom-lock prefetch is the only speculation that matters. **Half done:** the tiers and the prefetch are wired and the `zoomToSharp` interval closes on the frame that answers the click; the *speculative T3 after a dwell* is not implemented (open below) | Zoom responds in one frame; the sharp 100% lands ~146 ms after the click, 0 ms when zoom lock already had it | `zoomToSharp` signpost, click → the committed frame |
+| Memory within budget, no leaks | A T2 at a 3456 px viewer is 3456×2304×4 B = **30 MB** (measured), not 24 MB and certainly not the 96 MB the old full-size decode spent. Three batches of up to ~50 frames (Game1JENKS bursts) ≈ 4.5 GB, inside the 6.4 GB default. Hold T1 (compressed bytes, 1–6 MB) for further batches instead of T2. Keep only the two T3s zoom lock needs (92 MB each). | Peak ≈ 4.5 GB on the worst burst | `footprint`/`phys_footprint` sampled in the stress test; `leaks` at the end |
 
 **Work items (agent-side unless marked):**
 
@@ -645,8 +673,14 @@ and their rows in that file are still empty.
 - [x] App: decode every display image from **byte ranges**, never from the CR3 URL. ImageIO then
       never parses the container or picks the RAW. **Done**, with the container decode kept as the
       fallback for a file that reports no range, and a test that the two give identical pixels.
-- [ ] App: check that every cached `CGImage` is force-decoded (`ShouldCacheImmediately`) and in a
-      native BGRA layout. Needs `ImageProvider.swift`.
+- [x] App: check that every cached `CGImage` is force-decoded (`ShouldCacheImmediately`) and in a
+      native BGRA layout. **Done, and it was not a formality.** Measured on a real CR3: the
+      `CreateImageAtIndex` path the app used returned **16-bit Display P3** pixels, so (a) every
+      cached display bitmap cost 183 MB rather than 92 MB, (b) Core Animation converted it to the
+      display's format *inside the commit* the key-to-frame interval closes on, and (c) narrowing it
+      cost ~850 ms per decode. Every decode now goes through `CreateThumbnailAtIndex` (8-bit, DCT
+      scaled) and `inDisplayLayout` (one 1:1 redraw into `noneSkipFirst | byteOrder32Little` in the
+      device space, skipped when the decode is already there).
 - [ ] App: first-photo fast path (header + `PRVW` of the resume photo before the full scan).
       Needs `AppModel.swift`.
 - [x] App: one shared 256 px decode for the filmstrip and the visual signature. **Done.** The pass
@@ -656,8 +690,23 @@ and their rows in that file are still empty.
       to decode, and the old code decoded the whole shoot from the file URLs *on top of* the focus
       window, on the same 4 threads, fighting the decodes the user is waiting for. Four tests, and
       both directions fail if the sharing is removed (checked by mutation).
-- [ ] App: T2 at the viewer's backing size through DCT scaling; re-decode on resize (§7.1).
-- [ ] App: speculative T3 for the current photo after a dwell; T2 upscale as the instant zoom.
+- [x] App: T2 at the viewer's backing size through DCT scaling; re-decode on resize (§7.1).
+      **Done**, and it needed one thing nobody had wired: `AppModel.setViewportPixelSize` existed and
+      **nothing called it**, so `FocusRequest.viewportPixelSize` was always `.zero` and the HUD's
+      "viewport: not reported" was literal. `CGImageViewerHost` now reports its frame in backing
+      pixels on layout (only when it changed), and the rule is one pure function,
+      `ImageProvider.displayEdges`: T2 = the viewer's longest edge, T3 = the photograph's own size
+      for the photo on screen while zoomed plus the next one in the batch when zoom is locked,
+      capped at the file's own size, with a 2048 px fallback before the window has reported one.
+      `ViewerPresentation.pixelSize` came with it, so "100%" is 100% of the *photograph* rather than
+      of whatever bitmap the cache held — without that, a 2880 px T2 would have been called 100%
+      and 100% would have been soft.
+- [ ] App: speculative T3 for the current photo after a dwell. The **T2-upscale-as-instant-zoom** half
+      is done as a consequence of the tier split: at 100% the viewer asks for the photograph's own
+      pixels (`ViewerPresentation.pixelSize`), the T2 stays on screen at `contentsGravity = .resize`
+      meanwhile, and the T3 replaces it when it lands — so nothing about the zoom is ever blank. The
+      dwell-based speculation (~300 ms on a photo) is not implemented: it has to be weighed against
+      the decode it costs, and the measurement that would decide it does not exist yet.
 - [x] Instrumentation: `os_signpost` intervals named after the rows above, plus the debug HUD
       (§7.3). **Done**, including the four spans that a presented frame has to close.
 - [x] `firstcut bench --folder <dir>`: scan (cold/warm), order, batch, per phase. **Done**, and

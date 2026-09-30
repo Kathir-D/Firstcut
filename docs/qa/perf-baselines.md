@@ -112,6 +112,30 @@ the useful finding: the batching *algorithm* is not what costs time, the header 
 3.5 s one here — so the algorithm is roughly 4,000× inside budget and the remaining work on "open →
 first photo" is decode and first paint, not metadata.
 
+### One display decode, at the sizes the viewer asks for (§7.1 T2, §7.2)
+
+**Measured 2026-09-30, `RealRawDecodeTests.testDisplayDecodeCosts`, Game1JENKS `IMG_3181.CR3`,
+M1 Pro, macOS 27, warm page cache, one image at a time.** The test reports the second of two runs
+per size, so the first pays for reading a 15 MB file off the SSD.
+
+| Longest edge asked for | Pixels returned | Time | Cached at |
+| --- | --- | --- | --- |
+| 6000 (T3, 100% zoom) | 6000×4000 | **146 ms** | 92 MB |
+| 3456 (a full-screen 16" viewer) | 3456×2304 | **156 ms** | 30 MB |
+| 3000 (a 14" viewer) | 3000×2000 | **147 ms** | 23 MB |
+| 2000 (a small window) | 2000×1333 | **61 ms** | 10 MB |
+| — the same file through `CGImageSourceCreateImageAtIndex` | 6000×4000, **16-bit, Display P3** | **~850 ms** | **183 MB** |
+
+The last row is what the app used to do for every display frame, and it is the whole point of this
+section. It is not the same pixels at a different size: it is 16 bits per component in a colour
+space Core Animation has to convert, so every display decode cost half a second and 183 MB, and the
+conversion happened on the main thread inside the commit the key-to-frame interval closes on. The
+thumbnail call with `kCGImageSourceThumbnailMaxPixelSize` gives 8-bit pixels and subsamples in the
+DCT: **5.8× faster at the same size, and 5.8× less memory at a viewer's size.**
+
+A 256 px thumbnail decode of the same file is ~280–310 ms and is *per file, not per pixel* — the
+reading behind the one shared decode for the filmstrip and the visual signatures.
+
 ### All thumbnails + hashes, background (§7.3, < 20 s)
 
 | Game | Photos | p50 | p90 | Budget |
@@ -170,6 +194,7 @@ after a game" — the tier counters alone would call that clean.
 | --- | --- | --- | --- | --- | --- |
 | — | — | M1 Pro | — | no rows | Wave-1 harness landed with no baselines; load average on the dev machine was ~30 with nine agents compiling, which is exactly what the quiet-machine guard is for. |
 | 2026-09-30 | 5c5aa7d | M1 Pro, macOS 27, internal SSD | all four | scan + batches recorded | `firstcut bench --folder`, release build, cold (after `sudo purge`) and warm (best of 5). Interactive rows still empty: they need the app, and this session had no window measurement yet. |
+| 2026-09-30 | (this work) | M1 Pro, macOS 27, internal SSD | Game1JENKS | display-decode row recorded; 708-file scan through the core at **0.7 s** | `RealRawDecodeTests`, opt-in photo tests. The same scan through the legacy ImageIO `PhotoFolderScanner` takes 3.1–3.4 s, which is why the test now goes through the core — that is the path the app takes. Interactive rows still empty. |
 
 ## Notes
 

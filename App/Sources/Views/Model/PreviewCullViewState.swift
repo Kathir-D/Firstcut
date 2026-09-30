@@ -314,7 +314,9 @@ final class PreviewImageSource: CullImageSource {
     return image
   }
 
-  func displayImage(for id: PhotoID) -> CGImage? {
+  /// The size is ignored: the synthetic shoot draws one picture per id and scaling it is free, so
+  /// there is nothing here for a viewer's backing size to change.
+  func displayImage(for id: PhotoID, minimumLongestEdge: Int) -> CGImage? {
     thumbnail(for: id, size: CGSize(width: 1200, height: 800))
   }
 

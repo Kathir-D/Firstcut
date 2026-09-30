@@ -96,8 +96,9 @@ final class ViewerSyncGroup {
   }
 }
 
-/// What the window tells the viewer: whether zoom is locked across photos, and which overlays to
-/// draw. Mirrored from app-model.md's `ViewerState` (REV-46); app-logic owns the value.
+/// What the window tells the viewer: whether zoom is locked across photos, which overlays to
+/// draw, and how big the photograph really is. Mirrored from app-model.md's `ViewerState` (REV-46);
+/// app-logic owns the value.
 struct ViewerPresentation: Equatable {
   var isZoomed = false
   var zoomScale: Double = 1
@@ -105,6 +106,14 @@ struct ViewerPresentation: Equatable {
   /// Autofocus points to draw, in the *upright* image's normalized coordinates (top-left origin).
   var afRects: [AFRect] = []
   var showsClipping = false
+  /// The photograph's own pixel size, as the scan reported it (pre-rotation). Zero when unknown.
+  ///
+  /// It is here because "100%" has to mean 100% of the *photograph*, not of whatever bitmap happens
+  /// to be on screen. T2 is decoded at the viewer's size (§7.1), so a view that computed 1:1 from
+  /// the bitmap it was handed would call a 3000 px half-size image "100%" and the user would see a
+  /// soft picture with a confident label. With this, the viewer asks the pipeline for the
+  /// photograph's own pixels when it is at 1:1, and for its window's pixels when it is not.
+  var pixelSize: CGSize = .zero
 
   static let fit = ViewerPresentation()
 
