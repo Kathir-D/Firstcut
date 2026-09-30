@@ -179,18 +179,18 @@ struct ImageProviderTests {
         #expect(provider.stats.displayDecodes == 1)
     }
 
-    @Test("Only the current photo and its two neighbours are prefetched at full resolution")
+    @Test("Only the current photo and its near neighbours are prefetched at full resolution")
     func displayPrefetchIsBounded() async {
         let shoot = ImageFixtures.shoot(count: 12)
         let provider = ImageProvider(memoryBudgetBytes: 256 << 20)
         provider.open(folder: shoot.folder, photos: shoot.photos)
         provider.setFocus(focus(shoot.photos.map(\.id), current: 6))
         #expect(await provider.waitUntilIdle())
-        // Photo 6 and its two neighbours on either side, out of twelve. The whole point: twelve
-        // full decodes would be ~1.1 MB of bitmap per batch for a window the user sees three
-        // frames of.
-        #expect(provider.stats.displayDecodes == 5)
-        for id in 4...8 { #expect(provider.displayImage(for: PhotoID(id)) != nil) }
+        // Photo 6, two behind and three ahead (the panes of 4-up Compare), out of twelve. Twelve
+        // full decodes would be a whole batch at full resolution for a window the user sees a
+        // few frames of.
+        #expect(provider.stats.displayDecodes == 6)
+        for id in 4...9 { #expect(provider.displayImage(for: PhotoID(id)) != nil) }
     }
 
     @Test("A histogram is 64 bins per channel, normalised, and cached")
@@ -280,6 +280,60 @@ struct ImageProviderTests {
         #expect(provider.stats.thumbnailDecodes == 0)
         #expect(provider.stats.focusSize == 0)
         #expect(provider.thumbnail(for: 1, size: CGSize(width: 64, height: 48)) == nil)
+    }
+
+    @Test("Moving on cancels queued work for photos the user left")
+    func movingOnCancelsStaleWork() async {
+        let shoot = ImageFixtures.shoot(count: 30)
+        // One decode at a time, so what is still queued when the focus moves is deterministic.
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20, prefetchPixels: 128, maxConcurrentDecodes: 1)
+        provider.open(folder: shoot.folder, photos: shoot.photos)
+        provider.setFocus(focus(shoot.photos.map(\.id), current: 1))
+        provider.setFocus(focus([29, 30], current: 30))
+        #expect(await provider.waitUntilIdle())
+        // The two photos now in focus, plus whatever was already decoding when the focus moved.
+        #expect(provider.stats.thumbnailDecodes <= 4)
+        #expect(provider.thumbnail(for: 29, size: CGSize(width: 64, height: 64)) != nil)
+        #expect(provider.thumbnail(for: 30, size: CGSize(width: 64, height: 64)) != nil)
+    }
+
+    @Test("Batches are prefetched current first, then next, then previous")
+    func windowsNearestFirst() {
+        let windows = (0..<5).map { FocusWindow(batchID: BatchID($0), photoIDs: [PhotoID($0 * 10 + 1)]) }
+        let order = ImageProvider.nearestFirst(FocusRequest(windows: windows, currentPhoto: 21))
+        #expect(order.map(\.batchID) == [2, 3, 1, 4, 0])
+    }
+
+    @Test("Memory pressure drops everything outside the focus window, and nothing in it")
+    func memoryPressureSheds() async {
+        let shoot = ImageFixtures.shoot(count: 4)
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20, prefetchPixels: 128)
+        provider.open(folder: shoot.folder, photos: shoot.photos)
+        provider.setFocus(focus([1, 2], current: 1))
+        for id in [3, 4] { _ = provider.thumbnail(for: PhotoID(id), size: CGSize(width: 64, height: 64)) }
+        #expect(await provider.waitUntilIdle())
+        let decodes = provider.stats.thumbnailDecodes
+
+        provider.shedForMemoryPressure()
+        #expect(provider.stats.pressureSheds == 1)
+        for id in [1, 2] {
+            #expect(provider.thumbnail(for: PhotoID(id), size: CGSize(width: 64, height: 64)) != nil)
+        }
+        #expect(provider.thumbnail(for: 3, size: CGSize(width: 64, height: 64)) == nil)
+        #expect(provider.stats.thumbnailDecodes == decodes)
+    }
+
+    @Test("A decode that lands after another folder was opened is dropped")
+    func lateLandingFromThePreviousFolderIsDropped() async throws {
+        let first = ImageFixtures.shoot(count: 1)
+        let second = ImageFixtures.shoot(count: 1)
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20, prefetchPixels: 128)
+        provider.open(folder: first.folder, photos: first.photos)
+        _ = provider.thumbnail(for: 1, size: CGSize(width: 64, height: 64))
+        provider.open(folder: second.folder, photos: second.photos)
+        // The first folder's decode may still be running; give it time to land.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(provider.stats.thumbnailDecodes == 0, "the first folder's IMG_0000 is not the second's")
     }
 
     @Test("The decoder calls are the ones the contract names")

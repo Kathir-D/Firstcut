@@ -23,7 +23,7 @@
 //   3.0 photos/s on one thread, 7.0 on four, 7.0 on eight), so `maxConcurrent` defaults to 4.
 // * Prefetching a *full-resolution* image for a whole batch is not affordable (6000×4000×4 B ≈
 //   96 MB each, 12 per batch). Thumbnails are prefetched for the whole focus window; full images
-//   only for the current photo and its two neighbours inside the current batch.
+//   only for the current photo and two frames behind and three ahead of it in the current batch.
 // * 7 photos/s means a 2 880-photo shoot is ~7 minutes to thumbnail end to end. The UI therefore
 //   treats thumbnails as arriving over time (`thumbnailProgress`, the filmstrip's 200 ms retry) and
 //   never blocks on one.
@@ -75,6 +75,8 @@ public struct PipelineStats: Equatable, Sendable {
     public var thumbnailBytes: Int = 0
     public var displayBytes: Int = 0
     public var focusSize: Int = 0
+    /// Times a system memory-pressure warning made the cache drop everything outside the focus.
+    public var pressureSheds: Int = 0
 
     public init() {}
 }
@@ -171,24 +173,40 @@ public final class ImageProvider: ImageProviding, CullImageSource {
         // order the user can see.
         var ordered: [PhotoID] = []
         var seen = Set<PhotoID>()
-        for id in [focus.currentPhoto] + focus.windows.flatMap(\.photoIDs) where seen.insert(id).inserted {
+        for id in [focus.currentPhoto] + Self.nearestFirst(focus).flatMap(\.photoIDs)
+        where seen.insert(id).inserted {
             ordered.append(id)
         }
         engine.setFocus(
             ids: ordered,
             displayIDs: displayPrefetchIDs(current: focus.currentPhoto, windows: focus.windows),
-            urls: files)
+            urls: files, orientations: orientations)
     }
 
-    /// The current photo and its two immediate neighbours **inside its own batch**. Anything wider
+    /// The windows ordered the way the user reaches them (task.md §7.1): the current batch, then
+    /// the next, then the previous, then further out, next before previous at each distance.
+    static func nearestFirst(_ focus: FocusRequest) -> [FocusWindow] {
+        guard let home = focus.windows.firstIndex(where: { $0.photoIDs.contains(focus.currentPhoto) })
+        else { return focus.windows }
+        return focus.windows.indices
+            .sorted { left, right in
+                let (l, r) = (abs(left - home), abs(right - home))
+                return l != r ? l < r : left > right
+            }
+            .map { focus.windows[$0] }
+    }
+
+    /// The current photo, two behind and three ahead of it, **inside its own batch**. Anything wider
     /// and the full-resolution cache is 96 MB per photo, which no sane memory budget holds.
     private func displayPrefetchIDs(current: PhotoID?, windows: [FocusWindow]) -> [PhotoID] {
         guard let current,
             let ids = windows.first(where: { $0.photoIDs.contains(current) })?.photoIDs,
             let position = ids.firstIndex(of: current)
         else { return [] }
+        // Three ahead, not two: 4-up Compare shows the current frame and the three after it, and
+        // `setFocus` cancels display decodes outside this range on every move.
         let lower = max(0, position - 2)
-        let upper = min(ids.count - 1, position + 2)
+        let upper = min(ids.count - 1, position + 3)
         guard lower <= upper else { return [] }
         return Array(ids[lower...upper])
     }
@@ -210,6 +228,12 @@ public final class ImageProvider: ImageProviding, CullImageSource {
     func histogram(for id: PhotoID) -> CullHistogram? {
         _ = generation  // the info panel redraws when the display image it bins arrives
         return engine.histogram(id, url: files[id])
+    }
+
+    /// What a system memory-pressure warning does; public so a test can trigger it.
+    func shedForMemoryPressure() {
+        engine.shedToFocus()
+        generation &+= 1
     }
 
     // MARK: - Test hooks
@@ -247,6 +271,10 @@ final class DecodeEngine: @unchecked Sendable {
         /// same size is a different job if the orientation changed, which happens when a file is
         /// replaced under a resumed session.
         var orientation: UInt8 = 1
+        /// The shoot the job was queued for. A decode that lands after another folder was opened
+        /// is dropped: ids are hashes of file names, so `IMG_0001` of the old card would otherwise
+        /// be shown as `IMG_0001` of the new one.
+        var epoch: UInt64 = 0
     }
 
     private struct Key: Hashable {
@@ -261,7 +289,11 @@ final class DecodeEngine: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private let queue = DispatchQueue(label: "com.kathird.firstcut.decode", qos: .userInitiated)
+    /// Concurrent, so `maxConcurrent` decodes really run at once. It was serial, which made the
+    /// engine the one-thread case of the measurement above (3.0 photos/s instead of 7.0).
+    private let queue = DispatchQueue(
+        label: "com.kathird.firstcut.decode", qos: .userInitiated, attributes: .concurrent)
+    private var pressureSource: DispatchSourceMemoryPressure?
     private let maxConcurrent: Int
     private let budgetBytes: Int
     let prefetchPixels: Int
@@ -279,6 +311,7 @@ final class DecodeEngine: @unchecked Sendable {
     /// Never evicted: the current focus window ("never the current batch", [pipeline-api.md]).
     private var focus: Set<PhotoID> = []
     private var clock: UInt64 = 0
+    private var epoch: UInt64 = 0
     private var bytes = 0
     private var counters = PipelineStats()
 
@@ -286,6 +319,34 @@ final class DecodeEngine: @unchecked Sendable {
         self.maxConcurrent = max(1, maxConcurrent)
         self.budgetBytes = max(1, memoryBudgetBytes)
         self.prefetchPixels = max(16, prefetchPixels)
+        watchMemoryPressure()
+    }
+
+    deinit {
+        pressureSource?.cancel()
+    }
+
+    /// Under memory pressure everything outside the focus window goes, at once (task.md §7.1:
+    /// shed far batches first, never the current one). The focus window is only the batches the
+    /// user can reach, so that is the order the spec asks for.
+    private func watchMemoryPressure() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .global(qos: .utility))
+        source.setEventHandler { [weak self] in self?.shedToFocus() }
+        source.resume()
+        pressureSource = source
+    }
+
+    func shedToFocus() {
+        lock.lock()
+        defer { lock.unlock() }
+        for id in Array(thumbnails.keys) where !focus.contains(id) {
+            bytes -= thumbnails.removeValue(forKey: id)?.bytes ?? 0
+        }
+        for id in Array(displays.keys) where !focus.contains(id) {
+            bytes -= displays.removeValue(forKey: id)?.bytes ?? 0
+        }
+        histograms = histograms.filter { focus.contains($0.key) }
+        counters.pressureSheds += 1
     }
 
     // MARK: - Reading
@@ -313,16 +374,31 @@ final class DecodeEngine: @unchecked Sendable {
 
     /// The ids that must never be decoded on demand, and the prefetch that makes that true.
     @MainActor
-    func setFocus(ids: [PhotoID], displayIDs: [PhotoID], urls: [PhotoID: URL]) {
+    func setFocus(
+        ids: [PhotoID], displayIDs: [PhotoID], urls: [PhotoID: URL],
+        orientations: [PhotoID: UInt8] = [:]
+    ) {
+        let rank = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        let wanted = Set(displayIDs)
         lock.lock()
         focus = Set(ids)
         counters.focusSize = ids.count
+        // Work for photos the user has moved away from is cancelled, and what is left is ranked
+        // again from where they are now; otherwise holding the arrow key queues a backlog that
+        // the photo they stop on has to wait behind.
+        pending.removeAll { job in
+            job.kind == .display ? !wanted.contains(job.id) : rank[job.id] == nil
+        }
+        for index in pending.indices {
+            pending[index].priority = rank[pending[index].id] ?? pending[index].priority
+        }
         lock.unlock()
 
         // `countsAsFocusMiss: false` on both: the prefetch *is* the thing that prevents a focus
         // miss, so counting it would make the guarantee impossible to satisfy by construction.
         for id in displayIDs {
-            _ = display(id, url: urls[id], countsAsFocusMiss: false)
+            _ = display(id, url: urls[id], orientation: orientations[id] ?? 1,
+                        priority: rank[id] ?? 0, countsAsFocusMiss: false)
         }
         for (position, id) in ids.enumerated() {
             _ = thumbnail(id, minimumLongestEdge: Double(prefetchPixels), slack: 1, url: urls[id],
@@ -341,6 +417,7 @@ final class DecodeEngine: @unchecked Sendable {
         pending.removeAll()
         inFlight.removeAll()
         failed.removeAll()
+        epoch &+= 1
         bytes = 0
         clock = 0
         counters = PipelineStats()
@@ -453,6 +530,8 @@ final class DecodeEngine: @unchecked Sendable {
         guard !failed.contains(key), !inFlight.contains(key),
             !pending.contains(where: { Key(id: $0.id, kind: $0.kind) == key })
         else { return false }
+        var job = job
+        job.epoch = epoch
         pending.append(job)
         return true
     }
@@ -489,6 +568,11 @@ final class DecodeEngine: @unchecked Sendable {
 
     private func store(_ job: Job, _ image: CGImage?) {
         lock.lock()
+        guard job.epoch == epoch else {
+            // Queued for a folder that is no longer open; `reset` already forgot it was in flight.
+            lock.unlock()
+            return
+        }
         inFlight.remove(Key(id: job.id, kind: job.kind))
         if let image {
             let entry = Entry(image: image, bytes: image.pixelBytes, stamp: clock)
