@@ -30,14 +30,10 @@ public enum RatingRules {
     public static let defaultKeepThreshold = 4
 
     /// True when the photo counts as kept, for the given mode.
+    /// Exactly "the tier is Keep", as the core's `Rating::is_kept` decides it for Finish: a rejected
+    /// photo is never a keep, whatever its stars.
     public static func isKeep(_ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold) -> Bool {
-        switch mode {
-        case .stars: rating.stars >= UInt8(keepThreshold)
-        // A 4–5 star photo is a keep in *both* modes, so switching to keep mode must not make the
-        // user's keeps vanish. That promotion is a **display** rule: the stored `keep` stays false
-        // and the stored `stars` stay four. See `synchronized` for why the write-back is the bug.
-        case .keep: rating.keep || Int(rating.stars) >= keepThreshold
-        }
+        tier(of: rating, mode: mode, keepThreshold: keepThreshold) == .keep
     }
 
     /// The tier a photo sits in (app-model.md). `flag.pick` never changes the tier; it is stored
@@ -46,11 +42,17 @@ public enum RatingRules {
         if rating.flag == .reject { return .rejected }
         switch mode {
         case .keep:
-            return isKeep(rating, mode: mode, keepThreshold: keepThreshold) ? .keep : .unrated
+            // A 4–5 star photo is a keep in *both* modes, so switching to keep mode must not make
+            // the user's keeps vanish. That promotion is a **display** rule: the stored `keep` stays
+            // false and the stored `stars` stay four. See `synchronized` for why the write-back is
+            // the bug.
+            return rating.keep || Int(rating.stars) >= keepThreshold ? .keep : .unrated
         case .stars:
             // §6.1: 5 or 4 is a full keep, and the boundary is the setting, not a constant, so a
-            // photographer who wants only 5-star keeps can ask for it.
-            let stars = Int(rating.stars)
+            // photographer who wants only 5-star keeps can ask for it. The tier follows the stars
+            // *shown*: a keep made in keep mode (stored with 0 stars) is the 5 stars it displays as,
+            // and a Keep, as the core's `Rating::tier` counts it for Finish.
+            let stars = Int(displayStars(rating, mode: mode, keepThreshold: keepThreshold))
             if stars >= keepThreshold { return .keep }
             if stars >= 3 { return .good }
             if stars >= 1 { return .maybe }

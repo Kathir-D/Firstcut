@@ -33,6 +33,22 @@ struct RatingRulesTests {
         #expect(RatingRules.tier(of: Rating(stars: 5, keep: true), mode: .keep) == .keep)
     }
 
+    @Test("A keep made in keep mode is a Keep in stars mode too, as Finish counts it")
+    func keepModeKeepInStarsMode() {
+        let kept = Rating(keep: true)
+        #expect(RatingRules.tier(of: kept, mode: .stars) == .keep)
+        #expect(RatingRules.isKeep(kept, mode: .stars))
+        #expect(RatingRules.displayStars(kept, mode: .stars) == 5)
+    }
+
+    @Test("A rejected photo is never a keep, whatever its stars")
+    func rejectIsNeverKeep() {
+        for mode in [RatingMode.stars, .keep] {
+            #expect(RatingRules.isKeep(Rating(stars: 5, flag: .reject), mode: mode) == false)
+            #expect(RatingRules.isKeep(Rating(flag: .reject, keep: true), mode: mode) == false)
+        }
+    }
+
     @Test("A pick flag never changes the tier")
     func pickFlagIsNeutral() {
         #expect(RatingRules.tier(of: Rating(flag: .pick), mode: .stars) == .unrated)
