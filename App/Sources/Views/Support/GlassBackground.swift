@@ -17,12 +17,17 @@ struct GlassBackground<Content: View>: View {
     if reduceTransparency {
       content()
         .background(Appearance.barBackground, in: shape)
+#if compiler(>=6.2)
     } else if #available(macOS 26.0, *) {
+      // `glassEffect` is in the macOS 26 SDK (Xcode 26, Swift 6.2). CI keeps Xcode 16 as the
+      // minimum-toolchain check (task.md §2), which has no such API, so the call is compiled only
+      // where it exists. A build with an older toolchain gets the material fallback below.
       content()
         .glassEffect(
           isInteractive ? .regular : .regular.tint(.clear),
           in: shape
         )
+#endif
     } else {
       content()
         .background(.ultraThinMaterial, in: shape)
