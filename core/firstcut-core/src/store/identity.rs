@@ -204,6 +204,12 @@ pub struct Fingerprint {
 /// Skips dot-files, `._` AppleDouble files and anything that is not an image, so writing XMP
 /// sidecars or having Finder drop a `.DS_Store` in the folder cannot invalidate a session.
 pub fn fingerprint(folder: &Path) -> Result<Fingerprint> {
+    Ok(fingerprint_of(image_files(folder)?))
+}
+
+/// `(relative path, size)` for every image file in `folder`, recursively, sorted; the files the
+/// fingerprint is taken over.
+pub fn image_files(folder: &Path) -> Result<Vec<(String, u64)>> {
     let mut entries: Vec<(String, u64)> = Vec::new();
     let mut stack = vec![folder.to_path_buf()];
 
@@ -244,7 +250,10 @@ pub fn fingerprint(folder: &Path) -> Result<Fingerprint> {
 
     // Sorted so the hash does not depend on directory iteration order.
     entries.sort();
+    Ok(entries)
+}
 
+fn fingerprint_of(entries: Vec<(String, u64)>) -> Fingerprint {
     let mut bytes: Vec<u8> = Vec::with_capacity(entries.len() * 32);
     let mut total_bytes = 0u64;
     for (rel, size) in &entries {
@@ -255,11 +264,11 @@ pub fn fingerprint(folder: &Path) -> Result<Fingerprint> {
         total_bytes += size;
     }
 
-    Ok(Fingerprint {
+    Fingerprint {
         hash: fnv1a64_hex(&bytes),
         file_count: entries.len(),
         total_bytes,
-    })
+    }
 }
 
 /// Everything that identifies "the shoot in this folder".
@@ -306,12 +315,18 @@ impl FolderIdentity {
     /// that has been re-shot (same path, different files) gets its own session instead of
     /// silently taking over the old one.
     pub fn db_file_name(&self) -> String {
+        let fp_short: String = self.fingerprint.hash.chars().take(8).collect();
+        format!("{}{fp_short}.sqlite", self.db_file_prefix())
+    }
+
+    /// The part of [`Self::db_file_name`] that depends only on the volume and the path: every
+    /// session ever opened for this folder starts with it.
+    pub fn db_file_prefix(&self) -> String {
         let mut key = self.volume.key().into_bytes();
         key.push(0);
         key.extend_from_slice(self.folder.to_string_lossy().as_bytes());
         let path_hash = fnv1a64(&key);
-        let fp_short: String = self.fingerprint.hash.chars().take(8).collect();
-        format!("{path_hash:016x}-{fp_short}.sqlite")
+        format!("{path_hash:016x}-")
     }
 
     pub fn db_path(&self, sessions_dir: &Path) -> PathBuf {

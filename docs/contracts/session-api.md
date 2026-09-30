@@ -118,8 +118,13 @@ pub trait Progress: Send {
   - the same folder always finds the same database;
   - a **moved or renamed folder** is re-matched by fingerprint (its old path no longer exists) and
     the session comes with it — `Session::matched()` is then `Moved`;
-  - a **reshoot in the same folder** (same path, different files) gets its own database and the old
-    one is left untouched;
+  - a folder whose files **changed while the app was closed** (culled in Finder, a second card
+    added, rejects moved into `_Not kept/` by Finish) keeps its session: an earlier database for the
+    same path is re-homed when at least one of its photos, and at least a tenth of the smaller of
+    the two sets, is still in the folder (matched by file name and size, in any subfolder). A file
+    renamed while the app was closed keeps its rating (inode, or shutter count + size);
+  - a **reshoot in the same folder** (same path, the old files gone and new ones in) gets its own
+    database and the old one is left untouched;
   - a **copy** of a shoot is never confused for a move, because the original is still there.
 - **XMP sidecars**: `<basename>.xmp` next to each photo, Lightroom's naming. The database is the
   source of truth for the app; the sidecar is the mirror other tools read.

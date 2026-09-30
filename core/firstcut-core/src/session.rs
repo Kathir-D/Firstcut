@@ -269,7 +269,10 @@ impl Session {
             mapping: XmpMapping::default(),
             xmp: XmpSettings::default(),
         };
-        state.ingest(scan.photos)?;
+        // `reconcile` rather than `ingest`: a file renamed in Finder while the app was closed must
+        // keep its rating, exactly as one renamed while it is open does. (For a new database there
+        // is nothing to match, and `reconcile` is `ingest`.)
+        state.reconcile(scan.photos)?;
         if created {
             let photos: Vec<PhotoMeta> = state.photos.values().cloned().collect();
             for (id, rating) in import_ratings_from_sidecars(folder, &photos) {
@@ -818,7 +821,18 @@ impl State {
             if let (Some(device), Some(ino)) = (row.device, row.ino) {
                 by_inode.entry((device, ino)).or_default().push(row.clone());
             }
-            let shutter = self.photos.get(&row.id).and_then(|meta| meta.shutter_count);
+            // At open nothing is in memory yet, so the stored metadata is where the shutter count
+            // of a file that vanished while the app was closed comes from.
+            let shutter = self
+                .photos
+                .get(&row.id)
+                .and_then(|meta| meta.shutter_count)
+                .or_else(|| {
+                    row.meta_json
+                        .as_deref()
+                        .and_then(|json| serde_json::from_str::<PhotoMeta>(json).ok())
+                        .and_then(|meta| meta.shutter_count)
+                });
             by_capture
                 .entry((shutter, row.file_size))
                 .or_default()
@@ -834,8 +848,14 @@ impl State {
             rows.and_then(|rows| rows.iter().find(|row| !claimed.contains(&row.id)))
                 .cloned()
         };
+        // Only a file with no row of its own can be a renamed one. The database, not memory, is
+        // what knows that: at open, memory is still empty.
+        let known: std::collections::HashSet<u64> = records::photos_in_order(&self.db)?
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
         for meta in &photos {
-            if self.photos.contains_key(&meta.id.0) {
+            if known.contains(&meta.id.0) {
                 continue;
             }
             // A rename never changes the size. The inode alone is not enough: file systems reuse
@@ -1929,6 +1949,36 @@ mod tests {
     }
 
     #[test]
+    fn a_file_renamed_while_the_app_was_closed_keeps_its_rating() {
+        let (sessions, folder, session) = session_with(burst(3, 90));
+        let meta = session.snapshot().photos[1].clone();
+        session.set_rating(meta.id, Rating::stars(4)).unwrap();
+        session.close();
+        drop(session);
+
+        fs::rename(
+            folder.path().join(&meta.rel_path),
+            folder.path().join("renamed_in_finder.CR3"),
+        )
+        .unwrap();
+
+        let reopened =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        let after = reopened.snapshot();
+        let renamed = after
+            .photos
+            .iter()
+            .find(|p| p.rel_path == "renamed_in_finder.CR3")
+            .expect("the renamed file is in the shoot");
+        assert_eq!(
+            after.ratings.get(&renamed.id.0),
+            Some(&Rating::stars(4)),
+            "the rating followed the file across a restart"
+        );
+        assert_eq!(after.ratings.len(), 1);
+    }
+
+    #[test]
     fn a_renamed_file_keeps_its_rating() {
         // REV-68: `PhotoId` is a hash of the path, so a rename would otherwise leave the rating
         // stranded on a row nothing points at. The rescan recognises the file by its inode, which
@@ -2117,13 +2167,17 @@ mod tests {
         first.flush();
         drop(first);
 
-        // The new shoot does not inherit the old *database*. (A sidecar the old session left beside
-        // `IMG_0001.CR3` is the photographer's data and would be imported by design, so the
-        // stand-in for "a fresh card" clears it.)
+        // The new shoot does not inherit the old *database*. The old card's files are gone and a
+        // new one's are in. (A sidecar the old session left beside `IMG_0001.CR3` is the
+        // photographer's data and would be imported by design, so the stand-in for "a fresh card"
+        // clears it.)
         std::fs::remove_file(folder.path().join("IMG_0001.xmp")).ok();
+        std::fs::remove_file(folder.path().join("IMG_0001.CR3")).unwrap();
         write_cr3(folder.path(), "IMG_0002.CR3", 2);
+        write_cr3(folder.path(), "IMG_0003.CR3", 3);
         let second =
             Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        assert_eq!(second.matched(), crate::store::MatchKind::Created);
         assert!(second.snapshot().ratings.is_empty());
         assert_eq!(second.snapshot().photos.len(), 2);
     }

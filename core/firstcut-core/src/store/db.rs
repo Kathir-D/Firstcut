@@ -97,6 +97,12 @@ impl Db {
 
         let (path, matched) = if path.exists() {
             (path.to_path_buf(), MatchKind::Exact)
+        } else if let Some(previous) = find_changed_session(sessions_dir, identity)? {
+            // The same folder with files added, removed, renamed or moved into a subfolder since
+            // it was last open (a cull in Finder, more photos off the card, a Finish). The name
+            // follows the fingerprint, so the session is re-homed under its new one.
+            rename_session(&previous, path)?;
+            (path.to_path_buf(), MatchKind::Exact)
         } else {
             match find_moved_session(sessions_dir, identity)? {
                 Some((moved_path, from)) => {
@@ -356,6 +362,88 @@ fn rename_session(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Looks for an earlier session of this same folder (same volume and path) whose files have
+/// changed since, so the fingerprint no longer names it.
+///
+/// It is the same shoot when enough of the photos it knew are still in the folder, matched by file
+/// name and size wherever they now are, so a photo moved into `_Not kept/` still counts: at least
+/// one, and at least a tenth of the smaller of the two sets. Culling most of a shoot away (only
+/// the kept tenth is left) or adding a second card to it both qualify; a reshoot (the old files
+/// gone, a new card copied in) does not, and gets its own session as before. Among several, the
+/// most recently used wins.
+fn find_changed_session(sessions_dir: &Path, identity: &FolderIdentity) -> Result<Option<PathBuf>> {
+    let Ok(entries) = std::fs::read_dir(sessions_dir) else {
+        return Ok(None);
+    };
+    let prefix = identity.db_file_prefix();
+    let candidates: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|e| e.to_str()) == Some("sqlite")
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&prefix))
+        })
+        .collect();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    let files = super::identity::image_files(&identity.folder)?;
+    let file_name = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
+    let here: std::collections::HashSet<(String, u64)> = files
+        .iter()
+        .map(|(rel, size)| (file_name(rel), *size))
+        .collect();
+
+    let mut best: Option<(PathBuf, i64)> = None;
+    for path in candidates {
+        let Some((_, folder_path, updated_at)) = read_session_header(&path) else {
+            continue;
+        };
+        if Path::new(&folder_path) != identity.folder {
+            continue;
+        }
+        let Some(known) = read_present_photos(&path) else {
+            continue;
+        };
+        let still_here = known
+            .iter()
+            .filter(|(rel, size)| here.contains(&(file_name(rel), *size)))
+            .count();
+        let smaller = known.len().min(files.len());
+        if still_here == 0 || still_here * 10 < smaller {
+            continue;
+        }
+        if best
+            .as_ref()
+            .is_none_or(|(_, best_at)| updated_at >= *best_at)
+        {
+            best = Some((path, updated_at));
+        }
+    }
+    Ok(best.map(|(path, _)| path))
+}
+
+/// `(relative path, size)` of the photos a session last saw, read without writing anything.
+fn read_present_photos(path: &Path) -> Option<Vec<(String, u64)>> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    let mut stmt = conn
+        .prepare("SELECT rel_path, file_size FROM photos WHERE present = 1")
+        .ok()?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+            ))
+        })
+        .ok()?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().ok()
+}
+
 /// Looks for a session whose fingerprint matches *and* whose folder is no longer where it was,
 /// i.e. the same shoot in a folder that was moved or renamed.
 ///
@@ -536,13 +624,70 @@ mod tests {
         let first_path = first.path().to_path_buf();
         drop(first);
 
-        // Same folder, different files: that is a different shoot, so the old session is left
-        // alone rather than being overwritten.
-        shoot(shoot_dir.path(), 5);
+        // Same folder, different files: the old card's photos are gone and a new card was copied
+        // in, reusing the names. That is a different shoot, so the old session is left alone
+        // rather than being overwritten.
+        for i in 1..=5 {
+            fs::write(
+                shoot_dir.path().join(format!("IMG_{i:04}.CR3")),
+                vec![1u8; 40],
+            )
+            .unwrap();
+        }
         let second = Db::open_in(sessions.path(), shoot_dir.path()).unwrap();
         assert_eq!(second.matched(), &MatchKind::Created);
         assert_ne!(second.path(), first_path);
         assert!(first_path.exists(), "the old session must not be touched");
+    }
+
+    #[test]
+    fn a_folder_culled_or_added_to_keeps_its_session() {
+        let sessions = new_sessions_dir();
+        let shoot_dir = tempfile::tempdir().unwrap();
+        shoot(shoot_dir.path(), 20);
+        let first = Db::open_in(sessions.path(), shoot_dir.path()).unwrap();
+        let first_path = first.path().to_path_buf();
+        for i in 1..=20u64 {
+            records::upsert_photo(&first, &test_photo(i, &format!("IMG_{i:04}.CR3"), 16)).unwrap();
+        }
+        drop(first);
+
+        // Finish moved most of the shoot into a subfolder and trashed some more; then a second
+        // card's worth was copied in.
+        fs::create_dir(shoot_dir.path().join("_Not kept")).unwrap();
+        for i in 1..=15 {
+            let name = format!("IMG_{i:04}.CR3");
+            fs::rename(
+                shoot_dir.path().join(&name),
+                shoot_dir.path().join("_Not kept").join(&name),
+            )
+            .unwrap();
+        }
+        for i in 16..=18 {
+            fs::remove_file(shoot_dir.path().join(format!("IMG_{i:04}.CR3"))).unwrap();
+        }
+        for i in 21..=60 {
+            fs::write(
+                shoot_dir.path().join(format!("IMG_{i:04}.CR3")),
+                vec![2u8; 30],
+            )
+            .unwrap();
+        }
+
+        let db = Db::open_in(sessions.path(), shoot_dir.path()).unwrap();
+        assert_eq!(db.matched(), &MatchKind::Exact);
+        assert_eq!(
+            records::photos_count(&db).unwrap(),
+            20,
+            "the session came with it"
+        );
+        assert!(
+            !first_path.exists(),
+            "and was re-homed under the folder's new name"
+        );
+        drop(db);
+        let again = Db::open_in(sessions.path(), shoot_dir.path()).unwrap();
+        assert_eq!(records::photos_count(&again).unwrap(), 20);
     }
 
     #[test]

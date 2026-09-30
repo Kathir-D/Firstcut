@@ -127,7 +127,13 @@ Not blocking v0.1.0; an agent can do these.
   at the destination renames the whole group. **Sidecar naming** now follows §11: Firstcut writes
   `IMG_0001.xmp` (Lightroom's name; it wrote `IMG_0001.CR3.xmp` before, which Lightroom never
   reads). A darktable-style `IMG_0001.CR3.xmp` is still read on import when there is no Lightroom
-  one, and moves with its photo, but is never renamed or rewritten (it may hold darktable's edits).
+  one, and moves with its photo, but is never renamed or rewritten (it may hold darktable's edits). **Sessions
+  survive a changed folder:** the database name includes a fingerprint of every image's name and
+  size, so deleting one photo in Finder, copying a second card in, or a Finish into `_Not kept/`
+  opened a blank session next time (ratings, batches and Finish undo gone). An earlier session for
+  the same path is now re-homed when its photos are mostly still there (see
+  docs/contracts/session-api.md), and renames made while the app was closed are reconciled at
+  open, not only on rescan.
 - **Next, in order:**
   1. Wire the keep threshold from the app: `AppModel` must call `session.setKeepThreshold(...)` after
      a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.
