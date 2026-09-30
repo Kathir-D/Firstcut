@@ -1064,7 +1064,7 @@ pub fn import_ratings_from_sidecars(folder: &Path, photos: &[PhotoMeta]) -> Vec<
     let mapping = XmpMapping::default();
     let mut imported = Vec::new();
     for meta in photos {
-        let sidecar = folder.join(sidecar_path(&meta.rel_path));
+        let sidecar = crate::xmp::existing_sidecar(folder, &meta.rel_path);
         let Ok(Some(values)) = read_sidecar(&sidecar) else {
             continue;
         };
@@ -1521,7 +1521,7 @@ mod tests {
         session.set_rating(meta.id, Rating::stars(4)).unwrap();
         session.flush();
 
-        let sidecar = folder.path().join(format!("{}.xmp", meta.rel_path));
+        let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
         let values = crate::xmp::read_sidecar(&sidecar)
             .unwrap()
             .expect("a sidecar");
@@ -1570,7 +1570,7 @@ mod tests {
             .unwrap();
         session.flush();
 
-        let sidecar = folder.path().join(format!("{}.xmp", meta.rel_path));
+        let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
         let values = crate::xmp::read_sidecar(&sidecar)
             .unwrap()
             .expect("a sidecar");
@@ -1591,7 +1591,7 @@ mod tests {
             .unwrap();
         session.flush();
 
-        let sidecar = folder.path().join(format!("{}.xmp", meta.rel_path));
+        let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
         let values = crate::xmp::read_sidecar(&sidecar)
             .unwrap()
             .expect("a sidecar");
@@ -1627,7 +1627,7 @@ mod tests {
 
         // The sidecar follows the database, so Lightroom sees the same value the app does.
         session.flush();
-        let sidecar = folder.path().join(format!("{}.xmp", meta.rel_path));
+        let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
         assert_eq!(
             crate::xmp::read_sidecar(&sidecar).unwrap().unwrap().rating,
             Some(4)
@@ -1682,7 +1682,7 @@ mod tests {
             session.set_rating(meta.id, Rating::stars(stars)).unwrap();
         }
         session.flush();
-        let sidecar = folder.path().join(format!("{}.xmp", meta.rel_path));
+        let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
         let text = fs::read_to_string(&sidecar).unwrap();
         assert_eq!(
             text.matches("xmp:Rating").count(),
@@ -1855,7 +1855,7 @@ mod tests {
         session.set_rating(photos[1].id, Rating::stars(5)).unwrap();
         session.flush();
         let read = |meta: &PhotoMeta| {
-            crate::xmp::read_sidecar(&folder.path().join(format!("{}.xmp", meta.rel_path)))
+            crate::xmp::read_sidecar(&folder.path().join(crate::xmp::sidecar_path(&meta.rel_path)))
                 .unwrap()
                 .unwrap()
         };
@@ -1873,7 +1873,7 @@ mod tests {
         let meta = session.snapshot().photos[0].clone();
         session.set_rating(meta.id, Rating::keep()).unwrap();
         session.flush();
-        let sidecar = folder.path().join(format!("{}.xmp", meta.rel_path));
+        let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
         assert_eq!(
             crate::xmp::read_sidecar(&sidecar).unwrap().unwrap().rating,
             Some(5)
@@ -2120,7 +2120,7 @@ mod tests {
         // The new shoot does not inherit the old *database*. (A sidecar the old session left beside
         // `IMG_0001.CR3` is the photographer's data and would be imported by design, so the
         // stand-in for "a fresh card" clears it.)
-        std::fs::remove_file(folder.path().join("IMG_0001.CR3.xmp")).ok();
+        std::fs::remove_file(folder.path().join("IMG_0001.xmp")).ok();
         write_cr3(folder.path(), "IMG_0002.CR3", 2);
         let second =
             Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
@@ -2136,7 +2136,7 @@ mod tests {
         let photos = burst(3, 90);
         for meta in &photos {
             write_cr3(folder.path(), &meta.rel_path, 1);
-            let sidecar = folder.path().join(format!("{}.xmp", meta.rel_path));
+            let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
             let mut values = crate::xmp::XmpValues::rating(4);
             values.label = Some("Green".to_string());
             crate::xmp::write_sidecar(&sidecar, &values).unwrap();
@@ -2167,7 +2167,7 @@ mod tests {
         let photos = burst(1, 90);
         let meta = &photos[0];
         write_cr3(folder.path(), &meta.rel_path, 1);
-        let sidecar = folder.path().join(format!("{}.xmp", meta.rel_path));
+        let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
         fs::write(&sidecar, "<?xml version=\"1.0\"?>\n<photos/>").unwrap();
 
         assert!(import_ratings_from_sidecars(folder.path(), &photos).is_empty());
@@ -2426,7 +2426,7 @@ mod tests {
         let sessions = tempfile::tempdir().unwrap();
         let session =
             Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
-        let sidecar = folder.path().join("IMG_0001.JPG.xmp");
+        let sidecar = folder.path().join("IMG_0001.xmp");
         let id = crate::batch::photo_id("IMG_0001.JPG");
 
         // Off: the rating is in the database and nothing is written beside the photo.
@@ -2459,18 +2459,37 @@ mod tests {
     }
 
     #[test]
+    fn a_first_open_also_reads_a_darktable_named_sidecar() {
+        // No `IMG_0002.xmp`, but an `IMG_0002.JPG.xmp` from darktable (or an older Firstcut): its
+        // rating is imported, and the file is left exactly as it was.
+        let folder = six_jpegs();
+        let legacy = folder.path().join("IMG_0002.JPG.xmp");
+        crate::xmp::write_sidecar(&legacy, &crate::xmp::document::XmpValues::rating(3)).unwrap();
+        let before = fs::read(&legacy).unwrap();
+        let sessions = tempfile::tempdir().unwrap();
+        let session =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        let id = crate::batch::photo_id("IMG_0002.JPG");
+        assert_eq!(
+            session.snapshot().ratings.get(&id.0).map(|r| r.stars),
+            Some(3)
+        );
+        assert_eq!(fs::read(&legacy).unwrap(), before);
+    }
+
+    #[test]
     fn a_first_open_imports_the_ratings_already_in_sidecars() {
         // Rated in Lightroom, opened in Firstcut for the first time: no database, ratings only in
         // the sidecars. They must be there, and the sidecars must be left exactly as they were.
         let folder = six_jpegs();
         for (name, stars) in [("IMG_0001.JPG", 5u8), ("IMG_0003.JPG", 2)] {
             crate::xmp::write_sidecar(
-                &folder.path().join(format!("{name}.xmp")),
+                &folder.path().join(crate::xmp::sidecar_path(name)),
                 &crate::xmp::document::XmpValues::rating(i64::from(stars)),
             )
             .unwrap();
         }
-        let before = fs::read_to_string(folder.path().join("IMG_0001.JPG.xmp")).unwrap();
+        let before = fs::read_to_string(folder.path().join("IMG_0001.xmp")).unwrap();
 
         let sessions = tempfile::tempdir().unwrap();
         let session =
@@ -2487,7 +2506,7 @@ mod tests {
 
         session.flush();
         assert_eq!(
-            fs::read_to_string(folder.path().join("IMG_0001.JPG.xmp")).unwrap(),
+            fs::read_to_string(folder.path().join("IMG_0001.xmp")).unwrap(),
             before,
             "importing must not rewrite the sidecar"
         );
@@ -2509,7 +2528,7 @@ mod tests {
         session.flush();
         for n in 1..=6 {
             fs::remove_file(folder.path().join(format!("IMG_{n:04}.JPG"))).unwrap();
-            fs::remove_file(folder.path().join(format!("IMG_{n:04}.JPG.xmp"))).ok();
+            fs::remove_file(folder.path().join(format!("IMG_{n:04}.xmp"))).ok();
         }
         let scan = session.rescan().expect("an empty folder is a valid answer");
         assert!(scan.photos.is_empty());

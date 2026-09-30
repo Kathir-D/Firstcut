@@ -378,7 +378,7 @@ pub fn plan_finish(
                 }
                 UnkeptAction::MarkRejectedInXmp => {
                     // The sidecar is the file being changed, so that is what the op points at.
-                    let sidecar = PathBuf::from(format!("{}.xmp", photo.rel_path));
+                    let sidecar = crate::xmp::sidecar_path(&photo.rel_path);
                     plan.ops.push(FileOp::new(
                         FileOpKind::MarkRejected,
                         resolve(folder, &sidecar.to_string_lossy())
@@ -429,9 +429,14 @@ fn group_files(folder: &Path, photo: &PhotoRow) -> Vec<GroupFile> {
 
     // A sidecar Firstcut has written is part of the group even if it was not there when the
     // folder was scanned: a group that left its rating behind would look unrated in Lightroom.
-    let sidecar = format!("{}.xmp", photo.rel_path);
-    if !relatives.contains(&sidecar) {
-        relatives.push(sidecar);
+    for sidecar in [
+        crate::xmp::sidecar_path(&photo.rel_path),
+        crate::xmp::legacy_sidecar_path(&photo.rel_path),
+    ] {
+        let sidecar = sidecar.to_string_lossy().into_owned();
+        if !relatives.contains(&sidecar) {
+            relatives.push(sidecar);
+        }
     }
 
     relatives
@@ -1199,7 +1204,7 @@ mod tests {
     fn a_move_takes_the_whole_group_and_undo_puts_every_file_back() {
         let dir = tempfile::tempdir().unwrap();
         let kept = dir.path().join("kept");
-        let sources: Vec<PathBuf> = ["IMG_0001.CR3", "IMG_0001.JPG", "IMG_0001.CR3.xmp"]
+        let sources: Vec<PathBuf> = ["IMG_0001.CR3", "IMG_0001.JPG", "IMG_0001.xmp"]
             .iter()
             .map(|name| {
                 let path = dir.path().join(name);
@@ -1231,10 +1236,7 @@ mod tests {
             kept.join("IMG_0001.JPG").exists(),
             "the JPEG travels with the RAW"
         );
-        assert!(
-            kept.join("IMG_0001.CR3.xmp").exists(),
-            "so does the sidecar"
-        );
+        assert!(kept.join("IMG_0001.xmp").exists(), "so does the sidecar");
 
         let undone = undo_ops(&done);
         assert_eq!(undone.len(), 3);
@@ -1379,8 +1381,11 @@ mod tests {
             b"the raw bytes, exactly",
             "the RAW is never rewritten"
         );
-        let sidecar = dir.path().join("IMG_0006.CR3.xmp");
-        assert!(sidecar.exists(), "the sidecar is next to the RAW");
+        let sidecar = dir.path().join("IMG_0006.xmp");
+        assert!(
+            sidecar.exists(),
+            "the sidecar is next to the RAW, named as Lightroom names it"
+        );
         let text = fs::read_to_string(&sidecar).unwrap();
         assert!(
             text.contains("-1"),
@@ -1416,7 +1421,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             fs::write(dir.path().join("IMG_0001.CR3"), vec![0u8; 1000]).unwrap();
             fs::write(dir.path().join("IMG_0001.JPG"), vec![0u8; 100]).unwrap();
-            fs::write(dir.path().join("IMG_0001.CR3.xmp"), b"<x/>").unwrap();
+            fs::write(dir.path().join("IMG_0001.xmp"), b"<x/>").unwrap();
             fs::write(dir.path().join("IMG_0002.CR3"), vec![0u8; 2000]).unwrap();
             fs::create_dir(dir.path().join("_Not kept")).unwrap();
             Shoot { dir }
@@ -1432,7 +1437,7 @@ mod tests {
                     1,
                     "IMG_0001.CR3",
                     1000,
-                    vec!["IMG_0001.JPG", "IMG_0001.CR3.xmp"],
+                    vec!["IMG_0001.JPG", "IMG_0001.xmp"],
                 ),
                 photo(2, "IMG_0002.CR3", 2000, vec![]),
             ]
@@ -1653,7 +1658,7 @@ mod tests {
         assert_eq!(group.len(), 3, "{group:?}");
         assert!(group.contains(&"IMG_0001.CR3".to_string()));
         assert!(group.contains(&"IMG_0001.JPG".to_string()));
-        assert!(group.contains(&"IMG_0001.CR3.xmp".to_string()));
+        assert!(group.contains(&"IMG_0001.xmp".to_string()));
 
         for op in plan.ops.iter().filter(|op| op.from.contains("IMG_0001")) {
             let to = op.to.as_deref().expect("a move has a destination");
@@ -1676,6 +1681,25 @@ mod tests {
     fn a_sidecar_written_after_the_scan_still_travels_with_the_group() {
         let shoot = Shoot::new();
         // Firstcut has now written a sidecar for the second photo as well.
+        fs::write(shoot.path().join("IMG_0002.xmp"), b"<x:xmpmeta/>").unwrap();
+        let plan = plan_finish(
+            shoot.path(),
+            &shoot.photos(),
+            &HashMap::new(),
+            &options(UnkeptAction::MoveToTrash, KeptAction::None),
+            0,
+        );
+        let mut group = file_names(&plan, "IMG_0002");
+        group.sort();
+        assert_eq!(group, vec!["IMG_0002.CR3", "IMG_0002.xmp"]);
+    }
+
+    #[test]
+    fn a_darktable_named_sidecar_travels_with_the_group_too() {
+        // `IMG_0002.CR3.xmp` is darktable's name (and the one Firstcut used to write). It belongs to
+        // the photo, so leaving it behind would strand its edit history in the old folder.
+        let shoot = Shoot::new();
+        fs::write(shoot.path().join("IMG_0002.xmp"), b"<x:xmpmeta/>").unwrap();
         fs::write(shoot.path().join("IMG_0002.CR3.xmp"), b"<x:xmpmeta/>").unwrap();
         let plan = plan_finish(
             shoot.path(),
@@ -1686,7 +1710,10 @@ mod tests {
         );
         let mut group = file_names(&plan, "IMG_0002");
         group.sort();
-        assert_eq!(group, vec!["IMG_0002.CR3", "IMG_0002.CR3.xmp"]);
+        assert_eq!(
+            group,
+            vec!["IMG_0002.CR3", "IMG_0002.CR3.xmp", "IMG_0002.xmp"]
+        );
     }
 
     #[test]
@@ -1903,7 +1930,7 @@ mod tests {
         );
         assert_eq!(
             targets(&plan),
-            vec!["IMG_0001.CR3", "IMG_0001.CR3.xmp", "IMG_0001.JPG"]
+            vec!["IMG_0001.CR3", "IMG_0001.JPG", "IMG_0001.xmp"]
         );
     }
 
@@ -1926,7 +1953,7 @@ mod tests {
         );
         assert_eq!(
             targets(&plan),
-            vec!["IMG_0001-2.CR3", "IMG_0001-2.CR3.xmp", "IMG_0001-2.JPG"]
+            vec!["IMG_0001-2.CR3", "IMG_0001-2.JPG", "IMG_0001-2.xmp"]
         );
     }
 
@@ -2197,13 +2224,13 @@ mod tests {
     fn marking_rejected_writes_the_sidecar_even_when_there_is_none_yet() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("IMG_0002.CR3"), b"raw").unwrap();
-        let sidecar = dir.path().join("IMG_0002.CR3.xmp");
+        let sidecar = dir.path().join("IMG_0002.xmp");
         let op = FileOp::new(FileOpKind::MarkRejected, sidecar.to_string_lossy(), None);
         let done = execute_ops(&[op]);
         assert!(done[0].is_done(), "{:?}", done[0].error);
         let text = fs::read_to_string(&sidecar).unwrap();
         assert!(text.contains("-1"), "{text}");
-        assert!(!dir.path().join("IMG_0002.CR3.xmp.xmp").exists());
+        assert!(!dir.path().join("IMG_0002.xmp.xmp").exists());
     }
 
     #[test]

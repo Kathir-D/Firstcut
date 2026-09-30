@@ -123,8 +123,11 @@ Not blocking v0.1.0; an agent can do these.
   the threshold changes; they update the next time that photo's rating changes. **Rating undo/redo:**
   redo replays in the right order, a new rating clears the redo stack, and ⌘Z with the real core
   updates the photo on screen (the core and Swift disagreed on which side of an undo is which). **Moved
-  groups** keep their sidecar name (`IMG_0001.CR3.xmp` used to become `IMG_0001.xmp`, which Firstcut
-  does not read back), and a companion already at the destination renames the whole group.
+  groups** keep each member's name (a sidecar used to be renamed on the way), and a companion already
+  at the destination renames the whole group. **Sidecar naming** now follows §11: Firstcut writes
+  `IMG_0001.xmp` (Lightroom's name; it wrote `IMG_0001.CR3.xmp` before, which Lightroom never
+  reads). A darktable-style `IMG_0001.CR3.xmp` is still read on import when there is no Lightroom
+  one, and moves with its photo, but is never renamed or rewritten (it may hold darktable's edits).
 - **Next, in order:**
   1. Wire the keep threshold from the app: `AppModel` must call `session.setKeepThreshold(...)` after
      a folder opens and when `settings.keepThreshold` changes (see §0.3). Needs `AppModel.swift`.

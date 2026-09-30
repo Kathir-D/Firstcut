@@ -398,10 +398,18 @@ pub fn scan_folder(folder: &Path) -> Result<ScanResult, ScanError> {
             .filter(|&i| !matches!(candidates[i].kind, FileKind::Raw(_)))
             .map(|i| candidates[i].rel_path.clone())
             .collect();
-        // A sidecar is named after the file, not the group, and is not a photo in its own right.
-        let sidecar = format!("{}.xmp", candidates[primary].rel_path);
-        if root.join(&sidecar).is_file() {
-            companions.push(sidecar);
+        // A sidecar is not a photo in its own right. Lightroom's `IMG_0001.xmp` is the one
+        // Firstcut writes; darktable's `IMG_0001.CR3.xmp` belongs to the same photo and travels
+        // with it too.
+        let primary_path = &candidates[primary].rel_path;
+        for sidecar in [
+            crate::xmp::sidecar_path(primary_path),
+            crate::xmp::legacy_sidecar_path(primary_path),
+        ] {
+            let sidecar = sidecar.to_string_lossy().into_owned();
+            if root.join(&sidecar).is_file() && !companions.contains(&sidecar) {
+                companions.push(sidecar);
+            }
         }
         companions.sort();
 

@@ -381,9 +381,32 @@ pub fn template(values: &XmpValues) -> String {
     )
 }
 
-/// The path of the sidecar for a photo, Lightroom's way: the same base name with `.xmp`.
+/// The path of the sidecar for a photo, Lightroom's way (task.md §11): the photo's base name with
+/// `.xmp`, so `Sat/IMG_0001.CR3` → `Sat/IMG_0001.xmp`. A RAW+JPEG pair shares it, as in Lightroom.
+///
+/// Firstcut used to write `IMG_0001.CR3.xmp`, which Lightroom never reads, so a rating made here
+/// did not reach it. That name is darktable's (and one Capture One reads); such a file is read as a
+/// fallback when importing ([`existing_sidecar`]) and moves with its photo, but is never renamed or
+/// rewritten: it may hold another app's edit history.
 pub fn sidecar_path(raw_rel_path: &str) -> PathBuf {
+    PathBuf::from(raw_rel_path).with_extension("xmp")
+}
+
+/// The sidecar name earlier builds wrote (and darktable writes): the full file name plus `.xmp`.
+pub fn legacy_sidecar_path(raw_rel_path: &str) -> PathBuf {
     PathBuf::from(format!("{raw_rel_path}.xmp"))
+}
+
+/// The sidecar to read for a photo in `folder`: the Lightroom name, else a legacy one, else the
+/// Lightroom name (which does not exist yet).
+pub fn existing_sidecar(folder: &std::path::Path, raw_rel_path: &str) -> PathBuf {
+    let current = folder.join(sidecar_path(raw_rel_path));
+    let legacy = folder.join(legacy_sidecar_path(raw_rel_path));
+    if !current.exists() && legacy.is_file() {
+        legacy
+    } else {
+        current
+    }
 }
 
 /// The base name a sidecar belongs to, given `<basename>.xmp`.
@@ -633,8 +656,14 @@ mod tests {
 
     #[test]
     fn sidecar_paths_follow_lightroom() {
+        assert_eq!(sidecar_path("IMG_0001.CR3"), PathBuf::from("IMG_0001.xmp"));
         assert_eq!(
-            sidecar_path("IMG_0001.CR3"),
+            sidecar_path("Sat.1/IMG_0001.JPG"),
+            PathBuf::from("Sat.1/IMG_0001.xmp"),
+            "only the last extension goes, never a dot in a folder name"
+        );
+        assert_eq!(
+            legacy_sidecar_path("IMG_0001.CR3"),
             PathBuf::from("IMG_0001.CR3.xmp")
         );
         assert_eq!(

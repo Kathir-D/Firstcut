@@ -22,7 +22,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub use document::{SidecarValues, XmpDocument, XmpValues, sidecar_base, sidecar_path};
+pub use document::{
+    SidecarValues, XmpDocument, XmpValues, existing_sidecar, legacy_sidecar_path, sidecar_base,
+    sidecar_path,
+};
 pub use mapping::{REJECTED, XmpMapping, sidecar_label};
 pub use writer::{PendingWrite, XmpWriter};
 
