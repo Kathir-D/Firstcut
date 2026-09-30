@@ -62,7 +62,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
 
     private let backendBox = SessionBox()
     private let sessionFactory: (URL) throws -> any SessionBackend
-    private let asyncSessionFactory: ((URL) async throws -> any SessionBackend)?
+    private let asyncSessionFactory: (@MainActor (URL) async throws -> any SessionBackend)?
     private var openTask: Task<Void, Never>?
     private let settingsStore: SettingsStore
     private let recentsStore: RecentFoldersStore

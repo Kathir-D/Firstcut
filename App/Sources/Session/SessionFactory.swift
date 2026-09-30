@@ -67,9 +67,9 @@ extension SessionFactory {
     /// nil when the generated bindings have no `Session`, in which case the caller keeps using the
     /// synchronous fallback.
     @MainActor
-    public static func liveAsync() -> ((URL) async throws -> any SessionBackend)? {
+    public static func liveAsync() -> (@MainActor (URL) async throws -> any SessionBackend)? {
         guard FirstcutCoreBridge.hasSessionAPI else { return nil }
-        return { url in
+        return { @MainActor url in
             let bridge = SessionListenerBridge()
             let opened = try await Task.detached(priority: .userInitiated) {
                 let core = try UniFFICoreSession.make(folder: url.path, listener: bridge)
