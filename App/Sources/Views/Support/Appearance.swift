@@ -11,7 +11,7 @@ enum Appearance {
   static let filmstripCornerRadius: CGFloat = 6
   static let filmstripPlateCornerRadius: CGFloat = 10
   static let infoPanelWidth: CGFloat = 288
-  static let hudMaxWidth: CGFloat = 420
+  static let hudMaxWidth: CGFloat = 520
 
   static let glassCornerRadius: CGFloat = 10
   static let capsuleCornerRadius: CGFloat = 18

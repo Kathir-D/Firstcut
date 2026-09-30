@@ -60,7 +60,7 @@ struct RootView: View {
         if state.isHUDVisible {
           VStack {
             Spacer(minLength: 0)
-            ProgressHUD(progress: state.progress)
+            ProgressHUD(progress: state.progress, photo: state.currentPhoto, mode: state.ratingMode)
               .padding(.bottom, Appearance.filmstripHeight + 16)
           }
           .allowsHitTesting(false)
