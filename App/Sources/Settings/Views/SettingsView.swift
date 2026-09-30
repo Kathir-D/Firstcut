@@ -62,17 +62,15 @@ private struct GeneralSettingsTab: View {
           Text("Stars").tag(RatingMode.stars)
           Text("Keep / Not keep").tag(RatingMode.keep)
         }
-        Text(
-          model.settings.general.ratingMode == .stars
-            ? "1–5 stars per photo. 4 and 5 count as a keep."
-            : "Every photo starts as Not keep. One key keeps it."
-        )
-        .font(.footnote).foregroundStyle(.secondary)
-        Toggle("Move to the next photo after rating", isOn: settingBinding(model, \.general.autoAdvance))
-        Picker("A star rating counts as a keep from", selection: settingBinding(model, \.general.keepThreshold)) {
-          Text("5 stars").tag(5)
-          Text("4 stars").tag(4)
+        Text(ratingModeHint)
+          .font(.footnote).foregroundStyle(.secondary)
+        if model.settings.general.ratingMode == .stars {
+          Picker("A star rating counts as a keep from", selection: settingBinding(model, \.general.keepThreshold)) {
+            Text("5 stars").tag(5)
+            Text("4 stars").tag(4)
+          }
         }
+        Toggle("Move to the next photo after rating", isOn: settingBinding(model, \.general.autoAdvance))
       }
 
       Section("Navigation") {
@@ -102,6 +100,15 @@ private struct GeneralSettingsTab: View {
     }
     .formStyle(.grouped)
     .padding(.horizontal, 8)
+  }
+
+  private var ratingModeHint: String {
+    guard model.settings.general.ratingMode == .stars else {
+      return "Every photo starts as Not keep. One key keeps it."
+    }
+    return model.settings.general.keepThreshold >= 5
+      ? "1–5 stars per photo. Only 5 stars counts as a keep."
+      : "1–5 stars per photo. 4 and 5 stars count as a keep."
   }
 
   private var unkeptKind: Binding<UnkeptAction> {
@@ -310,6 +317,9 @@ private struct KeyboardSettingsTab: View {
       }
       .padding(12)
     }
+    // Closing Settings (or switching tab) mid-recording must hand the keys back to the main
+    // window; otherwise the key router would stay muted.
+    .onDisappear { if recording != nil { stopRecording() } }
   }
 
   private func row(_ entry: CommandCatalogEntry) -> some View {
