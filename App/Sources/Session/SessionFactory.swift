@@ -58,6 +58,32 @@ public enum SessionFactory {
     public static var canFinish: Bool { FirstcutCoreBridge.hasSessionAPI }
 }
 
+extension SessionFactory {
+    /// The shipped open, off the main thread. `Session::open` reads every header in the folder (a
+    /// 1,500-photo shoot is seconds of work), and doing that on the main actor froze the window and
+    /// meant the loading screen never got a frame. The slow part runs detached; only wrapping the
+    /// finished session in its main-actor backend comes back to the main actor.
+    ///
+    /// nil when the generated bindings have no `Session`, in which case the caller keeps using the
+    /// synchronous fallback.
+    @MainActor
+    public static func liveAsync() -> ((URL) async throws -> any SessionBackend)? {
+        guard FirstcutCoreBridge.hasSessionAPI else { return nil }
+        return { url in
+            let bridge = SessionListenerBridge()
+            let opened = try await Task.detached(priority: .userInitiated) {
+                let core = try UniFFICoreSession.make(folder: url.path, listener: bridge)
+                return (core: core, snapshot: core.snapshot(), matched: core.matched)
+            }.value
+            return await MainActor.run {
+                CoreSessionBackend(
+                    core: opened.core, initial: opened.snapshot, bridge: bridge,
+                    matched: opened.matched)
+            }
+        }
+    }
+}
+
 /// A session over a real folder, with no persistence behind it.
 @MainActor
 public enum FileSession {

@@ -62,6 +62,8 @@ public final class AppModel: SessionListener, KeyRouterSource {
 
     private let backendBox = SessionBox()
     private let sessionFactory: (URL) throws -> any SessionBackend
+    private let asyncSessionFactory: ((URL) async throws -> any SessionBackend)?
+    private var openTask: Task<Void, Never>?
     private let settingsStore: SettingsStore
     private let recentsStore: RecentFoldersStore
     private var keymapStore: KeymapStore
@@ -92,6 +94,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         }
         images = dependencies.images
         sessionFactory = dependencies.sessionFactory
+        asyncSessionFactory = dependencies.asyncSessionFactory
         settings = dependencies.settings
         settingsStore = dependencies.settingsStore
         recentsStore = RecentFoldersStore(directory: dependencies.settingsStore.directory)
@@ -188,6 +191,28 @@ public final class AppModel: SessionListener, KeyRouterSource {
     // MARK: - Opening a session
 
     public func open(folder url: URL) {
+        // The shipped app opens off the main thread, so the window stays alive and the loading
+        // screen is drawn while the core reads the folder. Without an async factory (tests,
+        // previews) it is the synchronous path below.
+        if let asyncSessionFactory {
+            openTask?.cancel()
+            phase = .loading(LoadProgress(title: "Opening \(url.lastPathComponent)", fraction: 0))
+            openTask = Task { [weak self] in
+                do {
+                    let session = try await asyncSessionFactory(url)
+                    guard !Task.isCancelled, let self else {
+                        session.flush()
+                        return
+                    }
+                    self.open(session, folderName: url.lastPathComponent)
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    self?.lastError = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
+                    self?.phase = .welcome
+                }
+            }
+            return
+        }
         do {
             let session = try sessionFactory(url)
             open(session, folderName: url.lastPathComponent)

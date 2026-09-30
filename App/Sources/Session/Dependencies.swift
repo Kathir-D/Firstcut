@@ -18,6 +18,9 @@ public struct Dependencies {
     /// How `AppModel.open(folder:)` turns a folder into a session. The shipped app replaces this with
     /// core-store's `Session.open`; previews point it at a fixture.
     public var sessionFactory: (URL) throws -> any SessionBackend
+    /// When set, `AppModel.open(folder:)` opens through this instead, off the main thread, showing
+    /// the loading screen meanwhile. nil (the tests, previews) keeps the synchronous factory.
+    public var asyncSessionFactory: ((URL) async throws -> any SessionBackend)?
 
     public init(
         backend: (any SessionBackend)? = nil,
@@ -28,7 +31,8 @@ public struct Dependencies {
         keymapStore: KeymapStore = KeymapStore(),
         sessionFactory: @escaping (URL) throws -> any SessionBackend = { url in
             MockSession(data: try MockSession.dataForFolder(url))
-        }
+        },
+        asyncSessionFactory: ((URL) async throws -> any SessionBackend)? = nil
     ) {
         self.backend = backend
         self.images = images
@@ -37,6 +41,7 @@ public struct Dependencies {
         self.settingsStore = settingsStore
         self.keymapStore = keymapStore
         self.sessionFactory = sessionFactory
+        self.asyncSessionFactory = asyncSessionFactory
     }
 
     /// Everything on disk: real Application Support, the keymap shipped in the bundle, the real
@@ -59,7 +64,8 @@ public struct Dependencies {
             settings: settings,
             settingsStore: settingsStore,
             keymapStore: keymapStore,
-            sessionFactory: SessionFactory.live())
+            sessionFactory: SessionFactory.live(),
+            asyncSessionFactory: SessionFactory.liveAsync())
     }
 
     /// Fixtures (or a synthetic shoot) and a scratch directory, so a preview can't write over the
