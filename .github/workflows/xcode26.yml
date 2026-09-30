@@ -46,10 +46,18 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild build -project Firstcut.xcodeproj -scheme Firstcut \
-            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd 2>&1 | tee build.log
+
+      - name: Errors (compact)
+        if: failure()
+        run: grep -E "error:" build.log | sort -u | head -60 || true
 
       - name: Test
         run: |
           set -o pipefail
           xcodebuild test -project Firstcut.xcodeproj -scheme Firstcut \
-            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd 2>&1 | tee test.log
+
+      - name: Test failures (compact)
+        if: failure()
+        run: grep -E "error:|failed|Test Case.*failed" test.log | sort -u | head -60 || true
