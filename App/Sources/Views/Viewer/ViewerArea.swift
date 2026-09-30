@@ -73,12 +73,14 @@ struct PhotoViewerHostLayer: NSViewRepresentable {
   let photoID: PhotoID?
   let aspectRatio: Double
   let presentation: ViewerPresentation
+  var syncGroup: ViewerSyncGroup?
 
   func makeNSView(context: Context) -> PhotoViewerHostView {
     let view = PhotoViewerHostView(frame: .zero)
     view.aspectRatio = aspectRatio
     view.photoID = photoID
     view.viewerState = presentation
+    view.syncGroup = syncGroup
     return view
   }
 

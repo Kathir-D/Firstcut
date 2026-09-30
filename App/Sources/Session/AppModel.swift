@@ -666,9 +666,25 @@ public final class AppModel: SessionListener, KeyRouterSource {
     }
 
     public func undoFinish() {
-        guard case .report(let current, let report) = finish, report.undoable else { return }
-        let undoReport = backend.undoFinish()
+        guard case .report(let current, let report) = finish, report.undoable, !report.wasUndo else {
+            return
+        }
+        var undoReport = backend.undoFinish()
+        // One undo per run: the core consumes the run it reverses, so a second press would reverse
+        // an *earlier* Finish. The sheet reads `wasUndo` to drop the button.
+        undoReport.wasUndo = true
+        undoReport.undoable = false
         finish = .report(current, undoReport)
+    }
+
+    /// One step back through the sheet: dry run → options → summary. Nothing has touched the disk
+    /// in any of those stages, so going back is free.
+    public func backFinish() {
+        switch finish {
+        case .options(let summary, _): finish = .summary(summary)
+        case .dryRun(let summary, let options, _): finish = .options(summary, options)
+        default: break
+        }
     }
 
     public func cancelFinish() {

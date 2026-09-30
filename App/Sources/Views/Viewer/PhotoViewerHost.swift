@@ -37,6 +37,39 @@ protocol PhotoViewerHost: AnyObject {
 
   /// The zoom level currently presented, for the HUD. Read on demand, not pushed.
   var presentedZoom: Double { get }
+
+  /// Takes a zoom and spot from a peer in the same sync group. Must not broadcast again.
+  func applySynced(_ state: ViewerSyncGroup.State)
+
+  /// Hosts that share a group zoom and pan together (Compare view, task.md §9.6).
+  var syncGroup: ViewerSyncGroup? { get set }
+}
+
+/// Keeps several viewer hosts at the same zoom and the same spot, so two or more frames of a burst
+/// can be compared at 100% on the same detail. Members are held weakly: the group never keeps a
+/// closed pane alive.
+@MainActor
+final class ViewerSyncGroup {
+  struct State: Equatable {
+    var zoom: CGFloat
+    var center: CGPoint
+  }
+
+  private struct Member { weak var host: (any PhotoViewerHost)? }
+  private var members: [Member] = []
+
+  func add(_ host: any PhotoViewerHost) {
+    members.removeAll { $0.host == nil }
+    members.append(Member(host: host))
+  }
+
+  /// Called by the host the user is touching. Peers take the state without re-broadcasting.
+  func broadcast(_ state: State, from origin: any PhotoViewerHost) {
+    for member in members {
+      guard let host = member.host, host !== origin else { continue }
+      host.applySynced(state)
+    }
+  }
 }
 
 /// What the window tells the viewer: whether zoom is locked across photos, and which overlays to
@@ -112,6 +145,14 @@ final class PhotoViewerHostView: NSView {
       guard aspectRatio != oldValue else { return }
       guard let id = photoID, let host else { return }
       host.setPhoto(id, aspectRatio: aspectRatio)
+    }
+  }
+
+  /// Set before the first layout; every host in the group zooms and pans together.
+  var syncGroup: ViewerSyncGroup? {
+    didSet {
+      host?.syncGroup = syncGroup
+      if let host, let syncGroup { syncGroup.add(host) }
     }
   }
 

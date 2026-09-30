@@ -48,6 +48,9 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
   private var isZoomLocked = false
   private var presentation = ViewerPresentation.fit
 
+  /// Set by Compare: the other panes follow whatever the user does to this one.
+  var syncGroup: ViewerSyncGroup?
+
   // Gesture bookkeeping.
   private var mouseDownPoint: CGPoint?
   private var mouseDownCenter = CGPoint(x: 0.5, y: 0.5)
@@ -102,6 +105,16 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     presentation = state
     if lockChanged || overlaysChanged { updateOverlays() }
     layoutImage(animated: false)
+  }
+
+  func applySynced(_ state: ViewerSyncGroup.State) {
+    zoom = state.zoom
+    center = state.center
+    layoutImage(animated: false)
+  }
+
+  private func broadcast() {
+    syncGroup?.broadcast(.init(zoom: zoom, center: center), from: self)
   }
 
   func setViewportSize(_ size: CGSize) {
@@ -276,6 +289,7 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
       x: min(1, max(0, mouseDownCenter.x - (point.x - start.x) / size.width)),
       y: min(1, max(0, mouseDownCenter.y + (point.y - start.y) / size.height)))
     layoutImage(animated: false)
+    broadcast()
   }
 
   override func mouseUp(with event: NSEvent) {
@@ -295,6 +309,7 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
       zoom = oneToOne
     }
     layoutImage(animated: true)
+    broadcast()
   }
 
   override func scrollWheel(with event: NSEvent) {
@@ -308,6 +323,7 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
       x: min(1, max(0, center.x - event.scrollingDeltaX / size.width)),
       y: min(1, max(0, center.y - event.scrollingDeltaY / size.height)))
     layoutImage(animated: false)
+    broadcast()
   }
 
   @objc private func pinched(_ recognizer: NSMagnificationGestureRecognizer) {
@@ -337,6 +353,7 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
         center.y = min(1, max(0, center.y))
       }
       layoutImage(animated: false)
+      broadcast()
     default:
       break
     }

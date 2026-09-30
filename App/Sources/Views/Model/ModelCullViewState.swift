@@ -79,9 +79,24 @@ final class ModelCullViewState: CullViewState {
   var showsAFOverlay: Bool { model.afOverlay }
   var showsClippingOverlay: Bool { model.clippingOverlay }
   var isZoomLocked: Bool { model.viewer.zoomLock }
+  var finishStage: FinishStage { model.finish }
+  var folderURL: URL? { model.folderURL }
   var autoAdvanceEnabled: Bool { model.autoAdvance }
   var viewerBackgroundDarkness: Double { model.viewer.backgroundGray }
   var progress: CullProgress { model.progress }
+
+  func finish(_ action: FinishAction) {
+    switch action {
+    case .showOptions: model.showFinishOptions()
+    case .setUnkept(let unkept): model.updateFinishSettings { $0.unkept = unkept }
+    case .setKept(let kept): model.updateFinishSettings { $0.kept = kept }
+    case .preview: model.runFinishDryRun()
+    case .back: model.backFinish()
+    case .execute: model.executeFinish()
+    case .undo: model.undoFinish()
+    case .cancel: model.cancelFinish()
+    }
+  }
 
   func send(_ action: CullAction) {
     // The filmstrip selects by position *inside the current batch*, which is a navigation, not a

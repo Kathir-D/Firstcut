@@ -25,11 +25,14 @@ protocol CullViewState: AnyObject {
   var showsAFOverlay: Bool { get }
   var showsClippingOverlay: Bool { get }
   var isZoomLocked: Bool { get }
+  var finishStage: FinishStage { get }
+  var folderURL: URL? { get }
   var autoAdvanceEnabled: Bool { get }
   var viewerBackgroundDarkness: Double { get }
   var progress: CullProgress { get }
   var images: CullImageSource { get }
   func send(_ action: CullAction)
+  func finish(_ action: FinishAction)
 }
 
 /// A photo as the views consume it. REV-53 and REV-69: `tier` and `isKeep` are **values the model
@@ -139,4 +142,18 @@ enum CullAction {
   case toggleKeep
   case undo
   case redo
+}
+
+/// What the Finish sheet can ask for. Every step maps to one `AppModel` method; the sheet never
+/// changes the stage itself, so the model's state machine is the only thing that decides what is
+/// on screen.
+enum FinishAction {
+  case showOptions
+  case setUnkept(UnkeptAction)
+  case setKept(KeptAction)
+  case preview
+  case back
+  case execute
+  case undo
+  case cancel
 }

@@ -32,6 +32,8 @@ final class PreviewCullViewState: CullViewState {
   var showsAFOverlay = false
   var showsClippingOverlay = false
   var isZoomLocked = false
+  var finishStage: FinishStage = .hidden
+  var folderURL: URL? { nil }
   var autoAdvanceEnabled = false
   var viewerBackgroundDarkness: Double = 0.13
   private(set) var progress: CullProgress = CullProgress()
@@ -56,6 +58,10 @@ final class PreviewCullViewState: CullViewState {
   }
 
   // MARK: - CullViewState
+
+  func finish(_ action: FinishAction) {
+    if case .cancel = action { finishStage = .hidden }
+  }
 
   func send(_ action: CullAction) {
     switch action {

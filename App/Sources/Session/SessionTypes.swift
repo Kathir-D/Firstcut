@@ -329,11 +329,16 @@ public struct FinishReportData: Hashable, Sendable {
     public var done: Int
     public var failed: [FileOpFailure]
     public var undoable: Bool
+    /// True when this report is the result of an Undo Finish rather than of a Finish.
+    public var wasUndo: Bool
 
-    public init(done: Int = 0, failed: [FileOpFailure] = [], undoable: Bool = false) {
+    public init(
+        done: Int = 0, failed: [FileOpFailure] = [], undoable: Bool = false, wasUndo: Bool = false
+    ) {
         self.done = done
         self.failed = failed
         self.undoable = undoable
+        self.wasUndo = wasUndo
     }
 }
 

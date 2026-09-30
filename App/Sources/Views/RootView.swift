@@ -27,6 +27,15 @@ struct RootView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Appearance.windowBackground)
+    // Finish Cull (task.md §9.7). The stage is the model's; dismissing the sheet any other way
+    // than a button (Escape) is a cancel, so what is on screen never disagrees with the model.
+    .sheet(
+      isPresented: Binding(
+        get: { state.finishStage.isVisible },
+        set: { if !$0 { state.finish(.cancel) } })
+    ) {
+      FinishSheet(state: state)
+    }
   }
 
   /// Only reachable in `.culling` and `.finishing`, so nothing here can composite over the welcome
@@ -34,7 +43,7 @@ struct RootView: View {
   private var cullingLayout: some View {
     HStack(spacing: 0) {
       ZStack(alignment: .bottom) {
-        ViewerArea(state: state)
+        mainArea
 
         if state.isHUDVisible {
           VStack {
@@ -45,7 +54,8 @@ struct RootView: View {
           .allowsHitTesting(false)
         }
 
-        filmstrip
+        // The grid *is* the batch, so a filmstrip under it would show everything twice.
+        if state.viewMode != .grid { filmstrip }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -55,6 +65,19 @@ struct RootView: View {
       }
     }
     .animation(.easeInOut(duration: 0.18), value: state.isInfoPanelVisible)
+  }
+
+  /// The photograph area, by view mode (G / E / C).
+  @ViewBuilder
+  private var mainArea: some View {
+    switch state.viewMode {
+    case .loupe:
+      ViewerArea(state: state)
+    case .grid:
+      GridView(state: state)
+    case .compare(let count):
+      CompareView(state: state, count: count)
+    }
   }
 
   @ViewBuilder
