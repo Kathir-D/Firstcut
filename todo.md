@@ -123,18 +123,33 @@ Not blocking v0.1.0; an agent can do these.
   never called it. New seam method on `SessionBackend` and `CoreSessionAPI`, implemented in
   `UniFFICoreSession` and recorded by `MockSession`. Two tests in `SessionTests` fail if either
   call is removed (checked by mutation).
+- **Fixed (todo.md §0.5 item 2):** the thumbnail/preview cache no longer flickers away when the
+  watched folder changes. `ImageProvider.open` used to call `engine.reset()` unconditionally, so a
+  single file landing in (or leaving) the open folder blanked the filmstrip and re-decoded the whole
+  shoot at ~300 ms per CR3 (todo.md §7.1) — several minutes for Game1JENKS — while the user was in
+  the middle of rating it. `open` now distinguishes the two cases: a **different** folder resets
+  (ids are hashes of file names, so a stale entry would show the wrong photograph), while the
+  **same** folder with a different file set reconciles — it keeps every entry whose id is still
+  there and whose file is still the same size, and drops the rest. A decode in flight is checked
+  against both the epoch and the file's current size, so a file replaced under the same name cannot
+  be served as the old one. Two new tests; the "added a photo" one fails if the reconcile is undone.
+
 - **Next, in order:**
   1. ~~Wire the keep threshold from the app.~~ Done above.
-  2. Check whether the thumbnail/preview cache flickers or is dropped when the watched folder
-     changes (`AppModel.folderDidChange` and `Pipeline/ImageProvider.swift`).
+  2. ~~Check the cache on a folder change.~~ Done above.
   3. §7.5 work items: the CR3 full-size JPEG byte range next to `PRVW` (and the wrong "full-size"
      doc comment on `PRVW` in `meta/cr3.rs`), `firstcut bench --folder`, `os_signpost` names. Then
-     `firstcut bench --folder` **run on the photos** and the rows written into
-     `docs/qa/perf-baselines.md` — the measurement the previous sessions could not make.
-  4. Known and left from the bug review: sidecar ratings are imported only when a folder's session
+     run `firstcut bench --folder` **on the photos** and write the rows into
+     `docs/qa/perf-baselines.md` — the measurement earlier sessions could not make. All of this from
+     the **CLI in a shell**, never a GUI test host, so nothing raises a `~/Documents` consent prompt
+     with nobody there to answer it.
+  4. §7.5: one shared 256 px decode for the filmstrip and the visual signature
+     (`VisualSigWorker` decodes the file URL itself, so every photo is decoded twice today), and
+     the display image decoded from the JPEG byte range rather than the CR3 URL.
+  5. Known and left from the bug review: sidecar ratings are imported only when a folder's session
      is first created, so a Lightroom-rated second card copied into an open shoot is not imported; a
      different file saved under a known name (same path) inherits that name's rating.
-  5. UI polish from screenshots the app can now be launched to take.
+  6. UI polish from screenshots the app can now be launched to take.
 - **Still the owner's, for the reason that it is a judgement call, not for lack of a machine:** the
   ground truth in `tests/fixtures/ground-truth/` (an agent must not synthesise it), the
   Game1JENKS re-press decision, the "pick by eye" embedded-preview vs `CIRAWFilter` choice at

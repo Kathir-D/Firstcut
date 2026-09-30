@@ -282,6 +282,59 @@ struct ImageProviderTests {
         #expect(provider.thumbnail(for: 1, size: CGSize(width: 64, height: 48)) == nil)
     }
 
+    @Test("A photo added to the open folder keeps the pixels of the photos that are still there")
+    func addingAPhotoKeepsTheRestOfTheCache() async {
+        let shoot = ImageFixtures.shoot(count: 6)
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20, prefetchPixels: 128)
+        provider.open(folder: shoot.folder, photos: shoot.photos)
+        provider.setFocus(focus(shoot.photos.map(\.id), current: 1))
+        #expect(await provider.waitUntilIdle())
+        let decodesBefore = provider.stats.thumbnailDecodes
+        #expect(decodesBefore == 6)
+
+        // One more file lands in the same folder (a second card, a file copied in). The shoot is
+        // re-read and every photo that did not change must not be decoded a second time: a CR3
+        // costs ~300 ms, so dropping the whole cache blanks the filmstrip and re-decodes the shoot
+        // the user is in the middle of rating.
+        var grown = shoot.photos
+        ImageFixtures.jpeg(in: shoot.folder, named: "IMG_9999.jpg")
+        grown.append(
+            PhotoMeta(
+                id: 9999, relPath: "IMG_9999.jpg", companions: [], kind: .jpeg, fileSize: 1024,
+                captureTime: nil, shutterCount: nil, fileNumber: nil, cameraMake: nil,
+                cameraModel: nil, cameraSerial: nil, lensModel: nil, focalLengthMm: nil,
+                exposureTimeS: nil, fNumber: nil, iso: nil, exposureCompEv: nil, meteringMode: nil,
+                driveMode: nil, shutterMode: nil, orientation: 1, width: 400, height: 300, af: nil,
+                preview: nil, warnings: []))
+        provider.open(folder: shoot.folder, photos: grown)
+
+        for id in shoot.photos.map(\.id) {
+            #expect(
+                provider.thumbnail(for: id, size: CGSize(width: 64, height: 64)) != nil,
+                "photo \(id) is still in the folder and must not have been decoded again")
+        }
+        #expect(provider.stats.thumbnailDecodes == decodesBefore, "no re-decode of the survivors")
+    }
+
+    @Test("A photo that vanished is dropped from the cache and cannot be served")
+    func aVanishedPhotoIsEvicted() async {
+        let shoot = ImageFixtures.shoot(count: 4)
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20, prefetchPixels: 128)
+        provider.open(folder: shoot.folder, photos: shoot.photos)
+        provider.setFocus(focus(shoot.photos.map(\.id), current: 1))
+        #expect(await provider.waitUntilIdle())
+
+        // The last file is deleted in Finder, the core re-reads the folder, and the model hands the
+        // provider the shorter list.
+        provider.open(folder: shoot.folder, photos: Array(shoot.photos.prefix(3)))
+        #expect(
+            provider.thumbnail(for: 4, size: CGSize(width: 64, height: 64)) == nil,
+            "a deleted photo has no file, so it must not be answered from the cache")
+        for id in 1...3 {
+            #expect(provider.thumbnail(for: PhotoID(id), size: CGSize(width: 64, height: 64)) != nil)
+        }
+    }
+
     @Test("Moving on cancels queued work for photos the user left")
     func movingOnCancelsStaleWork() async {
         let shoot = ImageFixtures.shoot(count: 30)

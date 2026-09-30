@@ -102,6 +102,10 @@ public final class ImageProvider: ImageProviding, CullImageSource {
     /// upside down in the viewer.
     private(set) var orientations: [PhotoID: UInt8] = [:]
 
+    /// The folder the cache belongs to. Decides whether `open` is a new shoot (drop everything) or
+    /// the same shoot with files added or removed (keep what is still there).
+    private var folder: URL?
+
     /// Bumped every time a decode lands. `thumbnail(for:size:)` and `histogram(for:)` read it, so
     /// a SwiftUI body that got a `nil` is asked again when the pixels arrive.
     public private(set) var generation: Int = 0
@@ -145,16 +149,40 @@ public final class ImageProvider: ImageProviding, CullImageSource {
         }
     }
 
-    /// Points the provider at a shoot. Called once per folder open; the cache is dropped, because
-    /// every `PhotoID` in it was a hash of the previous folder's file names.
+    /// Points the provider at a shoot. Called once per folder open, and again whenever the watched
+    /// folder changes underneath it.
+    ///
+    /// Two cases, and the difference is the whole point of this method:
+    ///
+    /// * **A different folder.** Every `PhotoID` in the cache was a hash of the previous folder's
+    ///   file names, so the new folder's ids collide with the old ones and a stale entry would
+    ///   show the wrong photograph. Everything is dropped and the epoch moves, so a decode still in
+    ///   flight for the old shoot is discarded when it lands.
+    /// * **The same folder with a different file set.** This is the shoot the user is looking at: a
+    ///   second card was copied in, a file was deleted in Finder, a Finish run moved things into
+    ///   `_Not kept/`. Only the photographs that are no longer there are dropped, and the rest keep
+    ///   their pixels.
+    ///
+    /// The second case used to reset unconditionally, so dropping a single file into the folder
+    /// being culled blanked the filmstrip and re-decoded the whole shoot — 708 CR3s at ~300 ms each
+    /// (todo.md §7.1) — while the user was in the middle of rating it. That is the flicker the
+    /// folder watcher used to cause.
     public func open(folder: URL, photos: [PhotoMeta]) {
-        engine.reset()
-        files = Dictionary(
+        let newFiles = Dictionary(
             photos.map { ($0.id, folder.appendingPathComponent($0.relPath)) },
             uniquingKeysWith: { first, _ in first })
-        orientations = Dictionary(
+        let newOrientations = Dictionary(
             photos.map { ($0.id, $0.orientation) },
             uniquingKeysWith: { first, _ in first })
+        engine.beginShoot(
+            urls: newFiles,
+            orientations: newOrientations,
+            sizes: Dictionary(
+                photos.map { ($0.id, $0.fileSize) }, uniquingKeysWith: { first, _ in first }),
+            sameFolder: self.folder == folder)
+        files = newFiles
+        orientations = newOrientations
+        self.folder = folder
         generation &+= 1
     }
 
@@ -162,6 +190,7 @@ public final class ImageProvider: ImageProviding, CullImageSource {
         engine.reset()
         files = [:]
         orientations = [:]
+        folder = nil
         generation &+= 1
     }
 
@@ -275,6 +304,9 @@ final class DecodeEngine: @unchecked Sendable {
         /// is dropped: ids are hashes of file names, so `IMG_0001` of the old card would otherwise
         /// be shown as `IMG_0001` of the new one.
         var epoch: UInt64 = 0
+        /// The size of the file when the job was queued. Checked on landing, so a file that was
+        /// replaced under the same name while the decode ran cannot be served as the old one.
+        var fileSize: UInt64 = 0
     }
 
     private struct Key: Hashable {
@@ -310,6 +342,10 @@ final class DecodeEngine: @unchecked Sendable {
     private var failed: Set<Key> = []
     /// Never evicted: the current focus window ("never the current batch", [pipeline-api.md]).
     private var focus: Set<PhotoID> = []
+    /// Every id the open folder currently holds, and each one's file size. Together they say
+    /// whether a cached entry or an in-flight decode still refers to the file it was made from.
+    private var live: Set<PhotoID> = []
+    private var knownSizes: [PhotoID: UInt64] = [:]
     private var clock: UInt64 = 0
     private var epoch: UInt64 = 0
     private var bytes = 0
@@ -417,6 +453,76 @@ final class DecodeEngine: @unchecked Sendable {
         pending.removeAll()
         inFlight.removeAll()
         failed.removeAll()
+        knownSizes.removeAll()
+        live.removeAll()
+        epoch &+= 1
+        bytes = 0
+        clock = 0
+        counters = PipelineStats()
+    }
+
+    /// The provider's `open`, with the knowledge of whether the folder is the same one.
+    ///
+    /// A different folder resets: the ids collide (they are hashes of file names) and a stale entry
+    /// would show the wrong photograph. The *same* folder reconciles — that is a file added or
+    /// removed in the shoot the user is looking at, and re-decoding 700 CR3s because one file
+    /// landed is the flicker this avoids.
+    ///
+    /// Reconciliation keeps an entry only when the id is still in the folder **and** the file is
+    /// still the same size. The size is what distinguishes "the photograph I already decoded" from
+    /// "a different photograph that happens to have the same name" — a re-imported or replaced file.
+    func beginShoot(
+        urls: [PhotoID: URL], orientations: [PhotoID: UInt8], sizes: [PhotoID: UInt64],
+        sameFolder: Bool
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        // The sizes as they were *before* this call. Comparing against the new ones after assigning
+        // them would compare a dictionary with itself and pass everything.
+        let previousSizes = knownSizes
+        if sameFolder {
+            // Drop what is gone, or what is no longer the same file. A new id has no previous size,
+            // so it reads as stale — correct, there is no cache entry for it to keep.
+            let live = Set(urls.keys)
+            func stale(_ id: PhotoID) -> Bool {
+                !live.contains(id) || previousSizes[id] != sizes[id]
+            }
+            for id in Array(thumbnails.keys) where stale(id) {
+                bytes -= thumbnails.removeValue(forKey: id)?.bytes ?? 0
+            }
+            for id in Array(displays.keys) where stale(id) {
+                bytes -= displays.removeValue(forKey: id)?.bytes ?? 0
+            }
+            histograms = histograms.filter { !stale($0.key) }
+            failed = failed.filter { !stale($0.id) }
+            // Queued work for a photo that is gone is pointless, and a decode in flight for one is
+            // dropped when it lands by the same test.
+            pending.removeAll { stale($0.id) }
+            focus.formIntersection(live)
+            counters.focusSize = min(counters.focusSize, live.count)
+        } else {
+            // Ids are hashes of file names, so the new folder's ids collide with the old ones and a
+            // stale entry would show the wrong photograph. Everything goes.
+            unlockAndReset()
+        }
+        // Both paths: what the folder holds now, whatever was kept. Setting this only on the
+        // reconcile path left the first `open` with an empty live set, and `store` then discarded
+        // every decode as belonging to a photo that was not there.
+        live = Set(urls.keys)
+        knownSizes = sizes
+    }
+
+    /// Must hold the lock. Split out so `beginShoot` and `reset` cannot drift apart.
+    private func unlockAndReset() {
+        thumbnails.removeAll()
+        displays.removeAll()
+        histograms.removeAll()
+        focus.removeAll()
+        pending.removeAll()
+        inFlight.removeAll()
+        failed.removeAll()
+        knownSizes.removeAll()
+        live.removeAll()
         epoch &+= 1
         bytes = 0
         clock = 0
@@ -532,6 +638,7 @@ final class DecodeEngine: @unchecked Sendable {
         else { return false }
         var job = job
         job.epoch = epoch
+        job.fileSize = knownSizes[job.id] ?? 0
         pending.append(job)
         return true
     }
@@ -568,8 +675,12 @@ final class DecodeEngine: @unchecked Sendable {
 
     private func store(_ job: Job, _ image: CGImage?) {
         lock.lock()
-        guard job.epoch == epoch else {
-            // Queued for a folder that is no longer open; `reset` already forgot it was in flight.
+        // `epoch` moves when a *different* folder is opened; `live` is what the folder holds now.
+        // Both must still hold for the pixels to belong anywhere: a decode of a photo that was
+        // deleted or replaced while it was running must not be filed under the id it had then.
+        guard job.epoch == epoch, live.contains(job.id), job.fileSize == knownSizes[job.id] else {
+            // Queued for a folder that is no longer open, or for a file that is no longer there;
+            // `reset`/`beginShoot` already forgot it was in flight.
             lock.unlock()
             return
         }
