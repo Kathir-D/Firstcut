@@ -31,6 +31,17 @@ import Foundation
     public private(set) var undoneFinishes = 0
     public private(set) var cursorHistory: [SessionCursor] = []
     public var visitedOverride: Set<BatchID> = []
+    /// What the next `rescan()` returns, so a test can play "files appeared / vanished". A mock
+    /// with nothing queued behaves like a backend that cannot rescan.
+    public var nextRescan: SessionData?
+
+    public var canRescan: Bool { nextRescan != nil }
+
+    public func rescan() -> SessionData? {
+        guard let fresh = nextRescan else { return nil }
+        data = fresh
+        return fresh
+    }
 
     public init(data: SessionData) {
         self.data = data

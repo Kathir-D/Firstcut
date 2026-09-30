@@ -58,8 +58,17 @@ import Foundation
 
     /// Force the debounced XMP queue out. On batch change and on quit (task.md §6.3).
     func flush()
+
+    /// True for a backend over a real folder, which can be re-read when files appear or vanish.
+    var canRescan: Bool { get }
+
+    /// Re-reads the folder and reconciles by identity, so a rename keeps its rating (REV-68).
+    /// Returns the whole state of record, or nil when this backend cannot (or the read failed).
+    func rescan() -> SessionData?
 }
 
 extension SessionBackend {
     public func applyMetadataSettings(_ settings: MetadataSettings) {}
+    public var canRescan: Bool { false }
+    public func rescan() -> SessionData? { nil }
 }

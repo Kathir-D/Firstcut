@@ -2199,4 +2199,27 @@ mod tests {
             "importing must not rewrite the sidecar"
         );
     }
+
+    #[test]
+    fn a_rescan_after_everything_moved_away_is_not_an_error() {
+        // A Finish that moves every photo out (say, "move kept photos to another folder" with
+        // nothing unkept) leaves the folder empty. The app re-reads it afterwards and must get an
+        // empty answer, not a failure it would have to guess the meaning of.
+        let folder = six_jpegs();
+        let sessions = tempfile::tempdir().unwrap();
+        let session =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+        let id = |n: u32| crate::batch::photo_id(&format!("IMG_{n:04}.JPG"));
+        for n in 1..=6 {
+            session.set_rating(id(n), Rating::stars(5)).unwrap();
+        }
+        session.flush();
+        for n in 1..=6 {
+            fs::remove_file(folder.path().join(format!("IMG_{n:04}.JPG"))).unwrap();
+            fs::remove_file(folder.path().join(format!("IMG_{n:04}.JPG.xmp"))).ok();
+        }
+        let scan = session.rescan().expect("an empty folder is a valid answer");
+        assert!(scan.photos.is_empty());
+        assert!(session.snapshot().photos.is_empty());
+    }
 }

@@ -70,6 +70,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
     private var countsByTier: [Tier: Int] = [:]
     private var ratedCount: Int = 0
     private var saveTask: Task<Void, Never>?
+    private var folderWatcher: FolderWatcher?
     private var viewportPixelSize: CGSize = .zero
     private var isTextEditingFlag: Bool = false
 
@@ -239,6 +240,63 @@ public final class AppModel: SessionListener, KeyRouterSource {
         pushCursor()
         updatePipelineFocus()
         recordRecent()
+        startWatchingFolder()
+    }
+
+    // MARK: - Files appearing and vanishing (task.md §11)
+
+    private func startWatchingFolder() {
+        folderWatcher?.stop()
+        folderWatcher = nil
+        guard backend.canRescan, !backend.data.folder.isEmpty else { return }
+        let watcher = FolderWatcher(folder: URL(fileURLWithPath: backend.data.folder)) { [weak self] in
+            self?.folderDidChange()
+        }
+        watcher.start()
+        folderWatcher = watcher
+    }
+
+    /// The set of photo files changed on disk (a card dump, a delete in Finder, a Finish run).
+    /// Re-reads the folder through the core, which recognises renames so a rating survives one
+    /// (REV-68), then rebuilds the model around what is there now while keeping the user on the
+    /// photo they were looking at. Cheap when nothing that matters changed.
+    public func folderDidChange() {
+        guard phase == .culling || phase == .finishing, let fresh = backend.rescan() else { return }
+        let selected = currentPhoto?.id
+        let before = Set(allPhotos.map(\.id))
+        let after = Set(fresh.photos.map(\.id))
+        skippedFiles = fresh.skipped
+
+        if before == after {
+            // Same photographs (a rename that kept its id, or a change to a sidecar): nothing to
+            // rebuild, and rebuilding would drop the caches for no reason.
+            return
+        }
+
+        allPhotos = fresh.photos.map {
+            PhotoVM(
+                meta: $0, rating: fresh.ratings[$0.id] ?? Rating(), mode: ratingMode,
+                keepThreshold: settings.keepThreshold)
+        }
+        reindexPhotos()
+        rebuildBatches(from: fresh.batches, visited: fresh.visited)
+        if let provider = images as? ImageProvider {
+            provider.open(folder: URL(fileURLWithPath: fresh.folder), photos: fresh.photos)
+        }
+
+        // Stay on the same photograph when it is still there.
+        if let selected, let index = photoIndex[selected],
+            let batch = batches.firstIndex(where: { $0.range.contains(index) })
+        {
+            currentBatchIndex = batch
+            currentPhotoIndex = index - batches[batch].range.lowerBound
+        } else {
+            currentBatchIndex = min(currentBatchIndex, max(0, batches.count - 1))
+            currentPhotoIndex = min(currentPhotoIndex, max(0, (currentBatch?.count ?? 1) - 1))
+        }
+        recomputeCounts()
+        pushCursor()
+        updatePipelineFocus()
     }
 
     /// Remembers this folder and how far through it the user is. Called when a folder opens, when
@@ -284,6 +342,8 @@ public final class AppModel: SessionListener, KeyRouterSource {
     }
 
     public func closeSession() {
+        folderWatcher?.stop()
+        folderWatcher = nil
         recordRecent()
         backend.flush()
         backend.listener = nil
@@ -717,6 +777,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         finish = .report(current, report)
         // The files moved, so the ratings on disk are the source of truth from here: re-read them.
         backend.flush()
+        folderDidChange()
     }
 
     public func undoFinish() {
@@ -729,6 +790,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         undoReport.wasUndo = true
         undoReport.undoable = false
         finish = .report(current, undoReport)
+        folderDidChange()
     }
 
     /// One step back through the sheet: dry run → options → summary. Nothing has touched the disk
@@ -743,6 +805,9 @@ public final class AppModel: SessionListener, KeyRouterSource {
 
     public func cancelFinish() {
         finish = .hidden
+        // A Finish that moved every photo out leaves nothing to cull: go back to the Welcome
+        // screen instead of an empty viewer.
+        if phase != .welcome, allPhotos.isEmpty { closeSession() }
     }
 
     // MARK: - SessionListener

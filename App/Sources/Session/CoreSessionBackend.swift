@@ -257,6 +257,17 @@ public final class CoreSessionBackend: SessionBackend {
         core.applyMetadataSettings(settings)
     }
 
+    public var canRescan: Bool { true }
+
+    public func rescan() -> SessionData? {
+        guard let refreshed = try? core.rescan() else { return nil }
+        // The state of record after reconciling renames: a new snapshot, by design (REV-37 allows
+        // one per real change to the file set).
+        data = refreshed
+        snapshotReads += 1
+        return refreshed
+    }
+
     public func flush() { core.flush() }
 
     public func close() {
@@ -265,18 +276,6 @@ public final class CoreSessionBackend: SessionBackend {
         core.flush()
         bridge.owner = nil
         core.close()
-    }
-
-    /// Re-reads the folder through `Session::rescan`, which recognises renames so a rating
-    /// survives one (REV-68). Used by `SessionListener.sessionDidChangeFiles` when the app knows
-    /// something changed but not what.
-    public func rescan() {
-        do {
-            data = try core.rescan()
-        } catch {
-            listener?.sessionDidFailWritingXMP(
-                photo: 0, message: "rescan failed: \(error.localizedDescription)")
-        }
     }
 
     // MARK: - Internal, called by the bridge on the main actor
