@@ -125,6 +125,40 @@ final class AppEnvironment {
     if let folder = LaunchOptions.folder {
       open(folder: folder)
     }
+    applyScreenshotFlags()
+  }
+
+  /// The screenshot workflow's flags: which screen to show, and where to write the picture. They
+  /// wait a moment so a folder opened at launch has loaded and the thumbnails have been drawn.
+  private func applyScreenshotFlags() {
+    let mode = LaunchOptions.viewMode
+    let finish = LaunchOptions.opensFinish
+    let snapshot = LaunchOptions.snapshotPath
+    guard mode != nil || finish || snapshot != nil else { return }
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .seconds(4))
+      guard let self else { return }
+      if let mode { self.send(.setViewMode(mode)) }
+      if finish { self.send(.finishCull) }
+      guard let snapshot else { return }
+      try? await Task.sleep(for: .seconds(2))
+      Self.writeSnapshot(to: snapshot)
+    }
+  }
+
+  /// Draws every visible window of the app (the main window, and Settings or a sheet if open) into
+  /// PNGs next to `path`. Uses the view hierarchy, so it needs no screen-recording permission;
+  /// materials and Liquid Glass may draw flatter than on screen.
+  static func writeSnapshot(to path: String) {
+    let base = (path as NSString).deletingPathExtension
+    for (index, window) in NSApp.windows.enumerated() where window.isVisible {
+      guard let view = window.contentView?.superview ?? window.contentView else { continue }
+      guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+      view.cacheDisplay(in: view.bounds, to: rep)
+      guard let data = rep.representation(using: .png, properties: [:]) else { continue }
+      let name = index == 0 ? path : "\(base)-window\(index).png"
+      try? data.write(to: URL(fileURLWithPath: name))
+    }
   }
 
   /// True when this process is an XCTest host rather than the app the user launched.

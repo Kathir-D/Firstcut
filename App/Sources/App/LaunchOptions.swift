@@ -9,6 +9,10 @@
 //   -FirstcutBatches <n>                             how many batches the mock builds
 //   -FirstcutSeed <n>                                mock seed; the same seed is the same shoot
 //   -FirstcutRatingMode stars|keep
+//   -FirstcutViewMode loupe|grid|compare2|compare3|compare4
+//   -FirstcutFinish 1                                open the Finish sheet
+//   -FirstcutSettings 1                              open the Settings window
+//   -FirstcutSnapshot <path.png>                     draw the main window into a PNG after a moment
 //
 // Unknown values are ignored. With no flags at all the app starts on the welcome screen with no
 // session, which is the honest default: it will not invent photographs to show.
@@ -57,6 +61,23 @@ enum LaunchOptions {
     default: nil
     }
   }
+
+  static var viewMode: CullViewMode? {
+    switch value(for: "-FirstcutViewMode") {
+    case "loupe": .loupe
+    case "grid": .grid
+    case "compare2": .compare(count: 2)
+    case "compare3": .compare(count: 3)
+    case "compare4": .compare(count: 4)
+    default: nil
+    }
+  }
+
+  static var opensFinish: Bool { value(for: "-FirstcutFinish") == "1" }
+  static var opensSettings: Bool { value(for: "-FirstcutSettings") == "1" }
+
+  /// Where to write a snapshot of the main window, for the screenshot workflow.
+  static var snapshotPath: String? { value(for: "-FirstcutSnapshot") }
 
   /// Everything a caller can override at launch, in one value.
   struct Overrides {

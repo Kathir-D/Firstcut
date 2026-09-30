@@ -1,0 +1,89 @@
+name: Screenshots
+
+# Launches the app on macOS 26 in each screen (welcome, loupe, grid, compare, Finish, Settings, a real
+# folder of photographs) and uploads what it looks like. Two pictures per screen: a real screen
+# capture, and the app drawing its own windows (`-FirstcutSnapshot`), in case the runner withholds
+# screen recording. Manual; it never gates anything.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  shots:
+    name: Screenshots (macOS 26)
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Build
+        run: |
+          set -o pipefail
+          ./scripts/build-core.sh
+          xcodegen
+          xcodebuild build -project Firstcut.xcodeproj -scheme Firstcut -configuration Release \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd 2>&1 | tail -5
+
+      - name: A folder of real photographs
+        # The system wallpapers are real photographs and ship on every runner. Duplicates with a
+        # few seconds between them make bursts, so batching has something to group.
+        run: |
+          mkdir -p "$RUNNER_TEMP/shoot"
+          i=0
+          for f in /System/Library/Desktop\ Pictures/*.heic; do
+            [ -f "$f" ] || continue
+            for n in 1 2 3; do
+              i=$((i+1))
+              out=$(printf "%s/shoot/IMG_%04d.jpg" "$RUNNER_TEMP" "$i")
+              sips -s format jpeg -Z 3000 "$f" --out "$out" >/dev/null 2>&1 || true
+            done
+            [ "$i" -ge 36 ] && break
+          done
+          ls "$RUNNER_TEMP/shoot" | wc -l
+
+      - name: Capture each screen
+        run: |
+          APP="$PWD/build/dd/Build/Products/Release/Firstcut.app/Contents/MacOS/Firstcut"
+          mkdir -p shots
+          shot() {
+            name="$1"; shift
+            defaults delete com.kathird.firstcut >/dev/null 2>&1 || true
+            "$APP" "$@" -FirstcutSnapshot "$PWD/shots/$name-app.png" &
+            pid=$!
+            sleep 10
+            osascript -e 'tell application "System Events" to set frontmost of (first process whose unix id is '"$pid"') to true' >/dev/null 2>&1 || true
+            sleep 1
+            screencapture -x "shots/$name-screen.png" || true
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
+          shot 01-welcome
+          shot 02-loupe -FirstcutMockShoot 1
+          shot 03-grid -FirstcutMockShoot 1 -FirstcutViewMode grid
+          shot 04-compare2 -FirstcutMockShoot 1 -FirstcutViewMode compare2
+          shot 05-compare4 -FirstcutMockShoot 1 -FirstcutViewMode compare4
+          shot 06-finish -FirstcutMockShoot 1 -FirstcutFinish 1
+          shot 07-settings -FirstcutMockShoot 1 -FirstcutSettings 1
+          shot 08-real-loupe -FirstcutFolder "$RUNNER_TEMP/shoot"
+          shot 09-real-grid -FirstcutFolder "$RUNNER_TEMP/shoot" -FirstcutViewMode grid
+          ls -la shots
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firstcut-screenshots
+          path: shots
+          retention-days: 14

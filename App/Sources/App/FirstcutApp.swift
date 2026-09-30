@@ -46,6 +46,20 @@ private struct WindowContent: View {
       .onDrop(of: [.fileURL], isTargeted: nil) { providers in
         environment.handleDrop(providers)
       }
+      .background(SettingsLaunchOpener())
+  }
+}
+
+/// `-FirstcutSettings 1` opens the Settings window at launch, for the screenshot workflow.
+private struct SettingsLaunchOpener: View {
+  @Environment(\.openSettings) private var openSettings
+
+  var body: some View {
+    Color.clear.task {
+      guard LaunchOptions.opensSettings else { return }
+      try? await Task.sleep(for: .seconds(1))
+      openSettings()
+    }
   }
 }
 
