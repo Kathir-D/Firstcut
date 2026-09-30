@@ -22,6 +22,16 @@ protocol CullViewState: AnyObject {
   var viewMode: CullViewMode { get }
   var isInfoPanelVisible: Bool { get }
   var isHUDVisible: Bool { get }
+  /// Settings → Performance → Debug HUD, and the pipeline counters it reads. All defaulted, because
+  /// the preview state has no engine behind it and reporting zeros there would read as "all quiet"
+  /// rather than "not measuring".
+  var isDebugHUDVisible: Bool { get }
+  var pipelineStats: PipelineStats? { get }
+  var thumbnailProgress: Double { get }
+  var byteRangeDecodes: Int { get }
+  var containerDecodes: Int { get }
+  var memoryBudgetBytes: Int { get }
+  var viewportPixelSize: CGSize { get }
   var showsAFOverlay: Bool { get }
   var showsClippingOverlay: Bool { get }
   var isZoomLocked: Bool { get }
@@ -164,4 +174,20 @@ enum FinishAction {
   case execute
   case undo
   case cancel
+}
+
+
+// MARK: - Defaults for a state with no pipeline behind it
+
+/// The preview/mock shoot has no decoder, so the debug HUD would show a wall of zeroes that reads as
+/// "nothing is wrong" rather than "nothing is being measured". `pipelineStats` being nil is what the
+/// view checks, and these keep every conformer from having to spell the rest out.
+extension CullViewState {
+  public var isDebugHUDVisible: Bool { false }
+  public var pipelineStats: PipelineStats? { nil }
+  public var thumbnailProgress: Double { 1 }
+  public var byteRangeDecodes: Int { 0 }
+  public var containerDecodes: Int { 0 }
+  public var memoryBudgetBytes: Int { 0 }
+  public var viewportPixelSize: CGSize { .zero }
 }

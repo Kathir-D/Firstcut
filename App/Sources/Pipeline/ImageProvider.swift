@@ -124,9 +124,11 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
     /// populated.
     private var fullPreviewRanges: [PhotoID: (url: URL, range: ByteRange)] = [:]
 
-    /// How many display decodes have been served from a byte range rather than the container. The
-    /// number that shows the optimisation is actually being used rather than merely available.
+    /// How many display decodes were served from a byte range rather than the container, and how many
+    /// had to fall back. The pair is the honest form: 0 fallbacks *and* 0 range decodes would mean the
+    /// optimisation is simply not wired up, which looks identical to "nothing decoded yet".
     public private(set) var byteRangeDecodes = 0
+    public private(set) var containerDecodes = 0
 
     /// Bumped every time a decode lands. `thumbnail(for:size:)` and `histogram(for:)` read it, so
     /// a SwiftUI body that got a `nil` is asked again when the pixels arrive.
@@ -169,8 +171,11 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         engine.onLand = { [weak self] id in
             Task { @MainActor in self?.engineDidLand(id) }
         }
-        engine.onByteRange = { [weak self] in
-            Task { @MainActor in self?.byteRangeDecodes += 1 }
+        engine.onByteRange = { [weak self] fromRange in
+            Task { @MainActor in
+                guard let self else { return }
+                if fromRange { self.byteRangeDecodes += 1 } else { self.containerDecodes += 1 }
+            }
         }
     }
 
@@ -387,9 +392,9 @@ final class DecodeEngine: @unchecked Sendable {
     let prefetchPixels: Int
     /// Set by the provider after construction: called on the decoding thread when a job lands.
     var onLand: (@Sendable (PhotoID) -> Void)?
-    /// Called on the decoding thread when a display decode was served from a byte range rather than
-    /// from the container, so the provider can count the ones the optimisation actually served.
-    var onByteRange: (@Sendable () -> Void)?
+    /// Called on the decoding thread after a display decode, with whether it was served from the
+    /// reported byte range or from the container, so the provider can count both.
+    var onByteRange: (@Sendable (Bool) -> Void)?
 
     private var thumbnails: [PhotoID: Entry] = [:]
     private var displays: [PhotoID: Entry] = [:]
@@ -474,6 +479,8 @@ final class DecodeEngine: @unchecked Sendable {
         orientations: [PhotoID: UInt8] = [:],
         fullPreviews: [PhotoID: ByteRange] = [:]
     ) {
+        let interval = SignpostInterval.begin(Signposts.setFocus)
+        defer { interval.end() }
         let rank = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
         let wanted = Set(displayIDs)
         lock.lock()
@@ -712,11 +719,18 @@ final class DecodeEngine: @unchecked Sendable {
 
     private func drain() {
         while let job = takeNext() {
-            let decoded: CGImage? =
-                switch job.kind {
-                case .thumbnail: Self.decodeThumbnail(url: job.url, maxPixel: job.maxPixel)
-                case .display: decodeDisplayJob(job)
-                }
+            let decoded: CGImage?
+            switch job.kind {
+            case .thumbnail:
+                // The interval is the decode, and nothing else: computing a pixel count or a
+                // signature here would cost real time on every decode whether or not anything is
+                // tracing.
+                let interval = SignpostInterval.begin(Signposts.decodeThumbnail)
+                decoded = Self.decodeThumbnail(url: job.url, maxPixel: job.maxPixel)
+                interval.end()
+            case .display:
+                decoded = decodeDisplayJob(job)
+            }
             store(job, decoded)
         }
     }
@@ -730,18 +744,39 @@ final class DecodeEngine: @unchecked Sendable {
     private func decodeDisplayJob(_ job: Job) -> CGImage? {
         guard let range = job.fullPreview else {
             // Nothing reported, so the container is the only authority.
-            return Self.decodeFull(url: job.url, orientation: job.orientation)
+            return decodeFromContainer(job)
         }
+        let interval = SignpostInterval.begin(Signposts.decodeDisplay)
         guard
-            let image = Self.decodeFull(
-                byteRange: range, in: job.url, orientation: job.orientation)
+            let image = decodeFromBytes(range, in: job.url, orientation: job.orientation)
         else {
             // The range was there but the bytes were not a JPEG we could read. Fall back rather than
             // show nothing: a stale range is a display bug, an empty viewer is a crash.
-            return Self.decodeFull(url: job.url, orientation: job.orientation)
+            interval.end()
+            return decodeFromContainer(job)
         }
-        onByteRange?()
+        // A nested interval, so a trace can separate the two: the claim in §7.5 is that the range is
+        // the cheaper path, and that is only a measurement if the two are distinguishable.
+        onByteRange?(true)
+        interval.end()
         return image
+    }
+
+    /// The display decode from the reported byte range, nested inside `decodeDisplay` so a trace can
+    /// tell it apart from the container read and compare the two — which is the whole claim in §7.5.
+    private func decodeFromBytes(
+        _ range: ByteRange, in url: URL, orientation: UInt8
+    ) -> CGImage? {
+        let interval = SignpostInterval.begin(Signposts.decodeFromBytes)
+        defer { interval.end() }
+        return Self.decodeFull(byteRange: range, in: url, orientation: orientation)
+    }
+
+    private func decodeFromContainer(_ job: Job) -> CGImage? {
+        let interval = SignpostInterval.begin(Signposts.decodeDisplay)
+        defer { interval.end() }
+        onByteRange?(false)
+        return Self.decodeFull(url: job.url, orientation: job.orientation)
     }
 
     private func takeNext() -> Job? {
@@ -802,6 +837,8 @@ final class DecodeEngine: @unchecked Sendable {
     /// Least-recently-used eviction down to the budget, never touching the focus window.
     private func evictLocked() {
         guard bytes > budgetBytes else { return }
+        let interval = SignpostInterval.begin(Signposts.evictions)
+        defer { interval.end() }
         var candidates: [(id: PhotoID, stamp: UInt64, bytes: Int)] = []
         for (id, entry) in thumbnails where !focus.contains(id) {
             candidates.append((id, entry.stamp, entry.bytes))

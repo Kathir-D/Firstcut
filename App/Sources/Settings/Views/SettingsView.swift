@@ -267,6 +267,15 @@ private struct PerformanceSettingsTab: View {
           .font(.footnote).foregroundStyle(.secondary)
       }
 
+      Section("Debug") {
+        Toggle("Debug HUD", isOn: settingBinding(model, \.performance.debugHUD))
+        Text(
+          "Shows focus misses, decode queue depth, cache hits, memory by tier and the byte-range "
+            + "counters. todo.md §7.1 requires focus misses to stay 0; this is where you watch it."
+        )
+        .font(.footnote).foregroundStyle(.secondary)
+      }
+
       Section("Look-ahead") {
         Stepper(
           "Batches kept ready on each side: \(model.settings.performance.lookAheadBatches)",

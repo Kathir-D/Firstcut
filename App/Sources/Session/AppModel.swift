@@ -36,6 +36,9 @@ public final class AppModel: SessionListener, KeyRouterSource {
     public private(set) var viewMode: ViewMode = .loupe
     public private(set) var infoPanelVisible: Bool = false
     public private(set) var hudVisible: Bool = true
+    /// Settings → Performance → Debug HUD. Read by the view, which pulls the counters off the
+    /// pipeline; the model only carries the flag and hands over the numbers.
+    public var debugHUDVisible: Bool { settings.performance.debugHUD }
     public private(set) var afOverlay: Bool = false
     public private(set) var clippingOverlay: Bool = false
     public private(set) var viewer = ViewerState()
@@ -78,7 +81,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
     private var saveTask: Task<Void, Never>?
     private var folderWatcher: FolderWatcher?
     private let visualSigWorker = VisualSigWorker()
-    private var viewportPixelSize: CGSize = .zero
+    public private(set) var viewportPixelSize: CGSize = .zero
     private var isTextEditingFlag: Bool = false
 
     /// The live session. A stored `let` can't be swapped when a second folder is opened, and opening

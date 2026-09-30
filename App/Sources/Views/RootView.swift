@@ -66,6 +66,31 @@ struct RootView: View {
           .allowsHitTesting(false)
         }
 
+        // Top-left, over the viewer: the counters that decide todo.md §7.1, and the reason a
+        // non-zero focus miss is not a mystery.
+        #if DEBUG
+          if state.isDebugHUDVisible, let stats = state.pipelineStats {
+            VStack {
+              HStack {
+                DebugHUDView(
+                  stats: stats,
+                  thumbnailProgress: state.thumbnailProgress,
+                  byteRangeDecodes: state.byteRangeDecodes,
+                  containerDecodes: state.containerDecodes,
+                  focusSize: stats.focusSize,
+                  viewportPixels: state.viewportPixelSize,
+                  budgetBytes: state.memoryBudgetBytes
+                )
+                .frame(maxWidth: 260)
+                Spacer(minLength: 0)
+              }
+              Spacer(minLength: 0)
+            }
+            .padding(12)
+            .allowsHitTesting(false)
+          }
+        #endif
+
         // The grid *is* the batch, so a filmstrip under it would show everything twice.
         if state.viewMode != .grid { filmstrip }
       }

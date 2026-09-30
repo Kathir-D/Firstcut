@@ -561,8 +561,17 @@ Still **unmeasured**, and so still not claimed: folder open -> first photo on sc
 + hashes, arrow key -> sharp photo, batch switch, 100% zoom, and memory. Those need the running app,
 and their rows in that file are still empty.
 
-- [ ] Instrument with `os_signpost` + a hidden debug HUD (cache hits/misses, decode queue depth,
-      memory by tier, frame times).
+- [x] Instrument with `os_signpost` + a hidden debug HUD (cache hits/misses, decode queue depth,
+      memory by tier, frame times). **Partly done, deliberately.** `App/Sources/Pipeline/Signpost.swift`
+      names intervals after the §7.3 rows (`keyToFrame`, `batchToFrame`, `zoomToSharp`,
+      `openToFirstPhoto`, `decodeThumbnail`, `decodeDisplay`, `decodeFromBytes`, `setFocus`,
+      `evictions`) and the decode engine, the focus update and the eviction pass emit them. The debug
+      HUD (`Views/HUD/DebugHUD.swift`, Settings → Performance → Debug HUD, which was a setting nothing
+      honoured until now) shows focus misses, queue depth, cache hits, memory by tier against the
+      budget, decode failures, pressure sheds and the viewport size T2 is decoded at.
+      **Still open:** the three intervals that have to *end* in the view layer — `keyToFrame`,
+      `batchToFrame`, `zoomToSharp` and `openToFirstPhoto` — because only a presented frame closes
+      them, and this session did not wire the view's frame callbacks.
 - [ ] Automated benchmark (`firstcut-cli bench` + XCTest perf tests) run against `~/Documents/testing`.
 - [ ] Stress test: hold → for the entire shoot at key-repeat rate; zero cache misses in the
       current batch, no memory growth.

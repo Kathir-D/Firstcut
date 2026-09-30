@@ -76,6 +76,18 @@ final class ModelCullViewState: CullViewState {
 
   var isInfoPanelVisible: Bool { model.infoPanelVisible }
   var isHUDVisible: Bool { model.hudVisible }
+  var isDebugHUDVisible: Bool { model.debugHUDVisible }
+
+  /// The pipeline's counters, for the debug HUD. Nil for a mock provider, which has no engine to
+  /// report on — the view then draws nothing rather than zeros, which would read as "all quiet".
+  var pipelineStats: PipelineStats? { (images as? ImageProvider)?.stats }
+  var thumbnailProgress: Double { (images as? ImageProvider)?.thumbnailProgress ?? 1 }
+  var byteRangeDecodes: Int { (images as? ImageProvider)?.byteRangeDecodes ?? 0 }
+  var containerDecodes: Int { (images as? ImageProvider)?.containerDecodes ?? 0 }
+  var memoryBudgetBytes: Int { model.settings.memoryBudgetBytes }
+  /// The viewer's backing size, which is what T2 is decoded at — worth seeing in the HUD, because a
+  /// stale zero here is why the viewer looks soft.
+  var viewportPixelSize: CGSize { model.viewportPixelSize }
   var showsAFOverlay: Bool { model.afOverlay }
   var showsClippingOverlay: Bool { model.clippingOverlay }
   var isZoomLocked: Bool { model.viewer.zoomLock }
