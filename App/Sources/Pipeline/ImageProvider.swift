@@ -20,7 +20,8 @@
 // final downsample scales. Three consequences the design leans on:
 //
 // * 4 worker threads is the knee of the curve on this 8-core machine (measured over 24 real CR3s:
-//   3.0 photos/s on one thread, 7.0 on four, 7.0 on eight), so `maxConcurrent` defaults to 4.
+//   3.0 photos/s on one thread, 7.0 on four, 7.0 on eight), so that is what "auto" resolves to
+//   (`resolvedDecodeThreads`) and what Settings → Performance can change.
 // * Prefetching a *full-resolution* image for a whole batch is not affordable (6000×4000×4 B ≈
 //   96 MB each, 12 per batch). Thumbnails are prefetched for the whole focus window; full images
 //   only for the current photo and two frames behind and three ahead of it in the current batch.
@@ -169,15 +170,44 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
     /// than what was asked for.
     public var prefetchPixelsForTests: Int { prefetchPixels }
 
+    /// How many decodes may run at once, from Settings → Performance → decode threads.
+    ///
+    /// `0` (and anything below it) means auto, and auto is **the measured knee, not the core
+    /// count**: 4 concurrent decodes are where this machine stopped getting faster (7.0 photos/s on
+    /// four threads and on eight, measured over 24 real CR3s), so "as many as there are cores"
+    /// would spend more threads than the disk can feed for no gain. It is still bounded by the
+    /// performance cores, because a decode that competes with the UI for an efficiency core is a
+    /// decode the user feels.
+    ///
+    /// An explicit count is honoured as given, with a floor of 1: a queue that cannot drain is not a
+    /// setting, it is a hang.
+    public static func resolvedDecodeThreads(_ configured: Int) -> Int {
+        guard configured < 1 else { return configured }
+        return max(1, min(4, performanceCoreCount()))
+    }
+
+    /// The performance cores, which on Apple Silicon are `hw.perflevel0` — *not*
+    /// `activeProcessorCount`, which is every core including the efficiency ones. Falls back to the
+    /// total when the sysctl is unavailable (it is not on every machine, and a wrong-but-sane answer
+    /// beats none).
+    public static func performanceCoreCount() -> Int {
+        var count = 0
+        var size = MemoryLayout<Int>.size
+        if sysctlbyname("hw.perflevel0.logicalcpu", &count, &size, nil, 0) == 0, count > 0 {
+            return count
+        }
+        return ProcessInfo.processInfo.activeProcessorCount
+    }
+
     public init(
         memoryBudgetBytes: Int = Int(Double(ProcessInfo.processInfo.physicalMemory) * 0.40),
         prefetchPixels: Int = 256,
-        maxConcurrentDecodes: Int = 4
+        maxConcurrentDecodes: Int = 0
     ) {
         self.prefetchPixels = max(16, prefetchPixels)
         engine = DecodeEngine(
             memoryBudgetBytes: memoryBudgetBytes,
-            maxConcurrent: max(1, maxConcurrentDecodes),
+            maxConcurrent: Self.resolvedDecodeThreads(maxConcurrentDecodes),
             prefetchPixels: self.prefetchPixels,
             defaultDisplayEdge: Self.fallbackDisplayEdge)
         // Assigned rather than passed, because the closure needs `self` and `self` needs the

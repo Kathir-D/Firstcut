@@ -290,6 +290,12 @@ private struct PerformanceSettingsTab: View {
         return String(format: "%.1f GB", bytes / 1_073_741_824)
     }
 
+    /// "auto (4)" or the number, so the stepper shows what auto *resolves to* rather than a bare 0.
+    private var decodeThreadsLabel: String {
+        let configured = model.settings.performance.decodeThreads
+        return configured < 1 ? "auto (\(ImageProvider.resolvedDecodeThreads(configured)))" : "\(configured)"
+    }
+
     var body: some View {
         Form {
             Section("Memory") {
@@ -318,6 +324,19 @@ private struct PerformanceSettingsTab: View {
                 Text(
                     "Shows focus misses, decode queue depth, cache hits, memory by tier and the byte-range "
                         + "counters. todo.md §7.1 requires focus misses to stay 0; this is where you watch it."
+                )
+                .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            Section("Decoding") {
+                Stepper(
+                    "Decode threads: \(decodeThreadsLabel)",
+                    value: settingBinding(model, \.performance.decodeThreads), in: 0...12)
+                Text(
+                    "How many photos may be decoded at once. Auto is the measured knee (4 on an 8-core Mac: four "
+                        + "and eight threads decode the same number of photos a second), so a lower number makes "
+                        + "the machine feel lighter and a higher one gets a burst of focus ahead sooner. "
+                        + "Applies the next time Firstcut starts."
                 )
                 .font(.footnote).foregroundStyle(.secondary)
             }

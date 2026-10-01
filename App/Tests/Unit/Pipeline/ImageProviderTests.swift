@@ -387,6 +387,46 @@ struct ImageProviderTests {
         }
     }
 
+    @Test("Decode threads: 0 means the measured knee, an explicit count is used as given")
+    func decodeThreadResolution() {
+        // The resolver, which is what Settings' `decodeThreads` reaches
+        // (`Dependencies.live`), stated as a rule rather than a number: auto is the measured knee
+        // (four) bounded by the performance cores, never below one.
+        let perf = ImageProvider.performanceCoreCount()
+        #expect(perf >= 1, "a machine reports at least one core")
+        #expect(ImageProvider.resolvedDecodeThreads(0) == max(1, min(4, perf)))
+        #expect(ImageProvider.resolvedDecodeThreads(-3) == ImageProvider.resolvedDecodeThreads(0))
+
+        // An explicit count is the user's, with a floor of one — a queue that cannot drain is a hang.
+        #expect(ImageProvider.resolvedDecodeThreads(1) == 1)
+        #expect(ImageProvider.resolvedDecodeThreads(8) == 8)
+
+        // And it has to be the performance cores, not every core: on a heterogeneous machine an
+        // "auto" that counted the efficiency cores would put display decodes next to the UI.
+        #expect(perf <= ProcessInfo.processInfo.activeProcessorCount)
+    }
+
+    @Test("The configured decode thread count is the number of decodes that run at once")
+    func theThreadCountReachesTheEngine() async {
+        // The resolver on its own proves nothing about the engine, so this watches the counter the
+        // pipeline keeps: with a focus window of 30 photographs and two threads, never more than two
+        // decodes may be in flight.
+        let shoot = ImageFixtures.shoot(count: 30)
+        let provider = ImageProvider(
+            memoryBudgetBytes: 64 << 20, prefetchPixels: 128, maxConcurrentDecodes: 2)
+        provider.open(folder: shoot.folder, photos: shoot.photos)
+        provider.setFocus(focus(shoot.photos.map(\.id), current: 1))
+
+        var peak = 0
+        for _ in 0..<200 {
+            peak = max(peak, provider.stats.decodesInProgress)
+            if await provider.waitUntilIdle(timeout: 0.01) { break }
+        }
+        #expect(await provider.waitUntilIdle())
+        #expect(provider.stats.thumbnailDecodes > 0, "the window really was decoded")
+        #expect(peak <= 2, "never more decodes at once than were configured: peaked at \(peak)")
+    }
+
     @Test("Moving on cancels queued work for photos the user left")
     func movingOnCancelsStaleWork() async {
         let shoot = ImageFixtures.shoot(count: 30)

@@ -71,7 +71,9 @@ public struct Dependencies {
         let settings = settingsStore.load()
         return Dependencies(
             backend: nil,
-            images: ImageProvider(memoryBudgetBytes: settings.memoryBudgetBytes),
+            images: ImageProvider(
+                memoryBudgetBytes: settings.memoryBudgetBytes,
+                maxConcurrentDecodes: settings.performance.decodeThreads),
             keymap: keymapStore.effective,
             settings: settings,
             settingsStore: settingsStore,

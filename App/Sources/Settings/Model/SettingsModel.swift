@@ -154,7 +154,10 @@ public struct PerformanceSettings: Codable, Equatable, Sendable {
     public var memoryBudgetFraction: Double = 0.40
     public var lookAheadBatches: Int = 2
     public var thumbnailPixels: Int = 256
-    /// 0 = auto (performance core count).
+    /// How many decodes may run at once. **0 = auto**, and auto is the measured knee (4 on an
+    /// 8-core machine: four threads and eight decode the same 7 photos/s) bounded by the performance
+    /// cores — not the core count, which would be slower to no end. See
+    /// `ImageProvider.resolvedDecodeThreads`. Applies the next time a folder is opened.
     public var decodeThreads: Int = 0
     public var debugHUD: Bool = false
 
