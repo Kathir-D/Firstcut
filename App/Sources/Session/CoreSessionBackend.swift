@@ -308,12 +308,6 @@ public final class CoreSessionBackend: SessionBackend {
 
 /// How the session database was found ([session-api.md]'s `MatchKind`). Swift shows a note when it
 /// is `.moved`.
-public enum MatchKind: Equatable, Sendable {
-    case created
-    case exact
-    case moved(from: String)
-}
-
 // MARK: - The thread hop
 
 /// The only place a Rust callback becomes a `SessionListener` call, and the reason it is a separate

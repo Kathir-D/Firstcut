@@ -1,59 +1,34 @@
-// Owner: infra.
+// Owner: infra + app-logic.
 //
-// Temporary Swift mirrors of the Rust core's types (docs/contracts/photo-meta.md, batching.md,
-// session-api.md), so the Swift agents can build and mock from day one. When the UniFFI bindings
-// land, infra deletes this file and the generated `FirstcutCore` types take their place with the
-// same names. Don't add logic here; request changes from infra so it stays in sync with the contracts.
+// The app's core types. **Most of what used to be hand-mirrored here is now the generated
+// `FirstcutCore` type under the plain name** — see `CoreTypeAliases.swift`, which is where the
+// `Ffi*` prefix stops. The types that stayed are the ones the generated type cannot express or is
+// the wrong shape for (docs/contracts/session-api.md, "Swift types"): the app's own vocabulary, or
+// a record it needs richer than the wire type. Don't add a mirror of a generated type here; add the
+// alias.
+//
+// This file is part of the conversion layer (docs/contracts/build.md), which is why it imports
+// `FirstcutCore`: the app types below are built *on* the generated ones (`Rating.flag` is
+// `FfiFlag`), and a default value like `flag: Flag = .none` names a generated case. Nothing else in
+// `App/Sources` outside the conversion layer may import it.
 
+import FirstcutCore
 import Foundation
 
 public typealias PhotoID = UInt64
 public typealias BatchID = UInt64
 
-public enum RawFormat: String, Sendable, Codable {
-    case cr3, cr2, crw, arw, sr2, srf, nef, nrw, raf, rw2, orf, pef, dng, rwl
-    case threeFr, fff, iiq, srw, dcr, kdc, erf, mef, mos, gpr, x3f
-}
-
-public enum FileKind: Sendable, Codable, Equatable {
-    case raw(RawFormat)
-    case jpeg
-    case heif
-    case tiff
-    case png
-}
-
-public enum TimeSource: String, Sendable, Codable { case exif, fileModified }
-
-public struct CaptureTime: Sendable, Codable, Equatable {
-    public var unixMs: Int64
-    public var subsecResolutionMs: UInt16
-    public var offsetMinutes: Int16?
-    public var source: TimeSource
-}
-
-public struct ByteRange: Sendable, Codable, Equatable, Hashable {
-    public var offset: UInt64
-    public var len: UInt64
-}
-
-public struct EmbeddedPreview: Sendable, Codable, Equatable {
-    public var range: ByteRange
-    public var width: UInt32
-    public var height: UInt32
-}
-
-public struct AfPoint: Sendable, Codable, Equatable {
-    public var x: Float, y: Float, w: Float, h: Float
-    public var inFocus: Bool
-}
-
-public struct AfInfo: Sendable, Codable, Equatable {
+/// The generated `FfiAfInfo` is *richer* (imageWidth/imageHeight/pointsInFocus) and the
+/// conversion drops those, which is why this is not an alias yet (todo.md §0.3).
+public struct AfInfo: Sendable, Equatable {
     public var areaMode: String
     public var points: [AfPoint]
 }
 
-public struct PhotoMeta: Sendable, Codable, Equatable, Identifiable {
+/// The app's photograph metadata: still an app type in this pass (the conversion in
+/// `CoreTypeMapping` loses nothing yet, but `AfInfo` inside it is the one field whose
+/// generated form is richer), and never persisted — nothing encodes it.
+public struct PhotoMeta: Sendable, Equatable, Identifiable {
     public var id: PhotoID
     public var relPath: String
     public var companions: [String]
@@ -99,10 +74,10 @@ public struct VisualSig: Sendable, Codable, Equatable {
     public var hist: [UInt8]  // 48 values: 16 bins each for R, G, B
 }
 
-public enum Flag: String, Sendable, Codable { case none, pick, reject }
-public enum ColorLabel: String, Sendable, Codable { case red, yellow, green, blue, purple }
-
-public struct Rating: Sendable, Codable, Equatable {
+/// The app's rating, and the one type the wire record cannot replace: the generated
+/// `FfiRating` has no defaults on its memberwise init and the app writes `Rating()` in
+/// dozens of places. `flag`/`label` are the generated types under their plain names.
+public struct Rating: Sendable, Equatable {
     public var stars: UInt8 = 0
     public var flag: Flag = .none
     public var label: ColorLabel? = nil
@@ -115,4 +90,7 @@ public struct Rating: Sendable, Codable, Equatable {
     }
 }
 
+/// The app's rating-mode vocabulary. **Not** the generated `FfiRatingMode`: Rust spells the keep
+/// mode `KeepNotKeep`, Swift spells it `keep`, and a case name cannot be aliased (the database
+/// string is `"keep"` on both sides, so this is vocabulary only — see CoreTypeMapping).
 public enum RatingMode: String, Sendable, Codable { case stars, keep }

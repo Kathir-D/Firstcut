@@ -75,11 +75,12 @@ extension SessionFactory {
                 let core = try UniFFICoreSession.make(folder: url.path, listener: bridge)
                 return (core: core, snapshot: core.snapshot(), matched: core.matched)
             }.value
-            return await MainActor.run {
-                CoreSessionBackend(
-                    core: opened.core, initial: opened.snapshot, bridge: bridge,
-                    matched: opened.matched)
-            }
+            // `MainActor.run` was here because `CoreSessionBackend` is `@MainActor`; the closure
+            // this factory hands back is `@MainActor` too, so the hop is already done and the call
+            // is an ordinary one (Swift says so: `await`/`try` on a non-throwing, non-async call).
+            return CoreSessionBackend(
+                core: opened.core, initial: opened.snapshot, bridge: bridge,
+                matched: opened.matched)
         }
     }
 }

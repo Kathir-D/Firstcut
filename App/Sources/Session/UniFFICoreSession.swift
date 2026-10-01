@@ -64,7 +64,8 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
     }
 
     public var canonicalFolder: String { session.folder() }
-    public var matched: MatchKind { MatchKind(session.matched()) }
+    /// The generated match kind under its plain name (`CoreTypeAliases.swift`).
+    public var matched: MatchKind { session.matched() }
 
     /// The per-tier totals for the finish summary, straight from `Rating::tier` in rating.rs.
     public func tierCounts(_ mode: RatingMode) -> [Tier: Int] {
@@ -126,7 +127,7 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
     public func redo() -> RatingChange? { session.redo().map(RatingChange.init) }
 
     public func setCursor(batch: BatchID, photo: PhotoID) {
-        try? session.setCursor(cursor: SessionCursor(batch: batch, photo: photo).ffi)
+        try? session.setCursor(cursor: SessionCursor(batch: batch, photo: photo))
     }
 
     public func markVisited(batch: BatchID) {
@@ -176,7 +177,7 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
             writeSidecars: settings.writeXmp,
             sidecarsForNonRaw: settings.writeSidecarsForJpegs,
             keepStars: stars,
-            keepLabel: label?.ffi)
+            keepLabel: label)
     }
 
     public func flush() { session.flush() }
@@ -260,7 +261,7 @@ extension FinishReportData {
     init(_ ffi: FfiFinishReport) {
         self.init(
             done: Int(ffi.done),
-            failed: ffi.failed.map { FileOpFailure(path: $0.path, reason: $0.reason) },
+            failed: ffi.failed,
             undoable: ffi.undoable)
     }
 }

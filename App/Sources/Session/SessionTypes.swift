@@ -159,17 +159,11 @@ public enum FinishStage: Hashable, Sendable {
     public var isVisible: Bool { self != .hidden }
 }
 
-// MARK: - Mirror of the Rust session API
-
-public struct SessionCursor: Hashable, Sendable {
-    public var batch: BatchID
-    public var photo: PhotoID
-
-    public init(batch: BatchID, photo: PhotoID) {
-        self.batch = batch
-        self.photo = photo
-    }
-}
+// MARK: - Session state
+//
+// `SessionCursor` is the generated `FfiCursor` under its plain name (`CoreTypeAliases.swift`); the
+// rest here are the app's own types, and the reasons they are not the wire types are in
+// docs/contracts/session-api.md.
 
 /// A single rating change, with both sides of it, which is what makes undo possible.
 public struct RatingChange: Equatable, Sendable {
@@ -351,17 +345,6 @@ public struct FinishReportData: Hashable, Sendable {
         self.failed = failed
         self.undoable = undoable
         self.wasUndo = wasUndo
-    }
-}
-
-/// A file the Finish step couldn't handle. Never silently dropped: the report shows every one.
-public struct FileOpFailure: Hashable, Sendable {
-    public var path: String
-    public var reason: String
-
-    public init(path: String, reason: String) {
-        self.path = path
-        self.reason = reason
     }
 }
 
