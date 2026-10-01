@@ -69,7 +69,7 @@ import Foundation
             at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])
 
         var photos: [PhotoMeta] = []
-        var skipped: [SkippedFile] = []
+        let skipped: [SkippedFile] = []
         for file in contents.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let values = try? file.resourceValues(forKeys: Set(keys))
             guard values?.isRegularFile == true else { continue }

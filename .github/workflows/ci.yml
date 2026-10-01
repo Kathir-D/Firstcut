@@ -10,7 +10,9 @@ name: CI
 #   cargo test --manifest-path core/Cargo.toml --all-features
 #   ./scripts/build-core.sh && xcodegen
 #   xcodebuild -project Firstcut.xcodeproj -scheme Firstcut \
-#     -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd test
+#     -destination 'platform=macOS,arch=arm64' -derivedDataPath build/dd \
+#     SWIFT_TREAT_WARNINGS_AS_ERRORS=YES test
+#   swift-format lint --strict --recursive App/Sources App/Tests
 
 on:
   push:
@@ -112,6 +114,7 @@ jobs:
             -scheme Firstcut \
             -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath "$DERIVED_DATA" \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
             | "$XCBEAUTIFY"
 
       - name: Test
@@ -124,12 +127,12 @@ jobs:
             -scheme Firstcut \
             -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath "$DERIVED_DATA" \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
             | "$XCBEAUTIFY"
 
-      - name: swift-format lint (advisory)
-        # Reported, not enforced: enforcing it now would block every agent whose files have not
-        # been formatted yet. Flip `continue-on-error` off once the tree is formatted.
-        continue-on-error: true
+      - name: swift-format lint
+        # Enforced since the tree was formatted (2291435): the lint is --strict, so any file that
+        # has not been through `swift-format format` fails the build rather than being reported.
         run: swift-format lint --strict --recursive App/Sources App/Tests
 
       - name: Upload the log on failure

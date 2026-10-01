@@ -167,6 +167,20 @@ app-logic uses `MockSession` (Swift, conforming to the generated protocol) backe
 `tests/fixtures/exiftool/<game>.json` (and later `tests/fixtures/meta/<game>.json`) until the real
 core is linked. Use the Swift types in `App/Sources/Shared/CoreTypes.swift`.
 
+Most of those Swift types are field-for-field duplicates of a generated type and are being replaced by
+`typealias`es of the generated ones (`build.md`, **The Rust ↔ Swift bridge (UniFFI)**). Six are
+genuine app-model types and must **not** be aliased away, because each one says something the core
+does not:
+
+| Type | Why it stays |
+| --- | --- |
+| `SessionData` | the app's cached model state, and its `visited` is a `Set<BatchID>`; UniFFI has no `Set`, so `FfiSessionSnapshot.visited` is a plain array |
+| `RatingChange` | the app's contract is "the change that was undone", so `undo()` swaps the generated `before`/`after`; the generated `FfiChange` also carries `batchIndex`, which the app type does not |
+| `FinishSettings` | keeps `ratingMode` on purpose — the core plans with its own mode (REV-78), so the app deliberately does not send it |
+| `FinishReportData` | carries an app-set `wasUndo`; the generated `FfiFinishReport`'s `nothingToUndo` is a different question and is not surfaced |
+| `RatingMode` | app vocabulary `.keep` where the generated enum says `.keepNotKeep` (the raw value is `"keep"` in both) |
+| `FileOpKind` | app case `.writeXmp` where the generated enum says `.markRejected` |
+
 ## Proposed changes
 
 1. **What "split by tier" covers.** `KeptAction::SplitByTier` is listed under the *kept* photos, but
@@ -200,4 +214,8 @@ core is linked. Use the Swift types in `App/Sources/Shared/CoreTypes.swift`.
   kept. Added `Session::set_xmp_settings` (sidecars on/off, for non-RAW files, keep mapping),
   `import_ratings_from_sidecars` on a first open, and `compute_visual_sig` (the reference signature,
   REV-64). `rescan` on a folder that became empty returns an empty result rather than an error.
+- v0.4: **Mock** now says which of the Swift types are genuine app-model types and must not be
+  aliased away (`SessionData`, `RatingChange`, `FinishSettings`, `FinishReportData`, `RatingMode`,
+  `FileOpKind`), each with the reason it stays. No signature changed; the rest are still on their way
+  to being `typealias`es of the generated types.
 

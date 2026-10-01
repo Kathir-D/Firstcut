@@ -53,7 +53,7 @@ struct FirstPhotoFastPathTests {
         gate: OpenGate?, fails: Bool = false,
         first: (@Sendable (URL) -> PhotoMeta?)? = { _ in photos[0] }
     ) -> AppModel {
-        var dependencies = Dependencies(
+        let dependencies = Dependencies(
             backend: MockSession(photos: photos),
             asyncSessionFactory: { _ in
                 guard let gate else {

@@ -14,12 +14,13 @@ Firstcut/
 │   │   ├── Views/            # ui: Viewer, Filmstrip, InfoPanel, Grid, Compare, HUD, Finish sheet, Welcome
 │   │   ├── Settings/Views/   # ui: Settings window
 │   │   ├── Settings/Model/   # app-logic: Settings model and persistence
-│   │   ├── Session/          # app-logic: AppModel, navigation, rating rules, undo bridging
+│   │   ├── Session/          # app-logic: AppModel, navigation, rating rules, undo bridging;
+│   │   │                     #   CoreSessionBackend, UniFFICoreSession, CoreFirstPhoto are conversion layer
 │   │   ├── Input/            # app-logic: Command, keymap, key routing
 │   │   ├── Pipeline/         # pipeline: decoders, CacheManager, scheduler, ThumbnailStore, memory budget
 │   │   ├── Render/           # pipeline: IOSurface/Metal viewer layer, zoom/pan, overlays
 │   │   └── Shared/           # infra: CoreTypes.swift stand-ins until UniFFI bindings replace them;
-│   │                         #   CoreBridge.swift is the only place that imports FirstcutCore
+│   │                         #   CoreTypeMapping.swift and CoreBridge.swift are conversion layer
 │   ├── Resources/            # ui: Assets; app-logic: DefaultKeymap.json; infra: Info.plist
 │   ├── Generated/            # infra: UniFFI Swift bindings (git-ignored, built)
 │   └── Tests/
@@ -50,7 +51,7 @@ Firstcut/
 | --- | --- |
 | Rust crate (library) | `firstcut-core` → `firstcut_core` |
 | Rust CLI binary | `firstcut` (crate `firstcut-cli`) |
-| Swift module for the Rust core | `FirstcutCore` (UniFFI). Generated into `App/Generated/`; the C module it imports is `FirstcutCoreFFI`. Swift code reaches it through `FirstcutCoreBridge` in `App/Sources/Shared/CoreBridge.swift` |
+| Swift module for the Rust core | `FirstcutCore` (UniFFI). Generated into `App/Generated/`; the C module it imports is `FirstcutCoreFFI`. Its types carry an `Ffi` prefix (`FfiPhotoMeta`, `FfiRating`, `FfiTier`). App code uses the types in `App/Sources`, and reaches the core through the conversion layer (below), never by importing `FirstcutCore` itself |
 | App target / scheme / bundle | `Firstcut` / `Firstcut` / `com.kathird.firstcut` |
 | Test photos env var | `FIRSTCUT_TEST_PHOTOS` (default `~/Documents/testing`) |
 
@@ -68,8 +69,27 @@ App/Generated/FirstcutCore.xcframework   libfirstcut_core.a, linked, never embed
 
 - **Adding an export**: the owning agent writes the function in their own module and asks infra
   (`REQ-infra-n`) to add the `#[uniffi::export]` to `ffi.rs`. Nothing else in the build changes.
-- **Calling it from Swift**: `import FirstcutCore` is only done in `CoreBridge.swift`. Everywhere
-  else goes through `FirstcutCoreBridge`, so the generated globals never land in app code.
+- **Calling it from Swift**: `import FirstcutCore` is confined to the **conversion layer**, which is
+  these five files and no others:
+
+  | File | Its job |
+  | --- | --- |
+  | `Shared/CoreTypeMapping.swift` | the type-by-type conversions between a generated `Ffi*` type and the app's own |
+  | `Session/CoreSessionBackend.swift` | owns the session object and drives it |
+  | `Session/UniFFICoreSession.swift` | the session's app-facing surface; also where the Finish conversions live |
+  | `Session/CoreFirstPhoto.swift` | wraps the two first-photo exports into one call |
+  | `Shared/CoreBridge.swift` | the top-level core functions, namespaced as `FirstcutCoreBridge` (version, greeting, capability checks, visual signature) |
+
+  No view, model or view-state file may import it. Everywhere else calls the conversion layer, so
+  the generated globals never land in app code.
+- **The generated types keep their `Ffi` prefix** (`FfiPhotoMeta`, `FfiRating`, `FfiTier`) — that is
+  the shipped design, not a temporary wart, and the conversion layer is the boundary between the two
+  vocabularies. Conversions live in `CoreTypeMapping.swift`, type by type; the Finish ones live in
+  `UniFFICoreSession.swift` instead, because they are not mechanical. No `Ffi*` name appears anywhere
+  in `App/Sources` or `App/Tests` outside those five files.
+  An earlier draft of this contract promised that the generated types would later take the plain
+  names, which would have made every conversion deletable. That swap did not happen; the conversions
+  are permanent, so write app code against the app types.
 - **Errors**: `#[derive(uniffi::Error)]` enums, never `String`, so Swift can switch on them.
 - **Staleness**: the app target's pre-build phase runs `scripts/build-core-if-stale.sh`, which
   rebuilds the core only when a Rust file is newer than the last successful build. After pulling,
@@ -163,3 +183,8 @@ cached. The release workflow (`.github/workflows/release.yml`) runs on `v*` tags
   and a line in the commands table for it. `build-core.sh` now also emits
   `App/Generated/FirstcutCore.bindings.txt`, and `project.yml` bundles it into the test targets.
   Removed the duplicated **Build & test commands** and **CI** sections.
+- v0.1.2: corrected **The Rust ↔ Swift bridge (UniFFI)**. `import FirstcutCore` is confined to the
+  conversion layer and the five files that make it up are now named (it is no longer `CoreBridge.swift`
+  alone), the generated types carry the `Ffi` prefix — the same-name swap this contract once promised
+  never happened, so the conversions are permanent — and `session-api.md` records which session types
+  are genuine app types that must not be aliased away, with the reason each one stays.

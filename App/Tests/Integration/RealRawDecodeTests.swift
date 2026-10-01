@@ -147,7 +147,7 @@ final class RealRawDecodeTests: XCTestCase {
 
         // A real scan of a real folder through the real core. 708 files, so this is the seconds-long
         // path the loading screen exists for.
-        let live = await SessionFactory.liveAsync()
+        let live = SessionFactory.liveAsync()
         let factory = try XCTUnwrap(live, "the generated bindings have no Session")
         let start = Date()
         let session = try await factory(folder)

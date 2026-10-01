@@ -518,7 +518,7 @@ struct ImageProviderTests {
         // that costs the most to convert on the display thread.
         let deep = try #require(ImageFixtures.image(bitsPerComponent: 16, alpha: .noneSkipFirst))
         #expect(DecodeEngine.isDisplayLayout(deep) == false)
-        let narrowed = try #require(DecodeEngine.inDisplayLayout(deep))
+        let narrowed = DecodeEngine.inDisplayLayout(deep)
         #expect(narrowed.bitsPerComponent == 8)
         #expect(DecodeEngine.isDisplayLayout(narrowed))
 
@@ -666,9 +666,11 @@ struct ImageProviderTests {
 
         // The window grows. The ask for the bigger size is answered with the *old* picture...
         let hitsBefore = provider.stats.displayCacheHits
-        #expect(
-            try #require(provider.displayImage(for: id, minimumLongestEdge: 400)) === small,
-            "a resize must not blank the viewer")
+        // Hoisted out of the `#expect` on purpose: `#require` nested in a comparison mis-parses
+        // (`===` is a binary operator, so the macro takes the whole expression as its target and
+        // reports it can never be nil).
+        let stillSmall = try #require(provider.displayImage(for: id, minimumLongestEdge: 400))
+        #expect(stillSmall === small, "a resize must not blank the viewer")
         #expect(provider.stats.displayResizes == 1, "and it is counted, because it is a resize")
         #expect(
             provider.stats.displayCacheHits == hitsBefore,

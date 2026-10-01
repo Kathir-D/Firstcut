@@ -51,25 +51,19 @@ private struct WindowContent: View {
 }
 
 /// `-FirstcutSettings 1` opens the Settings window at launch, for the screenshot workflow.
+///
+/// This sends the AppKit action directly instead of SwiftUI's `openSettings()`. The environment
+/// action silently did nothing on the shipping toolchain (macOS 27), which left the screenshot
+/// workflow without a Settings screen, and it is also the wrong tool here: it *throws* on the
+/// macOS 15 SDK and does *not* throw on the macOS 26+ one, so no spelling of it compiles under both
+/// toolchains CI and the app ship with. `showSettingsWindow:` is the action the Settings menu item
+/// itself sends, it has worked since macOS 14, and it has no compiler-visible spelling at all.
 private struct SettingsLaunchOpener: View {
-    @Environment(\.openSettings) private var openSettings
-
     var body: some View {
         Color.clear.task {
             guard LaunchOptions.opensSettings else { return }
             try? await Task.sleep(for: .seconds(1))
-            do {
-                try openSettings()
-            } catch {
-                // The environment action has refused on some OS builds (it errored silently on macOS 27,
-                // leaving the screenshot workflow without a Settings window). The AppKit action the
-                // Settings menu item itself sends is the same thing and does not depend on the SwiftUI
-                // action's bookkeeping; the older `showPreferencesWindow:` spelling covers macOS 13.
-                NSLog("Firstcut: openSettings() failed at launch (\(error)); falling back to AppKit")
-                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-                }
-            }
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         }
     }
 }

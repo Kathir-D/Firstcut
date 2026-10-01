@@ -510,7 +510,6 @@ struct AppModelRatingTests {
     func onlyCurrentBatchIsRateable() throws {
         let (model, session) = Self.makeModel()
         model.perform(.setStars(5))
-        let firstID = try #require(model.currentPhoto?.id)
         #expect(session.xmpWriteCount == 1)
         model.moveBatch(by: 1)  // flushes the pending XMP queue
         #expect(session.xmpWrites.isEmpty)
