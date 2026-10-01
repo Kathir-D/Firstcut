@@ -60,19 +60,54 @@ Not blocking v0.1.0; an agent can do these.
   and `tierCounts`, not just the filmstrip. Wired through `SessionBackend` → `CoreSessionAPI` →
   `UniFFICoreSession` (the FFI export already existed; the app simply never called it). Two tests
   assert the call, and both fail if it is removed.
-- **One definition per type (REV-72/73):** `Shared/CoreTypes.swift`, `Session/PipelineMirror.swift`
-  and `Session/SessionTypes.swift` hand-mirror types the Rust core also defines.
-- **Strict CI:** Swift warnings as errors and `swift-format` enforced (REV-12, REV-59); the tree is
-  not formatted yet.
+- ~~**One definition per type (REV-72/73):**~~ **Largely done, in two commits.** 17 hand-mirrors are
+  now `typealias`es of the generated types (`Shared/CoreTypeAliases.swift`), so the `Ffi*` prefix
+  stops there and `CoreTypeMapping` lost ~240 lines of 1:1 switches: Flag, ColorLabel (app enum, see
+  below), TimeSource, FileKind, RawFormat, CaptureTime, ByteRange, EmbeddedPreview, AfPoint,
+  PhotoMeta, AfInfo, Batch, SessionCursor, MatchKind, SkippedFile (now `relPath`, which is what the
+  core always called it), Tier. Two things stayed mirrors, for reasons recorded in the alias file
+  and in session-api.md: **Rating** (the app writes `Rating()` in dozens of places and a defaulted
+  initializer cannot be added to an imported struct — delegating to the generated init of the same
+  signature is recursion, assigning stored properties before `self.init` is an error), and the six
+  session types that are genuinely app vocabulary. Two findings along the way: `Codable` on
+  Rating/AfInfo/PhotoMeta was **vacuous** (nothing in the app encodes them — only `AppSettings` and
+  the keymap are written), and the promised "the generated types take the plain names" swap never
+  happened; `docs/contracts/build.md` and `session-api.md` now describe the shipped design instead.
+- ~~**Strict CI:**~~ **Done.** `swift-format` has formatted the whole tree (4-space per
+  `.swift-format`), so the advisory lint is enforced — which also meant *installing* it: the lint
+  step had been exiting 127 (command not found) behind `continue-on-error` and reporting nothing
+  since it was added. `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` on both CI builds (REV-12); six warnings
+  the compiler had been carrying are fixed, including one SDK-dependent `try` that compiled on one
+  toolchain and not the other (the Settings launcher now sends the AppKit action directly).
+  `GCC_TREAT_WARNINGS_AS_ERRORS` is deliberately *not* set: it also covers the linker, which warns
+  about the locally built Rust library's SDK — nothing to do with code quality.
 - **Pipeline refinements (§7.1, §7.2):** a display-sized (T2) decode per window size instead of the
   full image scaled by the layer; thumbnails at `.utility`; the embedded-preview vs `CIRAWFilter`
   quality comparison; the "Exact RAW" (T4) decode; `os_signpost` and a debug HUD.
-- **Settings in the model but not shown** because nothing honours them yet: decode thread count,
-  clipping thresholds, confirmation toggles.
+- ~~**Settings in the model but not shown**~~ **Done, all three, and one of them found two bugs.**
+  - *Clipping thresholds* reach `ClippingMask` through the viewer's presentation, and the model
+    defaults were **wrong for the code that would read them** (1.0/0.0 means every pixel clips), so
+    they are now the fractions the mask has always used, 250/255 and 5/255. The overlay had no tests
+    at all, and they found two real bugs: the read buffer's byte order was not pinned, so the
+    comparison read the **alpha** channel and every pixel of an opaque photograph counted as a
+    highlight (J painted the whole picture red); and the buffer was premultiplied, so an
+    unpremultiply turned premultiplied black into transparent black — the exact pixel the shadow
+    overlay exists to find. Five tests, single-colour images.
+  - *Decode thread count* is passed from `Dependencies.live`, and `0` (auto) resolves to the
+    **measured knee** (four: this machine decodes 7.0 photos/s on four threads and on eight) bounded
+    by the performance cores (`hw.perflevel0`, not `activeProcessorCount`) — the doc comment had
+    claimed "performance core count", which the measurement does not support. Two tests, one of which
+    fails if the setting is ignored.
+  - *Confirmation toggles*: `confirmPermanentDelete` decides the typed DELETE gate, moved into the
+    model at the dry-run stage because a rule in a private SwiftUI view had **no test coverage at
+    all**; `confirmBeforeFinish` adds one stage before the summary; `confirmDiscardRatings` is
+    **deleted** — no action in the app exists for it to confirm, so it promised a safeguard that did
+    not exist.
 - **Tests that need the photos or a person (§12):** performance baselines, the hold-→ stress test,
   a full manual QA pass, macOS 15 (only 26 is tested).
 - **Contracts** in `docs/contracts/` predate the merge (pipeline-api.md still describes an IOSurface
-  layer).
+  layer). `build.md` and `session-api.md` are corrected for the type/import design (this session);
+  `pipeline-api.md`, `photo-meta.md`, `batching.md` and `app-model.md` are still to be checked.
 - **Performance plan (§7.5):** the research is done; the agent-side items there (CR3 full-size JPEG
   location, force-decoded display-space bitmaps, DCT-scaled T2, first-photo fast path, signposts,
   the `bench` extensions) can be built before the owner measures.
@@ -103,6 +138,40 @@ Not blocking v0.1.0; an agent can do these.
   after committing, never force-push. CI runs on every push; release on a `v*` tag.
 
 ### 0.5 Handoff: where the last session stopped
+
+> **As of 2026-10-01 (agent session on Kathir's Mac).** Everything the previous handoff listed as
+> next is done, plus four §0.3 items. `main` is green on CI: Rust fmt/clippy/tests, the Swift build
+> and tests on **Xcode 16.4 with warnings as errors**, and the now-enforced `swift-format` lint.
+>
+> - **The §0.5 list from 2026-09-30 is complete:** the first-photo fast path, the bench db phase
+>   (measured: 0.235–0.300 s cold, scan+db 0.87–1.10 s scaled, against a 3.5 s target), the sidecar
+>   import and same-name-swap fixes, and the screenshot pass.
+> - **§0.3 items done:** one definition per type (17 mirrors aliased), strict CI, and all three
+>   unhonoured settings. Two of them found real bugs — the clipping overlay painted every pixel red
+>   and never saw black, and `Codable` on three core types was vacuous.
+> - **CI was red for three pushes before this session's first fix.** `bitmapInfo.byteOrder` is a
+>   newer-SDK overlay member; CI builds with Xcode 16.4 against the macOS 15 SDK. The lesson is in
+>   §0.4's checklist: **anything that compiles locally under Xcode 27 is not evidence about CI.**
+>   Two more traps followed: `openSettings()` throws on one SDK and not the other, and
+>   `GCC_TREAT_WARNINGS_AS_ERRORS` turns a deployment-target linker warning into a failure.
+>
+> **Next, in order:**
+>
+> 1. **Contracts** (§0.3): `pipeline-api.md` still describes an IOSurface layer the app does not use,
+>    `photo-meta.md`/`batching.md`/`app-model.md` unchecked. `build.md` and `session-api.md` are done.
+> 2. **Pipeline refinements** (§7.1/§7.2): thumbnails at `.utility`; the "Exact RAW" (T4) decode; the
+>    embedded-preview vs `CIRAWFilter` comparison (needs a person to judge the pictures).
+> 3. **Speculative T3 after a dwell** (§7.5) — deliberately deferred until the arrow-key measurement
+>    exists, because the measurement is what decides whether it is worth a decode.
+> 4. **The owner's items** in §0.2, unchanged and still first in line for a human: the boundary-F1
+>    ground truth, the Game1JENKS re-press decision, the perf numbers, the visual sign-off.
+>
+> **How to run things quickly** (the full suite is ~15 min of builds; these are seconds):
+> - Rust, one area: `cargo test -p firstcut-core --lib session::` (or `meta::`, `batch::`).
+> - Swift, one area: `xcodebuild … test -only-testing:FirstcutUnitTests` (the whole unit target is
+>   ~1.2 s once built; add a suite name to narrow it, e.g. `-only-testing:FirstcutUnitTests/ImageProviderTests`).
+> - Nothing in a test run may touch `~/Documents` (build.md); real-photo tests are opt-in behind
+>   `FIRSTCUT_ALLOW_PHOTO_TESTS=1`.
 
 > **Keep this current.** Any agent that stops mid-task (rate limit, context limit, end of session)
 > rewrites this block in the same commit as its last change, so the next agent can pick up without the
