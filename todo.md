@@ -162,25 +162,76 @@ Not blocking v0.1.0; an agent can do these.
 >   §0.4's checklist: **anything that compiles locally under Xcode 27 is not evidence about CI.**
 >   Two more traps followed: `openSettings()` throws on one SDK and not the other, and
 >   `GCC_TREAT_WARNINGS_AS_ERRORS` turns a deployment-target linker warning into a failure.
+> - **A warning for whoever picks up item 1: measuring beats assuming, and it cost two wrong
+>   conclusions before the right one.** The previous handoff recorded `CIRAWFilter` as unusable;
+>   it is public API and works, and the reason it looked broken is that the *documented-looking*
+>   `CIFilter(name:)` route returns an object with no input keys and **throws an uncatchable
+>   `NSException`** on the obvious key. Along the way three plausible-looking probes all pointed
+>   at "no demosaic available on macOS": `CIImage(contentsOf:)` and
+>   `CGImageSourceCreateImageAtIndex` really are just the embedded preview (confirmed against the
+>   camera's own extracted JPEG bytes: 0.24/255 apart from each other, ~5/255 from the JPEG), and a
+>   4 ms "full resolution" render is not a demosaic. The discriminator that settled it was the
+>   cheapest one available: **compare a candidate against the same object's own preview**, so
+>   colour management cancels. If a probe here reports something surprising, check it against a
+>   control before believing it — one of mine scored *identically* to its own control (3.827 vs
+>   3.827), which is only possible if the control was broken.
 >
 > **Next, in order:**
 >
 > 1. **"Exact RAW" (T4) decode** — the last agent-side §0.3 pipeline item. `settings.viewer.exactRaw`
 >    reaches `FocusRequest.exactRaw` and the pipeline **reads it nowhere**, so the toggle does
->    nothing. The design, with the one trap: T4 is a *different cache kind*, not a different size.
->    `DecodeEngine.Key` is `id + kind` (`ImageProvider.swift`), so add `case exactRaw` to the `Kind`
->    enum and the cache separation is free — **without** it, RAW pixels could be served for a T2
->    entry, which is a wrong-picture bug rather than a slow one. Then: `setFocus` marks the *current
->    photo* as exact-raw when the setting is on (T4 is "on demand", §7.1 — not the whole window, it
->    is 92 MB a picture); the decode is `CIImage(contentsOf:)` → `CIContext.createCGImage` with the
->    EXIF orientation applied (`ViewerPresentation.afRects` already has the orientation table to
->    copy), then **`DecodeEngine.inDisplayLayout`** on the result, because a CI-created image is not
->    in the BGRA layout the layer needs; and a graceful fall back to the embedded preview for a
->    format `CIRAWFilter` cannot read (any JPEG), which is a test CI can run without photos.
+>    nothing. T4 is a *different cache kind*, not a different size: `DecodeEngine.Key` is
+>    `id + kind` (`ImageProvider.swift`), so add `case exactRaw` to the `Kind` enum and the cache
+>    separation is free — **without** it, RAW pixels could be served for a T2 entry, which is a
+>    wrong-picture bug rather than a slow one. `setFocus` marks the *current photo* as exact-raw
+>    when the setting is on (T4 is "on demand", §7.1 — not the whole window, it is 92 MB a
+>    picture), and the result goes through **`DecodeEngine.inDisplayLayout`**.
+>
+>    **Two corrections to the previous handoff's design, both measured on this machine against
+>    `~/Documents/testing/Game1JENKS/IMG_3192.CR3` (a Canon R8 CR3):**
+>
+>    - **`CIRAWFilter` is public API, and the previous note said it was unusable. It was not —
+>      it was being called wrongly.** `CIFilter(name: "CIRAWFilter")` returns an object with an
+>      **empty `inputKeys`**, and `setValue(_:forKey:"inputImage")` throws `NSUnknownKeyException`,
+>      which is uncatchable from Swift and takes the process down. The real entry point is the
+>      class method **`CIRAWFilter(imageURL:)`** (`CoreImage/CIRAWFilter.h`, `NS_CLASS_AVAILABLE
+>      (12_0, 15_0)`), which returns `nil` for a file it cannot read. Everything measured below
+>      uses it.
+>    - **The previous design said to apply the EXIF orientation in the app. Do not — the filter
+>      already does.** `CIRAWFilter.orientation` defaults to the file's EXIF tag and the *geometry
+>      changes with it*: setting `.up` gives a 6000×4000 extent and `.left` gives 4000×6000 for
+>      the same file. So a frame with EXIF 8 comes out of `outputImage` already upright, and
+>      calling `applying(orientation:to:)` on top of it would rotate it twice — upside down. This
+>      is exactly the bug the comment in `applying(orientation:to:)` records ("a portrait frame
+>      with the jersey reading LLORRAC"), so T4 must **not** re-apply the tag. 26 of Game1JENKS's
+>      708 frames are orientation 8, so it is not a corner case.
+>
+>    **What was measured, so the next step is not a re-investigation:**
+>
+>    | question | answer |
+>    | --- | --- |
+>    | Is it really a demosaic, or the embedded preview again? | **A real demosaic.** `outputImage` differs from the filter's *own* `previewImage` by 3.2/255 on IMG_3192 and 51.9/255 on IMG_3181 — compared inside one pipeline, so colour management cannot explain it. |
+>    | What does it cost? | **0.299 s** for a full-resolution 6000×4000 render (92 MB). The preview decode the app ships today is 0.089 s, so T4 is ~3.4× the cost of what it replaces. |
+>    | Does `isDraftModeEnabled` help? | **No, at full size**: 0.291 s versus 0.299 s. |
+>    | Does `scaleFactor` help? | **It costs more, not less**: scale 0.50 took 0.622 s and scale 0.34 took 0.579 s, against 0.299 s at 1.0. Do not scale down through the filter — decode full and let the layer resample, or fall back to T2. |
+>    | What layout comes out? | 8 bpc, 32 bpp, `deviceRGB`, but **`byteOrder32Little` is not set** (raw value 1, i.e. `premultipliedFirst` in the default byte order). So `isDisplayLayout` returns **false** and `inDisplayLayout` genuinely has to run. |
+>    | Which decoder version? | Version 8 by default, with 9 also supported; `CIRAWDecoderVersion9DNG` etc. exist. The default is fine for CR3. |
+>
+>    **The fallback cannot be "the filter returned nil".** `CIRAWFilter(imageURL:)` returns a
+>    usable filter for a **JPEG** and for a **file of pure junk with a `.cr3` extension** — both
+>    were checked. So the gate must be **`PhotoMeta.kind`** (the core already reports `.raw(.cr3)`
+>    versus `.jpeg`, and `open(folder:photos:)` has it in hand), and any non-RAW file keeps the
+>    existing embedded-preview path untouched. That also makes the JPEG fallback a test CI can run
+>    with no photos at all.
+>
 >    Test: with the setting on, the current photo's display entry is the RAW's own pixels (different
->    from the preview, same dimensions), a JPEG folder falls back, and turning it off returns to T2.
-> 2. **Pipeline:** the embedded-preview vs `CIRAWFilter` comparison (§7.2) needs a person to judge
->    the pictures — the timings can be measured, the "which looks better" cannot.
+>    from the preview, same dimensions), a JPEG folder falls back, turning it off returns to T2, and
+>    **an orientation-8 frame comes out upright** — the last one is the regression test for the
+>    double-rotation above, and it needs a real CR3, so it goes in `RealRawDecodeTests` behind
+>    `FIRSTCUT_ALLOW_PHOTO_TESTS=1` with a synthetic stand-in for CI.
+> 2. **Pipeline:** the embedded-preview vs `CIRAWFilter` comparison (§7.2) still needs a person to
+>    judge the pictures. Note the timings that make it a real question rather than a formality: the
+>    shipped preview is 0.089 s and T4 is 0.299 s for the same 6000×4000.
 > 3. **Speculative T3 after a dwell** (§7.5) — deliberately deferred until the arrow-key measurement
 >    exists, because the measurement is what decides whether it is worth a decode.
 > 4. **The owner's items** in §0.2, unchanged and still first in line for a human: the boundary-F1
