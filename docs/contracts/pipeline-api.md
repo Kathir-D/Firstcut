@@ -2,63 +2,201 @@
 
 - **Owner:** pipeline
 - **Consumers:** app-logic (tells it where the user is), ui (displays what it provides), qa
-- **Version:** v0.1 (draft; frozen as v1.0 at the end of wave 1)
+- **Version:** v0.3 (draft; frozen as v1.0 at the end of wave 1)
 
 ## Swift API
 
+Two protocols, because app-logic and ui need different things from the same cache, and one concrete
+type implements both (`App/Sources/Pipeline/ImageProvider.swift:105`).
+
 ```swift
-/// What the user can reach next. app-logic calls this on every navigation.
-struct PipelineFocus: Sendable {
-    var batches: [BatchWindow]        // previous, current, next (+ more if the budget allows); app-logic supplies the photo IDs in order
+/// What the user can reach next. app-logic recomputes it on **every** navigation.
+/// (`App/Sources/Session/PipelineMirror.swift:29`)
+struct FocusRequest: Hashable, Sendable {
+    var windows: [FocusWindow]       // previous, current, next (+ more if the budget allows);
+                                     // app-logic supplies the photo IDs in capture order
     var currentPhoto: PhotoID
-    var viewportPixelSize: CGSize     // backing pixels of the viewer area (Retina aware)
-    var zoomed: Bool                  // at 100% right now
-    var zoomLocked: Bool              // prefetch 1:1 neighbours
-    var exactRaw: Bool                // T4 decode on
+    var viewportPixelSize: CGSize    // backing pixels of the viewer area (Retina aware); .zero
+                                     // until the window reports a size
+    var zoomed: Bool                 // at 100% right now
+    var zoomLock: Bool               // prefetch 1:1 neighbours
+    var exactRaw: Bool               // Settings → Viewer → Exact RAW (T4); not read by ImageProvider yet
+
+    /// The previous/current/next window: the set that must never miss the cache (§7.1).
+    var guaranteedWindows: [FocusWindow] { Array(windows.prefix(3)) }
 }
 
-@MainActor protocol ImageProvider: AnyObject {
-    func setFocus(_ focus: PipelineFocus)
+struct FocusWindow { var batchID: BatchID; var photoIDs: [PhotoID] }   // PipelineMirror.swift:18
 
-    /// Always non-nil once thumbnails finish (the whole shoot is loaded on open). Returns a placeholder before that.
-    func thumbnail(_ id: PhotoID) -> CGImage
+/// app-logic's whole surface (`PipelineMirror.swift:58`).
+@MainActor protocol ImageProviding: AnyObject { func setFocus(_ focus: FocusRequest) }
 
-    /// Fit-to-viewport image already on the GPU. Non-nil for everything in the focus window,
-    /// otherwise it's a bug. Display = assign `surface` to a CALayer's contents.
-    func displayImage(_ id: PhotoID) -> DisplayImage?
-
-    /// Full resolution for 100% zoom. Instant when prefetched (zoom lock), otherwise < 150 ms.
-    func fullImage(_ id: PhotoID) async -> DisplayImage
-
-    /// Overlays are computed from the display image.
-    func histogram(_ id: PhotoID) -> Histogram?
-    func clippingMask(_ id: PhotoID) -> DisplayImage?
-
-    var stats: PipelineStats { get }   // cache hits/misses, queue depth, memory per tier (debug HUD + qa)
-    var thumbnailProgress: AsyncStream<Double> { get }
+/// ui's surface (`App/Sources/Views/Model/CullViewState.swift:141`). Everything returns from the
+/// cache or schedules a decode and returns nil — never blocks, never throws, never re-encodes.
+protocol CullImageSource: AnyObject {
+    var thumbnailProgress: Double { get }     // fraction of the focus window with a thumbnail
+    func thumbnail(for id: PhotoID, size: CGSize) -> CGImage?
+    func displayImage(for id: PhotoID, minimumLongestEdge: Int) -> CGImage?
+    func histogram(for id: PhotoID) -> CullHistogram?   // 64 bins each for R, G, B and Rec. 601
+                                                        // luma, as fractions of the total
 }
-
-struct DisplayImage { let image: CGImage;  // was `surface: IOSurfaceRef`; see the v0.2 changelog entry
-                       let pixelSize: CGSize; let orientationApplied: Bool; let colorSpace: CGColorSpace }
 ```
+
+`CullHistogram` is defined by ui (`App/Sources/Views/Model/CullViewState.swift:153`); the bins are
+computed by pipeline off a 256-pixel reduction of the cached display image, cached for the life of
+the session (`ImageProvider.swift:1362-1404`). A histogram needs the display image, so asking for one
+schedules that decode and returns nil until it lands.
+
+Two things the draft said and the code does not:
+
+- **`DisplayImage` does not exist.** The viewer's `layer.contents` takes a `CGImage`, so the
+  provider hands out a bare `CGImage` and the pixel size / orientation / colour space travel with
+  the focus request and `ViewerPresentation.pixelSize` instead
+  (`App/Sources/Views/Viewer/PhotoViewerHost.swift:122`).
+- **`fullImage(_:)` is gone, and `clippingMask(_:)` is not on the provider.** A viewer at 100%
+  asks `displayImage(for:minimumLongestEdge:)` for the photograph's own pixels
+  (`CGImageViewerHost.swift:166-172`); the clipping mask is computed by pipeline from the display
+  bitmap it already holds (`ClippingMask.make`, `CGImageViewerHost.swift:484`).
+- `exactRaw` is carried from settings into every `FocusRequest`
+  (`AppModel.swift:867`) but **no T4 / `CIRAWFilter` decode exists yet**: the ImageIO embedded
+  preview is the only display path (`ImageProvider.swift:1160`). The flag is plumbed, the feature
+  is not implemented.
+
+## Cache tiers and the memory budget
+
+`DecodeEngine` (`ImageProvider.swift:464`) is a lock-guarded `final class` — not an `actor`, because
+a `CGImageSource` must be created and destroyed on one thread and an actor hop per job would cost
+more than the ~300 ms decode it hides (`ImageProvider.swift:39-41`).
+
+| Tier | What the engine actually caches | Where |
+| --- | --- | --- |
+| T0 | 256 px thumbnails (`prefetchPixels`, default 256, `SettingsModel.swift:161`) | `thumbnails: [PhotoID: Entry]` (`ImageProvider.swift:529`) |
+| T1 | **not implemented** — the compressed preview bytes are read from the file per display decode rather than cached | `readBytes` (`ImageProvider.swift:1285`) |
+| T2 | Display bitmaps decoded at the viewer's longest backing edge | `displays:` (`ImageProvider.swift:530`); sized by `displayEdges` (`:327`) |
+| T3 | The same cache asked for the photograph's own longest edge while zoomed | `displayEdges` full set (`:336-342`) |
+| T4 | not implemented (see `exactRaw` above) | — |
+
+- **T2 is the viewer's backing size, not a guess** (`displayEdges`, `ImageProvider.swift:327-349`),
+  floored at `minimumDisplayEdge = 64` and, before the window has reported a size, at
+  `fallbackDisplayEdge = 2048` (`:352-355`). T3 is the photo's own edge, asked for the current
+  frame while zoomed plus — with zoom lock — the frame the user is about to arrow to (`:336-342`).
+- **Budget**: 40% of physical RAM by default, from Settings → Performance
+  (`ImageProvider.swift:203`, `SettingsModel.swift:159`), LRU eviction that never touches the focus
+  window (`evictLocked`, `ImageProvider.swift:1032`), and a `DispatchSource` memory-pressure
+  handler that drops everything outside the focus at once (`shedToFocus`, `:578`).
+- **Focus window and priority order**: current photo first, then the rest of its batch, then the
+  neighbouring batches ordered nearest-first with **next before previous** at equal distance
+  (`nearestFirst`, `ImageProvider.swift:359`). Display (T2/T3) decodes are additionally limited to
+  the current batch and to two frames behind / three ahead of the current one
+  (`displayPrefetchIDs`, `:372`); display work outside that set is cancelled on every move and the
+  rest is re-ranked (`:631-636`).
+- Decode concurrency: "auto" is `min(4, performance-core count)`, not the core count
+  (`resolvedDecodeThreads`, `:184`; `performanceCoreCount` reads `hw.perflevel0.logicalcpu`, `:193`).
+- Thumbnails may satisfy a request up to `thumbnailSlack = 1.5×` the prefetch size
+  (`ImageProvider.swift:165`, `satisfies`, `:874`), and a cached display bitmap smaller than the
+  viewer needs is returned anyway with a bigger decode scheduled (`display`, `:801-820`), counted by
+  `stats.displayResizes` — deliberately **not** a focus miss.
+
+## `PipelineStats`
+
+The counters qa and the debug HUD read (`ImageProvider.swift:62-88`; `DebugHUD.swift:43-76`):
+
+`focusMisses`, `thumbnailCacheHits` / `thumbnailCacheMisses` / `thumbnailDecodes`,
+`displayCacheHits` / `displayDecodes`, `histogramCacheHits` / `histogramComputes`,
+`decodeFailures`, `decodesInProgress`, `queuedDecodes`, `thumbnailBytes`, `displayBytes`,
+`focusSize`, `pressureSheds`, `displayResizes`.
+
+`decodesInProgress`, `queuedDecodes`, `thumbnailBytes` and `displayBytes` are computed per read
+rather than counted (`:601-610`). `ImageProvider.byteRangeDecodes` / `containerDecodes`
+(`:144-145`) are the pair that says whether display decodes are coming from the reported full-preview
+byte range; 0 of each would mean the optimisation is simply not wired up.
+
+## Signposts
+
+`App/Sources/Pipeline/Signpost.swift` names intervals after the todo.md §7.3 / §7.5 rows rather than
+after the functions that contain them (`:69-94`). One `OSSignposter` **per interval**: the engine runs
+up to `maxConcurrent` drains at once, so a shared signposter would fuse four real decodes into one
+misleading span (`Signpost.swift:18-24`).
+
+| Interval | Emitted by |
+| --- | --- |
+| `openToFirstPhoto` | `AppModel.open(folder:)`, accepting `.anyFrame` (`AppModel.swift:225`) |
+| `keyToFrame` | `photo.previous` / `photo.next` (`AppModel.swift:674`) |
+| `batchToFrame` | `batch.previous` / `batch.next` (`AppModel.swift:676`) |
+| `zoomToSharp` | click-to-100% and pinch (`AppModel.swift:710`) |
+| `decodeThumbnail`, `decodeDisplay`, `decodeFromBytes` | `DecodeEngine.drain` (`ImageProvider.swift:908, 929, 951`) |
+| `setFocus`, `evictions` | the focus update and the LRU pass (`ImageProvider.swift:621, 1034`) |
+
+The four `§7.3` rows that need a *presented* frame are closed by the viewer, not by the model:
+`FrameSpan.Accepts.displayOnly` for `keyToFrame` / `batchToFrame` / `zoomToSharp`, `.anyFrame` for
+`openToFirstPhoto` (`Signpost.swift:102-113`).
 
 ## Viewer view
 
-pipeline also owns `PhotoViewerLayerView` (AppKit, in `Render/`): the zoomable, pannable layer that
-shows a `DisplayImage`, handles pinch and click-to-100% gestures, and draws the AF and clipping
-overlays. **ui** embeds it and styles the space around it; **app-logic** tells it the zoom state through
-`ViewerState` (defined in [app-model.md](app-model.md)).
+pipeline owns `CGImageViewerHost` (`App/Sources/Pipeline/CGImageViewerHost.swift:37`): an `NSView`
+with `wantsLayer`, whose `imageLayer` has `contentsGravity = .resize` and whose `contents` is the
+decoded `CGImage` (`:79-86`). It owns zoom (pinch anchored at the pinch point, click to 100% centred
+on the spot clicked, drag / two-finger scroll to pan, zoom lock across photos, `ViewerSyncGroup` for
+Compare) and the AF and clipping overlays, drawn as **sublayers** of an `overlayLayer` child of
+`imageLayer`: one `CALayer` holding `ClippingMask.make`'s `CGImage` plus one `CAShapeLayer` per AF
+rect, green for in-focus and white at 60% for a point that missed (`:303-331`). One geometry
+function (`imageRect`, `:249`) derives pinch, click, pan and lock from three numbers, so they cannot
+disagree about where the photograph is.
+
+There is no `PhotoViewerLayerView`, and `App/Sources/Render/` — where the draft put it — is empty.
+ui declares the protocol `PhotoViewerHost` and embeds whatever conforms
+(`PhotoViewerHost.swift:25`); the concrete host is
+installed by the one `PhotoViewerHostView.register` call in `AppEnvironment`
+(`App/Sources/App/AppEnvironment.swift:99-115`), which resolves the image source and the model from
+the **active** `CullViewState` (`state.images`, `state.activeModel`) rather than from the
+environment's own provider — that is what lets `-FirstcutMockShoot` swap in a synthetic source
+without the viewer rendering black.
+
+`onFramePresented` is the closing end of the measured "arrow key → sharp photo" interval
+(`CGImageViewerHost.swift:54`): `present()` wraps the `layer.contents` swap in a `CATransaction`
+whose completion block fires after that run-loop turn's layer tree is committed, and reports
+`PresentedFrame.display` or `.standIn` (`:203-214`). A stand-in must not close a span that is waiting
+for the display decode. `onViewportPixelSize` is the opening end of the same story: the viewer is
+the only thing that knows how many pixels it covers, and T2 is decoded at exactly that many
+(`:152-160`; `AppModel.setViewportPixelSize`, `AppModel.swift:872`).
+
+**ui** embeds the host and styles the space around it; **app-logic** tells it the zoom state through
+`ViewerState` (defined in [app-model.md](app-model.md)), which arrives as `ViewerPresentation`.
 
 ## Outputs to other areas
 
-- **VisualSig** for every photo, computed from the thumbnail with the algorithm in
-  [batching.md](batching.md), delivered through `Session.submit_visual_sigs` in chunks as thumbnails finish.
+- **VisualSig** for every photo, computed by `VisualSigWorker`
+  (`App/Sources/Pipeline/VisualSigWorker.swift:37`) from the same 256 px bitmap the filmstrip uses
+  (the worker asks the cache first and publishes what it decodes, so no photograph is decoded twice
+  for the two passes, `:128-147`), with the algorithm in [batching.md](batching.md) and the
+  signature itself computed by the exported Rust reference (`FirstcutCoreBridge.visualSig`,
+  `App/Sources/Shared/CoreBridge.swift:38`). Handed over in chunks of 96 through
+  `SessionBackend.submitVisualSigs` (`AppModel.swift:351`), at `.utility` priority with 3 concurrent
+  decodes, starting at the photo the user is on and working outward.
 
 ## Guarantees
 
-- Nothing in the focus window is ever decoded on demand. `stats.focusMisses` must stay 0 (qa checks it).
-- Never re-encodes images; caches decoded pixels or the camera's original compressed bytes only.
-- Honors the memory budget from settings and sheds tiers under memory pressure, never the current batch.
+- Nothing in the focus window is decoded on demand *by navigating*. `stats.focusMisses` increments
+  only when a request names a photo in the **current** focus window and the cache cannot answer it,
+  and it does not claim 0 for a whole session: the first decode of a freshly opened folder
+  necessarily misses because nothing is decoded yet
+  (`ImageProvider.swift:43-52`). The property that is pinned is "once the prefetch has settled,
+  asking for every photo in the window costs zero extra decodes and zero misses".
+- A display decode never blanks the viewer: a cached bitmap smaller than the viewer needs is returned
+  while the bigger one is scheduled (`ImageProvider.swift:801-820`). `stats.displayResizes` counts
+  that, and it must settle at 0 while the window is still.
+- Never re-encodes images; caches decoded pixels or the camera's original compressed bytes only. The
+  one redraw is a 1:1 conversion into the display layout (`inDisplayLayout`, `:1259`) at
+  `interpolationQuality = .none`, which is what makes `layer.contents` a pointer swap with no
+  conversion inside the commit (`:1205-1217`).
+- Honors the memory budget from settings and sheds under memory pressure: a pressure warning drops
+  everything outside the focus window at once, never the current batch (`shedToFocus`, `:578`;
+  `evictLocked`, `:1032`).
+- Decodes are ImageIO, never a RAW demosaic: `CGImageSourceCreateThumbnailAtIndex` on a CR3 reads the
+  camera's embedded JPEG preview, on **macOS 15+** (no TIFF/RAW path, no `libraw`), with
+  `kCGImageSourceThumbnailMaxPixelSize` so ImageIO subsamples in the DCT and
+  `kCGImageSourceShouldCacheImmediately` so the pixels are not decoded lazily inside the commit
+  (`ImageProvider.swift:6-9, 1119-1132, 1194-1203`).
 
 ## Proposed changes
 
@@ -73,4 +211,18 @@ overlays. **ui** embeds it and styles the space around it; **app-logic** tells i
   which `ImageProvider` does ahead of time. `DisplayImage.image` replaces `DisplayImage.surface`. The
   host owns zoom (pinch, click to 100%, pan, zoom lock across photos, synced groups for Compare) and
   the AF and clipping overlays.
+- v0.3 (2026-10-01): matched the contract to the shipped code. **`DisplayImage` is gone entirely** —
+  the provider returns a bare `CGImage`, `fullImage(_:)` and `clippingMask(_:)` are no longer
+  provider methods, and `thumbnailProgress` is a `Double` rather than an `AsyncStream`. The one
+  protocol became two (`ImageProviding` for app-logic, `CullImageSource` for ui), `PipelineFocus`
+  became `FocusRequest`. Added **Cache tiers and the memory budget** (T0/T2/T3 shipped; T1 and T4
+  not), **Signposts** (the interval names and who emits them) and **`PipelineStats`** (the field
+  list). Replaced **Viewer view**: the host is `CGImageViewerHost` (`NSView` + `wantsLayer`, an
+  `imageLayer` with `contentsGravity = .resize`, overlays as sublayers), installed through
+  `PhotoViewerHostView.register` and resolving its source from the *active* `CullViewState`;
+  `PhotoViewerLayerView` does not exist and `App/Sources/Render/` is empty. Documented
+  `onFramePresented` (the `CATransaction` span that closes "arrow key → sharp photo") and
+  `onViewportPixelSize`. Corrected the `focusMisses` guarantee, which never claimed 0 for a whole
+  session, added the resize guarantee, and flagged that `exactRaw` is plumbed but T4 is not
+  implemented. Noted the macOS 15+ dependency of the ImageIO CR3 preview read.
 
