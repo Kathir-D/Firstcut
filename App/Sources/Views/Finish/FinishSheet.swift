@@ -25,6 +25,8 @@ struct FinishSheet: View {
             switch state.finishStage {
             case .hidden:
                 EmptyView()
+            case .confirm:
+                ConfirmStage(state: state)
             case .summary(let summary):
                 SummaryStage(summary: summary, state: state)
             case .options(let summary, let settings):
@@ -96,6 +98,34 @@ private struct ButtonRow<Leading: View, Trailing: View>: View {
 }
 
 // MARK: - Stages
+
+/// The question Settings → General asks before any of this starts (todo.md §9.7). It is a stage
+/// rather than an alert so the sheet stays the only place a Finish decision is made, and so Escape
+/// still cancels the whole thing rather than dismissing one layer of it.
+private struct ConfirmStage: View {
+    let state: any CullViewState
+
+    var body: some View {
+        SheetHeader(
+            title: "Finish Cull",
+            subtitle: "Nothing happens until the next screen says what will happen to every file")
+
+        Text(
+            "You will see what is kept, what is not, and a dry-run list of every file operation "
+                + "before anything touches the disk. Permanent deletes in that list cannot be undone."
+        )
+        .font(.callout)
+        .foregroundStyle(.secondary)
+
+        ButtonRow {
+            Button("Cancel", role: .cancel) { state.finish(.cancel) }
+                .keyboardShortcut(.cancelAction)
+        } trailing: {
+            Button("Continue") { state.finish(.confirm) }
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+}
 
 private struct SummaryStage: View {
     let summary: FinishSummary
@@ -272,7 +302,11 @@ private struct DryRunStage: View {
     @Binding var confirmation: String
     let word: String
 
-    private var needsTypedConfirmation: Bool { settings.unkept.isDestructive && !plan.ops.isEmpty }
+    /// The model decided this at the dry-run stage, where the plan is known
+    /// (`AppModel.runFinishDryRun`); the sheet only draws the gate. The warning about
+    /// irreversibility above is deliberately *not* gated: it is a fact about the run, not a
+    /// confirmation preference.
+    private var needsTypedConfirmation: Bool { settings.requiresTypedConfirmation }
     private var isConfirmed: Bool { !needsTypedConfirmation || confirmation == word }
 
     var body: some View {

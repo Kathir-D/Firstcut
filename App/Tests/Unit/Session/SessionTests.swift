@@ -800,6 +800,7 @@ struct FinishFlowTests {
         model.moveBatch(by: 3)
         model.perform(.setStars(5))
         model.startFinish()
+        model.confirmFinish()
 
         guard case .summary(let summary) = model.finish else {
             Issue.record("expected the summary stage")
@@ -818,6 +819,7 @@ struct FinishFlowTests {
         let (model, session) = Self.makeModel()
         model.perform(.setStars(5))
         model.startFinish()
+        model.confirmFinish()
         model.showFinishOptions()
         model.updateFinishSettings { $0.unkept = .moveToSubfolder("_Not kept") }
         model.runFinishDryRun()
@@ -845,16 +847,84 @@ struct FinishFlowTests {
     @Test("Nothing runs before a dry run has been shown")
     func noExecutionWithoutDryRun() throws {
         let (model, session) = Self.makeModel()
+        // Settings → General → "Confirm before Finish" is on by default, so the flow starts with one
+        // question to answer (its own test is below); the rest of these walk the stages after it.
         model.startFinish()
+        model.confirmFinish()
         model.showFinishOptions()
         model.executeFinish()
         #expect(session.executedPlans.isEmpty)
+    }
+
+    @Test("Finish asks first when the setting says so, and answers itself when it does not")
+    func finishConfirmationStage() throws {
+        let (model, _) = Self.makeModel()
+
+        // On by default: one question before the summary, and Cancel is still a cancel of the whole.
+        model.startFinish()
+        #expect(model.finish == .confirm, "the extra step is a stage of its own")
+        model.cancelFinish()
+        #expect(model.finish == .hidden)
+
+        model.startFinish()
+        model.confirmFinish()
+        guard case .summary = model.finish else {
+            Issue.record("confirming must reach the summary")
+            return
+        }
+
+        // Off: the flow is exactly as it was, one stage fewer.
+        let (direct, _) = Self.makeModel()
+        direct.updateSettings { $0.general.confirmBeforeFinish = false }
+        direct.startFinish()
+        guard case .summary = direct.finish else {
+            Issue.record("without the setting there is no question to answer")
+            return
+        }
+    }
+
+    @Test("The typed word is the model's decision, and only for an irreversible run")
+    func typedConfirmationFollowsTheSettingAndThePlan() throws {
+        let (model, _) = Self.makeModel()
+        model.startFinish()
+        model.confirmFinish()
+        model.showFinishOptions()
+        model.updateFinishSettings { $0.unkept = .deletePermanently }
+        model.runFinishDryRun()
+        // Takes the model as an argument on purpose: a closure over the first one would answer for
+        // all three and make the next two assertions meaningless.
+        func requiresWord(_ model: AppModel) -> Bool? {
+            guard case .dryRun(_, let settings, _) = model.finish else { return nil }
+            return settings.requiresTypedConfirmation
+        }
+        #expect(requiresWord(model) == true, "a permanent delete with the setting on")
+
+        // The setting off: the run is still irreversible, it just does not stop for the word.
+        let (relaxed, _) = Self.makeModel()
+        relaxed.updateSettings { $0.general.confirmPermanentDelete = false }
+        relaxed.startFinish()
+        relaxed.confirmFinish()
+        relaxed.showFinishOptions()
+        relaxed.updateFinishSettings { $0.unkept = .deletePermanently }
+        relaxed.runFinishDryRun()
+        #expect(requiresWord(relaxed) == false, "the setting is the user's answer to it")
+
+        // A reversible run needs no word whatever the setting says — there is nothing to confirm
+        // about moving files to a folder you can move them back from.
+        let (reversible, _) = Self.makeModel()
+        reversible.startFinish()
+        reversible.confirmFinish()
+        reversible.showFinishOptions()
+        reversible.updateFinishSettings { $0.unkept = .moveToSubfolder("_Not kept") }
+        reversible.runFinishDryRun()
+        #expect(requiresWord(reversible) == false, "a reversible run has nothing to confirm")
     }
 
     @Test("Permanent delete says it can't be undone")
     func permanentDelete() throws {
         let (model, _) = Self.makeModel()
         model.startFinish()
+        model.confirmFinish()
         model.showFinishOptions()
         model.updateFinishSettings { $0.unkept = .deletePermanently }
         model.runFinishDryRun()
@@ -875,6 +945,7 @@ struct FinishFlowTests {
     func trashWarning() throws {
         let (model, _) = Self.makeModel()
         model.startFinish()
+        model.confirmFinish()
         model.showFinishOptions()
         model.updateFinishSettings { $0.unkept = .moveToTrash }
         model.runFinishDryRun()
@@ -891,6 +962,7 @@ struct FinishFlowTests {
         let (model, _) = Self.makeModel()
         model.perform(.setStars(5))
         model.startFinish()
+        model.confirmFinish()
         model.showFinishOptions()
         model.updateFinishSettings {
             $0.unkept = .nothing
@@ -911,6 +983,7 @@ struct FinishFlowTests {
         let (model, _) = Self.makeModel()
         model.perform(.setStars(5))
         model.startFinish()
+        model.confirmFinish()
         model.showFinishOptions()
         model.updateFinishSettings {
             $0.unkept = .nothing
@@ -929,7 +1002,10 @@ struct FinishFlowTests {
     @Test("Finish can be undone while the moves are reversible")
     func undoFinish() throws {
         let (model, session) = Self.makeModel()
+        // Settings → General → "Confirm before Finish" is on by default, so the flow starts with one
+        // question to answer (its own test is below); the rest of these walk the stages after it.
         model.startFinish()
+        model.confirmFinish()
         model.showFinishOptions()
         model.runFinishDryRun()
         model.executeFinish()
@@ -951,6 +1027,7 @@ struct FinishFlowTests {
         let (model, _) = Self.makeModel()
         model.perform(.setStars(5))
         model.startFinish()
+        model.confirmFinish()
         model.showFinishOptions()
         model.updateFinishSettings { $0.ratingMode = .keep }
         #expect(model.settings.general.ratingMode == .stars)

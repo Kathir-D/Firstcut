@@ -138,6 +138,10 @@ public enum Phase: Hashable, Sendable {
 /// The Finish sheet's state machine (todo.md §9.7). Logic only — the sheet itself is ui's.
 public enum FinishStage: Hashable, Sendable {
     case hidden
+    /// Settings → General → "Confirm before Finish" is on and the user asked to finish: the one
+    /// question that has to be answered before the summary is even built. Its own stage (rather than
+    /// an alert) so the sheet is the only place a Finish decision is made and Escape still cancels.
+    case confirm
     case summary(FinishSummary)
     case options(FinishSummary, FinishSettings)
     /// Dry run done, showing the file operations before anything touches the disk.
@@ -149,7 +153,7 @@ public enum FinishStage: Hashable, Sendable {
 
     public var summary: FinishSummary? {
         switch self {
-        case .hidden, .executing: nil
+        case .hidden, .executing, .confirm: nil
         case .summary(let s), .options(let s, _), .dryRun(let s, _, _), .report(let s, _),
             .failed(let s, _):
             s
@@ -282,6 +286,11 @@ public struct FinishSettings: Hashable, Sendable, Codable {
     public var unkept: UnkeptAction
     public var kept: KeptAction
     public var ratingMode: RatingMode
+    /// Set by the model at the dry-run stage (`AppModel.runFinishDryRun`): this run deletes
+    /// permanently and Settings → General still asks for the typed word. Not sent to the core — it
+    /// plans either way — and not part of what the user chose: it is the model's answer to "does this
+    /// run need the word?", which is why the sheet draws the gate rather than deciding it.
+    public var requiresTypedConfirmation: Bool = false
 
     public init(unkept: UnkeptAction = .default, kept: KeptAction = .default, ratingMode: RatingMode = .stars)
     {

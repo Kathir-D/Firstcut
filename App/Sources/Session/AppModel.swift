@@ -1082,6 +1082,14 @@ public final class AppModel: SessionListener, KeyRouterSource {
 
     public func startFinish() {
         guard canAct, !batches.isEmpty else { return }
+        // The typed word protects an irreversible run; this protects the decision to start finishing
+        // at all. Both are the user's settings, and both live in the model so they are testable.
+        finish = settings.general.confirmBeforeFinish ? .confirm : .summary(summary)
+    }
+
+    /// The answer to `startFinish`'s question, from the sheet's Confirm button.
+    public func confirmFinish() {
+        guard case .confirm = finish else { return }
         finish = .summary(summary)
     }
 
@@ -1102,8 +1110,15 @@ public final class AppModel: SessionListener, KeyRouterSource {
     }
 
     public func runFinishDryRun() {
-        guard case .options(let current, let options) = finish else { return }
-        finish = .dryRun(current, options, backend.planFinish(options))
+        guard case .options(let current, var options) = finish else { return }
+        let plan = backend.planFinish(options)
+        // Whether the user has to type DELETE is decided **here**, not in the sheet: this is where
+        // the plan, the settings and the stage are all in hand, and a rule that lives in a private
+        // SwiftUI view is a rule no test can reach — which is why the typed gate had no coverage at
+        // all. `isDestructive` alone is the fact; the setting is the user's answer to it.
+        options.requiresTypedConfirmation =
+            settings.general.confirmPermanentDelete && options.unkept.isDestructive && !plan.ops.isEmpty
+        finish = .dryRun(current, options, plan)
     }
 
     public func executeFinish() {

@@ -47,9 +47,14 @@ public struct GeneralSettings: Codable, Equatable, Sendable {
     public var enteringBatchBehavior: EnteringBatchBehavior = .firstPhoto
     public var finishUnkept: UnkeptAction = .default
     public var finishKept: KeptAction = .default
+    /// Ask before the Finish flow opens. The sheet is already a confirmation (summary → options →
+    /// dry run → execute, nothing on disk before the execute), so this is the extra "are you sure
+    /// you want to finish this shoot?" step above it — which is the only reading that does not
+    /// weaken a guarantee the tests pin ("nothing runs before a dry run has been shown").
     public var confirmBeforeFinish: Bool = true
+    /// Ask for the typed word before a run that deletes permanently. Off means Firstcut does what
+    /// the run says without stopping — the run is still irreversible, which is why this defaults on.
     public var confirmPermanentDelete: Bool = true
-    public var confirmDiscardRatings: Bool = true
     /// 5 or 4 stars counts as a keep (todo.md §6.1).
     public var keepThreshold: Int = RatingRules.defaultKeepThreshold
 

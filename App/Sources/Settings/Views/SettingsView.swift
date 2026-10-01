@@ -91,6 +91,10 @@ private struct GeneralSettingsTab: View {
                 }
             }
 
+            Section("Confirmations") {
+                confirmations
+            }
+
             Section("Finish Cull defaults") {
                 Picker("Photos not kept", selection: unkeptKind) {
                     ForEach(UnkeptAction.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -128,6 +132,23 @@ private struct GeneralSettingsTab: View {
                     $0.general.finishUnkept = kind.with(folder: $0.general.finishUnkept.folderName ?? "")
                 }
             })
+    }
+
+    /// Shown because the model honours both of them (`AppModel.runFinishDryRun` for the typed word;
+    /// the extra step for `confirmBeforeFinish` is the sheet's `askToFinish` state).
+    private var confirmations: some View {
+        Group {
+            Toggle(
+                "Confirm before Finish", isOn: settingBinding(model, \.general.confirmBeforeFinish))
+            Toggle(
+                "Ask for the typed word before deleting permanently",
+                isOn: settingBinding(model, \.general.confirmPermanentDelete))
+            Text(
+                "Permanent delete cannot be undone, so the typed word (DELETE) is the last stop before it. "
+                    + "Turning that off does not make the run reversible."
+            )
+            .font(.footnote).foregroundStyle(.secondary)
+        }
     }
 
     private var unkeptFolder: Binding<String> {

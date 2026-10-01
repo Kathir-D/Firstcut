@@ -123,6 +123,7 @@ final class ModelCullViewState: CullViewState {
 
     func finish(_ action: FinishAction) {
         switch action {
+        case .confirm: model.confirmFinish()
         case .showOptions: model.showFinishOptions()
         case .setUnkept(let unkept): model.updateFinishSettings { $0.unkept = unkept }
         case .setKept(let kept): model.updateFinishSettings { $0.kept = kept }

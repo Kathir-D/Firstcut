@@ -184,6 +184,8 @@ enum CullAction {
 /// changes the stage itself, so the model's state machine is the only thing that decides what is
 /// on screen.
 enum FinishAction {
+    /// The answer to Settings → General → "Confirm before Finish": yes, go ahead.
+    case confirm
     case showOptions
     case setUnkept(UnkeptAction)
     case setKept(KeptAction)
