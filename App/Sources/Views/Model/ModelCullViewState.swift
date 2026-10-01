@@ -99,6 +99,13 @@ final class ModelCullViewState: CullViewState {
     var standInFramesPresented: Int { model.standInFramesPresented }
     var showsAFOverlay: Bool { model.afOverlay }
     var showsClippingOverlay: Bool { model.clippingOverlay }
+    /// Resolved once, here, so the model speaks fractions and the mask speaks bytes and neither
+    /// view has to know about the other.
+    var clippingThresholds: (highlight: UInt8, shadow: UInt8) {
+        ClippingMask.thresholds(
+            highlight: model.settings.viewer.clippingHighlightThreshold,
+            shadow: model.settings.viewer.clippingShadowThreshold)
+    }
     var isZoomLocked: Bool { model.viewer.zoomLock }
     var finishStage: FinishStage { model.finish }
     var recentFolders: [RecentFolder] { model.recents }

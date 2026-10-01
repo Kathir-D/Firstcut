@@ -106,6 +106,12 @@ struct ViewerPresentation: Equatable {
     /// Autofocus points to draw, in the *upright* image's normalized coordinates (top-left origin).
     var afRects: [AFRect] = []
     var showsClipping = false
+    /// The clipping overlay's clip points as **bytes** (Settings → Viewer, normalized 0…1 in the
+    /// model; `ClippingMask.thresholds` does the conversion once). They are part of the presentation
+    /// because the host compares this struct to decide whether to rebuild the mask: a threshold
+    /// change that is not compared here repaints nothing and the slider appears to do nothing.
+    var clippingHighlight: UInt8 = ClippingMask.defaultHighlight
+    var clippingShadow: UInt8 = ClippingMask.defaultShadow
     /// The photograph's own pixel size, as the scan reported it (pre-rotation). Zero when unknown.
     ///
     /// It is here because "100%" has to mean 100% of the *photograph*, not of whatever bitmap happens

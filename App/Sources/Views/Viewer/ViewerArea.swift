@@ -19,6 +19,7 @@ struct ViewerArea: View {
         var value = ViewerPresentation.fit
         value.isZoomLocked = state.isZoomLocked
         value.showsClipping = state.showsClippingOverlay
+        (value.clippingHighlight, value.clippingShadow) = state.clippingThresholds
         if let meta = state.currentPhoto?.meta {
             // So "100%" is 100% of the photograph and not of whatever bitmap the cache happened to hold.
             value.pixelSize = CGSize(width: CGFloat(meta.width), height: CGFloat(meta.height))

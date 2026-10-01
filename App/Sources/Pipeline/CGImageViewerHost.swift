@@ -116,6 +116,8 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
         isZoomLocked = state.isZoomLocked
         let overlaysChanged =
             presentation.afRects != state.afRects || presentation.showsClipping != state.showsClipping
+            || presentation.clippingHighlight != state.clippingHighlight
+            || presentation.clippingShadow != state.clippingShadow
         presentation = state
         if lockChanged || overlaysChanged { updateOverlays() }
         layoutImage(animated: false)
@@ -309,7 +311,8 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
         if presentation.showsClipping, let image {
             let mask = CALayer()
             mask.contentsGravity = .resize
-            mask.contents = ClippingMask.make(from: image)
+            mask.contents = ClippingMask.make(
+                from: image, highlight: presentation.clippingHighlight, shadow: presentation.clippingShadow)
             overlayLayer.addSublayer(mask)
             clippingLayer = mask
         }
@@ -440,48 +443,106 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
 
 // MARK: - Clipping mask
 
-/// Highlight / shadow clipping (todo.md §9.2, key J): red where any channel is at the top of its
-/// range, blue where every channel is at the bottom. Computed from a downsampled copy, because a
-/// 24-megapixel frame does not need 24 million tests to show where the sky blew out.
+/// Highlight / shadow clipping (todo.md §9.2, key J): red where any channel is at or above the
+/// highlight point, blue where **every** channel is at or below the shadow point. Computed from a
+/// downsampled copy, because a 24-megapixel frame does not need 24 million tests to show where the
+/// sky blew out.
+///
+/// The thresholds are per-channel byte clip points and they come from Settings → Viewer, so a
+/// photographer can see a *near*-clipped sky. The defaults are the numbers this always used
+/// (250/255 ≈ 0.98 and 5/255 ≈ 0.02): conservative, so the overlay shows what is actually clipping
+/// rather than what is nearly clipping. `shadow >= highlight` would paint every pixel one colour,
+/// so it is prevented rather than painted.
 enum ClippingMask {
-    static let highlight: UInt8 = 250
-    static let shadow: UInt8 = 5
+    /// Any channel at or above this clips (highlight).
+    static let defaultHighlight: UInt8 = 250
+    /// Every channel at or below this clips (shadow).
+    static let defaultShadow: UInt8 = 5
 
-    static func make(from image: CGImage, maxEdge: Int = 1024) -> CGImage? {
+    /// Where the two overlay colours come from: premultiplied red/blue at ~70%, so the picture is
+    /// still readable underneath.
+    private static let overlayAlpha: UInt8 = 178
+
+    /// `Settings → Viewer`'s normalized 0…1 thresholds as byte clip points, clamped and ordered.
+    ///
+    /// The settings model stores 0…1 because that is what a slider wants; the mask tests bytes. The
+    /// conversion lives here so the two cannot drift, and so the model defaults can be written as the
+    /// fractions they really are.
+    public static func thresholds(
+        highlight: Double, shadow: Double
+    ) -> (highlight: UInt8, shadow: UInt8) {
+        let upper = Int((min(max(highlight, 0), 1) * 255).rounded())
+        let lower = Int((min(max(shadow, 0), 1) * 255).rounded())
+        // Clipping both ends of the range at once is not a display setting, it is a mistake: keep
+        // the highlight above the shadow so every pixel has at most one verdict. In `Int`, because
+        // `lower + 1` on a `UInt8` shadow of 255 would trap — which is exactly what a hand-edited
+        // settings file can ask for.
+        return upper > lower
+            ? (UInt8(upper), UInt8(lower)) : (UInt8(max(upper, min(lower + 1, 255))), UInt8(lower))
+    }
+
+    static func make(
+        from image: CGImage, highlight: UInt8 = defaultHighlight, shadow: UInt8 = defaultShadow,
+        maxEdge: Int = 1024
+    ) -> CGImage? {
         let longest = max(image.width, image.height)
         guard longest > 0 else { return nil }
         let scale = min(1, Double(maxEdge) / Double(longest))
         let width = max(1, Int(Double(image.width) * scale))
         let height = max(1, Int(Double(image.height) * scale))
-        let bytesPerRow = width * 4
-        var source = [UInt8](repeating: 0, count: bytesPerRow * height)
+        // Reading the pixels correctly took two bugs' worth of care, and the layout below is
+        // measured rather than assumed (`ClippingMaskTests` is why it can be):
+        //
+        // * The byte order must be **pinned**. With `premultipliedLast` on its own it was not: the
+        //   buffer came back in an order where byte 0 was the *alpha* channel, so `>= 250` was true
+        //   for every pixel of an opaque photograph and the J overlay painted the whole picture red.
+        // * The buffer must be **opaque**, not premultiplied: drawing into a premultiplied buffer
+        //   round-trips every pixel through an unpremultiply that turns premultiplied black
+        //   (0, 0, 0, 255) into transparent black (0, 0, 0, 0) — precisely the pixel the shadow
+        //   overlay exists to find.
+        //
+        // `noneSkipFirst | byteOrder32Little` is the layout §7.1 already forces on every cached
+        // bitmap (`DecodeEngine.displayBitmapInfo`), so for the common case this draw is a straight
+        // copy with no conversion at all. Measured, in memory, it is **[B, G, R, A]**: the three
+        // colour bytes are at offsets 0, 1, 2 and alpha is at offset 3.
+        let sourceRowBytes = width * 4
+        var source = [UInt8](repeating: 0, count: sourceRowBytes * height)
         let space = CGColorSpaceCreateDeviceRGB()
+        let readLayout =
+            CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        let maskLayout =
+            CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         let drew = source.withUnsafeMutableBytes { buffer -> Bool in
             guard
                 let context = CGContext(
                     data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                    bytesPerRow: bytesPerRow, space: space,
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                    bytesPerRow: sourceRowBytes, space: space, bitmapInfo: readLayout)
             else { return false }
-            context.interpolationQuality = .medium
+            // No interpolation: the mask is a threshold test, and averaging two neighbouring pixels
+            // to decide whether either clips is how a threshold stops being a threshold.
+            context.interpolationQuality = .none
             context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
         guard drew else { return nil }
 
-        var out = [UInt8](repeating: 0, count: bytesPerRow * height)
+        let maskRowBytes = width * 4
+        var out = [UInt8](repeating: 0, count: maskRowBytes * height)
         var index = 0
         while index < source.count {
-            let r = source[index]
-            let g = source[index + 1]
-            let b = source[index + 2]
-            if r >= highlight || g >= highlight || b >= highlight {
+            // Offsets 0, 1, 2 are the three colour channels; offset 3 is alpha (see `readLayout`).
+            // The test is over all three and over any of them, so it does not matter which is which:
+            // a blown-out channel is blown out whatever it is called.
+            let first = source[index]
+            let second = source[index + 1]
+            let third = source[index + 2]
+            if first >= highlight || second >= highlight || third >= highlight {
                 // Premultiplied red at ~70%.
-                out[index] = 178
-                out[index + 3] = 178
-            } else if r <= shadow && g <= shadow && b <= shadow {
-                out[index + 2] = 178
-                out[index + 3] = 178
+                out[index] = overlayAlpha
+                out[index + 3] = overlayAlpha
+            } else if first <= shadow && second <= shadow && third <= shadow {
+                out[index + 2] = overlayAlpha
+                out[index + 3] = overlayAlpha
             }
             index += 4
         }
@@ -489,8 +550,7 @@ enum ClippingMask {
             guard
                 let context = CGContext(
                     data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                    bytesPerRow: bytesPerRow, space: space,
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                    bytesPerRow: maskRowBytes, space: space, bitmapInfo: maskLayout)
             else { return nil }
             return context.makeImage()
         }

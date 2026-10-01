@@ -62,9 +62,14 @@ public struct ViewerSettings: Codable, Equatable, Sendable {
     public var backgroundGray: Double = 0.12
     public var zoomLock: Bool = false
     public var afOverlay: Bool = false
-    /// 0…1 clip thresholds for the J overlay (todo.md §9.2).
-    public var clippingShadowThreshold: Double = 0.0
-    public var clippingHighlightThreshold: Double = 1.0
+    /// Clip thresholds for the J overlay as fractions of a channel's range (todo.md §9.2).
+    /// `ClippingMask.thresholds` turns them into byte clip points.
+    ///
+    /// The defaults are the points the overlay always used, written as the fractions they are:
+    /// 250/255 and 5/255. They used to be 0 and 1, which read as "every pixel clips" — a setting
+    /// nobody read until now, so nobody had noticed that its defaults were not the code's numbers.
+    public var clippingShadowThreshold: Double = 5.0 / 255.0
+    public var clippingHighlightThreshold: Double = 250.0 / 255.0
     public var infoFields: Set<InfoField> = InfoField.all
     public var hudVisible: Bool = true
     /// Default for the T4 "Exact RAW" decode (pipeline's job once it exists).

@@ -210,4 +210,10 @@ extension CullViewState {
     public var lastFrameLatencyMs: Double? { nil }
     public var worstFrameLatencyMs: Double? { nil }
     public var standInFramesPresented: Int { 0 }
+
+    /// The clipping overlay's clip points, resolved from Settings by the real state. The preview
+    /// shoot has no settings, so it gets the mask's own defaults — the numbers it has always used.
+    public var clippingThresholds: (highlight: UInt8, shadow: UInt8) {
+        (ClippingMask.defaultHighlight, ClippingMask.defaultShadow)
+    }
 }

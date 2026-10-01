@@ -1363,7 +1363,8 @@ final class DecodeEngine: @unchecked Sendable {
             red[r * bins / 256] += 1
             green[g * bins / 256] += 1
             blue[b * bins / 256] += 1
-            // Rec. 601 luma, which is what the J clipping overlay thresholds against (§9.2).
+            // Rec. 601 luma, which is what Lightroom's histogram shows. (The J overlay thresholds
+            // *per channel*, not on luma — see `ClippingMask`.)
             let luma = (0.299 * Double(r) + 0.587 * Double(g) + 0.114 * Double(b)).rounded()
             luminance[min(bins - 1, Int(luma) * bins / 256)] += 1
         }

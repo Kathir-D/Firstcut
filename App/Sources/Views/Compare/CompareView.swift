@@ -65,6 +65,7 @@ struct CompareView: View {
         // Zoom is locked across frames here: sliding the window must not reset the comparison.
         presentation.isZoomLocked = true
         presentation.showsClipping = state.showsClippingOverlay
+        (presentation.clippingHighlight, presentation.clippingShadow) = state.clippingThresholds
         if state.showsAFOverlay {
             presentation.afRects = ViewerPresentation.afRects(
                 from: photo.meta.af, orientation: photo.meta.orientation)

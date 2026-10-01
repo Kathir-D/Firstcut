@@ -172,6 +172,24 @@ private struct ViewerSettingsTab: View {
                 Toggle("Show the progress HUD", isOn: settingBinding(model, \.viewer.hudVisible))
             }
 
+            Section("Clipping overlay") {
+                // Shown because the pipeline honours them (todo.md §0.3): these reach
+                // `ClippingMask` through the viewer's presentation. The ranges stop short of the
+                // ends on purpose -- 1.0 highlights every white pixel and 0.0 shadows every black
+                // one, which is a picture painted entirely red or blue rather than an overlay.
+                LabeledContent("Highlights") {
+                    Slider(value: settingBinding(model, \.viewer.clippingHighlightThreshold), in: 0.5...1)
+                        .frame(width: 220)
+                }
+                LabeledContent("Shadows") {
+                    Slider(value: settingBinding(model, \.viewer.clippingShadowThreshold), in: 0...0.5)
+                        .frame(width: 220)
+                }
+                Text("A channel at or past the point is painted; J toggles the overlay.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Info panel fields") {
                 ForEach(InfoField.allCases) { field in
                     Toggle(field.title, isOn: fieldBinding(field))
