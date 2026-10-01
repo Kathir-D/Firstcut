@@ -154,9 +154,19 @@ Not blocking v0.1.0; an agent can do these.
      display decodes from the byte range — and the rows are measured in `docs/qa/perf-baselines.md`.
   4. ~~The first-photo fast path.~~ Done: one header read puts a photograph on screen while the
      scan runs behind it (§7.5 work items, above).
-  5. Sidecar ratings are imported only when a folder's session is first created, so a
-     Lightroom-rated second card copied into an open shoot is not imported; a different file saved
-     under a known name (same path) inherits that name's rating.
+  5. ~~Sidecar ratings were imported only when a folder's session was first created~~ **Fixed.**
+     The import now runs at **every open and every rescan**, for photographs the session has no
+     rating row of its own for — so a Lightroom-rated card copied into an open shoot, or a photo
+     rated elsewhere between two opens, arrives rated, while a rating Firstcut made (or cleared)
+     can never be overwritten from outside. The same change closes the mirror bug: **a different
+     capture saved under a known name no longer inherits that name's rating.** `reconcile` treats
+     a known id whose *every* identity disagrees — inode, shutter count and size — as a different
+     photograph and drops the departed one's rating and undo history; the departed one's stale
+     sidecar is recognised (it still holds exactly the departed row's stars and label) and is not
+     re-imported onto the new capture. Any partial agreement (edited in place, same capture back
+     from a card, a parser that missed the shutter count) keeps the rating — destroying a rating
+     on a guess is worse than lending one on a coincidence. Five tests, each verified by mutation
+     to fail when its half of the fix is undone.
   6. UI polish from screenshots the app can now be launched to take.
 - **Fixed — the ~/Documents TCC hang, and the timeout tool that made it findable.** `xcodebuild test`
   on this machine was hanging indefinitely (no prompt, no failure, no output), which is the worst

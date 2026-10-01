@@ -125,6 +125,27 @@ pub struct SessionSnapshot {
     pub skipped: Vec<crate::meta::Skipped>,
 }
 
+/// What one reconcile pass over a fresh scan found.
+#[derive(Debug, Default)]
+pub struct Reconciled {
+    /// (old id, new id) for every file recognised as a rename: its state has already been carried
+    /// to the new id (REV-68).
+    pub moved: Vec<(u64, u64)>,
+    /// A *different* capture that arrived under a name the session already knew, keyed by the id
+    /// (which is the name). The departed photograph's rating has been dropped; `Swapped` keeps
+    /// just enough of it to recognise its own sidecar and refuse to re-import that as if it were
+    /// the new capture's.
+    pub swapped: HashMap<u64, Swapped>,
+}
+
+/// The departed photograph's stars and label, held only for the sidecar-import pass that follows
+/// the reconcile that reset it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Swapped {
+    pub stars: u8,
+    pub label: Option<crate::store::rating::ColorLabel>,
+}
+
 /// What the session tells the app about (docs/contracts/session-api.md).
 pub trait SessionListener: Send + Sync {
     /// Only unvisited batches can differ: a batch the user has been in is frozen.
@@ -262,9 +283,6 @@ impl Session {
         let writer = Arc::new(XmpWriter::new(Arc::new(ListenerSink(Arc::clone(
             &listener,
         )))));
-        // A shoot rated in Lightroom and opened here for the first time has its ratings only in
-        // sidecars, and starting from a blank database would silently discard them (todo.md §11).
-        let created = matches!(db.matched(), MatchKind::Created);
         let mut state = State {
             rating_mode: db.rating_mode()?,
             keep_stars: crate::store::rating::KEEP_STARS,
@@ -280,25 +298,15 @@ impl Session {
         };
         // `reconcile` rather than `ingest`: a file renamed in Finder while the app was closed must
         // keep its rating, exactly as one renamed while it is open does. (For a new database there
-        // is nothing to match, and `reconcile` is `ingest`.)
-        state.reconcile(scan.photos)?;
-        if created {
-            let photos: Vec<PhotoMeta> = state.photos.values().cloned().collect();
-            for (id, rating) in import_ratings_from_sidecars(folder, &photos) {
-                records::write_rating(
-                    &state.db,
-                    &RatingWrite {
-                        photo_id: id.0,
-                        rating,
-                        xmp_rating: None,
-                        xmp_label: None,
-                    },
-                )?;
-                // The sidecar already says this. Leaving the row pending would queue a write of
-                // "no values", which reads as "remove the rating" and would wipe what was imported.
-                records::mark_xmp_written(&state.db, id.0)?;
-            }
-        }
+        // is nothing to match, and `reconcile` is `ingest`.) It also refuses to lend a rating to a
+        // *different* capture that arrived under a known name.
+        let reconciled = state.reconcile(scan.photos)?;
+        // A photograph rated outside Firstcut (Lightroom, an earlier Firstcut whose database is
+        // gone) has its rating in a sidecar. Read it for every photograph this session has no
+        // rating of its own for — on a first open that is all of them, and on a re-open it is
+        // whatever arrived or was rated elsewhere since (todo.md §11, §0.5's bug review).
+        let photos: Vec<PhotoMeta> = state.photos.values().cloned().collect();
+        import_new_ratings_from_sidecars(&state.db, folder, &photos, &reconciled.swapped)?;
 
         // The session is shared across threads — the UI calls it while the XMP writer runs — so
         // every mutation goes through this one lock. A public method that needs the lock twice
@@ -667,10 +675,15 @@ impl Session {
         let mut state = self.state();
         state.skipped = scan.skipped.clone();
         let photos = scan.photos.clone();
-        let moved = state.reconcile(photos)?;
+        let reconciled = state.reconcile(photos)?;
+        // A card copied into the open shoot arrives rated — its sidecars travel with its files,
+        // and not reading them here was the bug: the import used to run only when a session was
+        // first created (todo.md §0.5, the bug review).
+        let photos: Vec<PhotoMeta> = state.photos.values().cloned().collect();
+        import_new_ratings_from_sidecars(&state.db, &self.folder, &photos, &reconciled.swapped)?;
         state.batches = state.rebatch().unwrap_or_else(|| state.batches.clone());
         drop(state);
-        if !moved.is_empty() {
+        if !reconciled.moved.is_empty() {
             // A rename moved photos, so the batches that referenced the old ids are stale.
             self.listener.batches_changed(self.state().batches.clone());
         }
@@ -806,23 +819,91 @@ impl State {
         let _ = records::set_photo_ordinals(&self.db, &ordinals);
     }
 
-    /// Recognises renamed files and carries their state to the new id (REV-68).
+    /// Recognises renamed files and carries their state to the new id (REV-68), and refuses to lend
+    /// a departed photograph's rating to a *different* capture that arrived under its name.
     ///
     /// A file is "the same one" when it is the same inode on the same volume, which is what a
     /// rename in Finder produces. The shutter count and file size are the fallback for a file that
     /// came back from a card, because both are properties of the capture rather than of the name.
     /// Anything matched moves its rating, its history and its visited position; anything
     /// unmatched is simply a new photo, which is the common case and costs nothing.
-    fn reconcile(&mut self, photos: Vec<PhotoMeta>) -> crate::store::Result<Vec<(u64, u64)>> {
+    ///
+    /// The mirror case is the swap: `IMG_0001.CR3` is gone and a *different* photograph — another
+    /// card whose counter restarted, a second shoot under the same names — is saved under that
+    /// name. The id is a hash of the path, so nothing about the id says the file changed, and left
+    /// alone the new capture silently inherits the old one's rating. A known id whose every
+    /// identity disagrees — the inode, the shutter count and the size, all three — is a different
+    /// capture, and its rating row and undo history are dropped rather than lent.
+    fn reconcile(&mut self, photos: Vec<PhotoMeta>) -> crate::store::Result<Reconciled> {
         let present: Vec<u64> = photos.iter().map(|meta| meta.id.0).collect();
         // Only the rows the scan did not see are candidates for a rename. A row the scan *did*
         // see is the same file under the same name, whatever the previous scan thought.
         let vanished: Vec<PhotoRow> = records::photos_not_in(&self.db, &present)?;
-        if vanished.is_empty() {
-            self.ingest(photos)?;
-            return Ok(Vec::new());
+        // Every row the database holds, keyed by id: the swap check below needs the ones the
+        // scan *did* see, which is exactly what `photos_not_in` leaves out.
+        let rows: Vec<PhotoRow> = records::photos_in_order(&self.db)?;
+        let by_id: HashMap<u64, &PhotoRow> = rows.iter().map(|row| (row.id, row)).collect();
+
+        // A different capture under a known name must not inherit the departed photograph's
+        // rating (todo.md §0.5, the bug review). The test is deliberately conservative — it fires
+        // only when *every* identity disagrees:
+        //
+        // * the inode, so a file edited in place is still itself;
+        // * the shutter count, so the same capture copied back from a card is still itself;
+        // * the file size, so a same-sized coincidence of the first two is not a swap either.
+        //
+        // Any partial agreement keeps the rating: destroying a rating on a guess is worse than
+        // lending one on a coincidence. This runs before `ingest` overwrites the stored identity
+        // with the new file's.
+        let mut swapped: HashMap<u64, Swapped> = HashMap::new();
+        for meta in &photos {
+            let Some(row) = by_id.get(&meta.id.0) else {
+                continue;
+            };
+            let same_file = meta.device.zip(meta.ino) == row.device.zip(row.ino);
+            if same_file {
+                continue;
+            }
+            let stored_shutter = row
+                .meta_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<PhotoMeta>(json).ok())
+                .and_then(|stored| stored.shutter_count);
+            if stored_shutter.is_some() && stored_shutter == meta.shutter_count {
+                continue; // the same capture, back under the same name
+            }
+            if row.file_size == meta.file_size {
+                continue; // sizes agree, so the identities above did not all disagree
+            }
+            if let Some(rating) = records::rating_of(&self.db, meta.id.0)? {
+                records::delete_rating(&self.db, meta.id.0)?;
+                records::clear_history_for(&self.db, meta.id.0)?;
+                swapped.insert(
+                    meta.id.0,
+                    Swapped {
+                        stars: rating.rating.stars,
+                        label: rating.rating.label,
+                    },
+                );
+            }
         }
 
+        let mut moved = Vec::new();
+        if !vanished.is_empty() {
+            moved = self.match_renames(vanished, &photos, &rows)?;
+        }
+        self.ingest(photos)?;
+        Ok(Reconciled { moved, swapped })
+    }
+
+    /// The rename half of [`Session::reconcile`] (REV-68): vanished rows are matched to files the
+    /// scan has not seen before, by the two identities that survive a rename.
+    fn match_renames(
+        &mut self,
+        vanished: Vec<PhotoRow>,
+        photos: &[PhotoMeta],
+        rows: &[PhotoRow],
+    ) -> crate::store::Result<Vec<(u64, u64)>> {
         // Index the vanished rows by the two identities that survive a rename.
         let mut by_inode: HashMap<(i64, i64), Vec<PhotoRow>> = HashMap::new();
         let mut by_capture: HashMap<(Option<u64>, u64), Vec<PhotoRow>> = HashMap::new();
@@ -859,11 +940,8 @@ impl State {
         };
         // Only a file with no row of its own can be a renamed one. The database, not memory, is
         // what knows that: at open, memory is still empty.
-        let known: std::collections::HashSet<u64> = records::photos_in_order(&self.db)?
-            .into_iter()
-            .map(|row| row.id)
-            .collect();
-        for meta in &photos {
+        let known: std::collections::HashSet<u64> = rows.iter().map(|row| row.id).collect();
+        for meta in photos {
             if known.contains(&meta.id.0) {
                 continue;
             }
@@ -911,8 +989,6 @@ impl State {
         for (old_id, _) in &moved {
             self.photos.remove(old_id);
         }
-
-        self.ingest(photos)?;
         Ok(moved)
     }
 
@@ -1106,6 +1182,56 @@ pub fn import_ratings_from_sidecars(folder: &Path, photos: &[PhotoMeta]) -> Vec<
         imported.push((meta.id, rating));
     }
     imported
+}
+
+/// Writes the sidecar ratings of photographs the session has no rating of its own for.
+///
+/// This replaces two behaviours that were each a bug (todo.md §0.5, the bug review):
+///
+/// 1. The import used to run only when a session was *created*, so a Lightroom-rated card copied
+///    into an open shoot never had its ratings read — nor did a photo rated in Lightroom while
+///    Firstcut was closed, if Firstcut had never rated it. The rule now: a sidecar is read
+///    whenever the session has no rating row for the photograph, at every open and every rescan.
+///    A row is Firstcut's own say about the photo, and it always wins — so nothing Firstcut rated
+///    (or explicitly cleared) can be overwritten from outside.
+/// 2. A *different* capture that arrived under a known name had the departed photograph's rating
+///    dropped by [`Session::reconcile`], but its stale sidecar would immediately re-import that
+///    rating as if it were the new capture's. `swapped` carries what the departed photograph's row
+///    said, and a sidecar still holding exactly that is recognised as the departed one's.
+pub fn import_new_ratings_from_sidecars(
+    db: &Db,
+    folder: &Path,
+    photos: &[PhotoMeta],
+    swapped: &HashMap<u64, Swapped>,
+) -> crate::store::Result<()> {
+    let known: HashSet<u64> = records::ratings(db)?.into_keys().collect();
+    for (id, rating) in import_ratings_from_sidecars(folder, photos) {
+        if known.contains(&id.0) {
+            continue; // Firstcut has its own say about this photograph.
+        }
+        if let Some(departed) = swapped.get(&id.0) {
+            let stars = rating.stars;
+            let label = rating.label.map(|label| label.as_str());
+            if stars == departed.stars && label == departed.label.map(|label| label.as_str()) {
+                // The sidecar still holds the departed photograph's rating — Firstcut's own
+                // write, most likely — so it is not the new capture's and must not be lent to it.
+                continue;
+            }
+        }
+        records::write_rating(
+            db,
+            &RatingWrite {
+                photo_id: id.0,
+                rating,
+                xmp_rating: None,
+                xmp_label: None,
+            },
+        )?;
+        // The sidecar already says this. Leaving the row pending would queue a write of
+        // "no values", which reads as "remove the rating" and would wipe what was imported.
+        records::mark_xmp_written(db, id.0)?;
+    }
+    Ok(())
 }
 
 /// Tier counts for the Finish summary, in the current mode (todo.md §6.1).
@@ -2604,5 +2730,143 @@ mod tests {
         let scan = session.rescan().expect("an empty folder is a valid answer");
         assert!(scan.photos.is_empty());
         assert!(session.snapshot().photos.is_empty());
+    }
+
+    // ── The two bugs from todo.md §0.5's review: sidecar ratings that never arrived, and a
+    //    different capture that inherited a name's rating. ─────────────────────────────────
+
+    /// Writes a sidecar next to a photograph, the way Lightroom (or a previous Firstcut) would.
+    fn rate_via_sidecar(folder: &Path, rel_path: &str, stars: i64) {
+        let sidecar = folder.join(crate::xmp::sidecar_path(rel_path));
+        crate::xmp::write_sidecar(&sidecar, &crate::xmp::XmpValues::rating(stars)).unwrap();
+    }
+
+    #[test]
+    fn a_sidecar_rated_card_copied_into_an_open_shoot_is_imported() {
+        // The bug: the import ran only when a session was created, so a Lightroom-rated second
+        // card copied into an open shoot arrived with every rating silently missing.
+        let (_sessions, folder, session) = empty_session();
+        write_cr3(folder.path(), "IMG_0099.CR3", 30);
+        rate_via_sidecar(folder.path(), "IMG_0099.CR3", 5);
+
+        session.rescan().unwrap();
+
+        let snapshot = session.snapshot();
+        assert_eq!(snapshot.photos.len(), 13, "the new file is in the shoot");
+        let id = crate::batch::photo_id("IMG_0099.CR3");
+        assert_eq!(
+            snapshot.ratings.get(&id.0).map(|rating| rating.stars),
+            Some(5),
+            "its sidecar's rating came with it"
+        );
+    }
+
+    #[test]
+    fn a_photo_rated_elsewhere_while_firstcut_was_closed_is_imported_on_reopen() {
+        // The other half of the same bug: not new files, but a photo Firstcut had never rated,
+        // given a rating in Lightroom between two opens.
+        let (sessions, folder, session) = empty_session();
+        let unrated = session.snapshot().photos[6].clone();
+        session.close();
+        drop(session);
+
+        rate_via_sidecar(folder.path(), &unrated.rel_path, 4);
+        let reopened =
+            Session::open_in(folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
+
+        assert_eq!(
+            reopened
+                .snapshot()
+                .ratings
+                .get(&unrated.id.0)
+                .map(|r| r.stars),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn a_rating_firstcut_made_is_not_overwritten_by_a_sidecar() {
+        // The mirror rule, without which the import above would be a liability: a rating row is
+        // Firstcut's own say about a photograph, and the sidecar only fills the silence.
+        let (_sessions, folder, session) = empty_session();
+        let meta = session.snapshot().photos[0].clone();
+        session.set_rating(meta.id, Rating::stars(3)).unwrap();
+        session.flush();
+
+        // Lightroom (say) re-rates the same photo behind Firstcut's back.
+        rate_via_sidecar(folder.path(), &meta.rel_path, 5);
+        session.rescan().unwrap();
+
+        let snapshot = session.snapshot();
+        assert_eq!(
+            snapshot.ratings.get(&meta.id.0).map(|rating| rating.stars),
+            Some(3),
+            "Firstcut's own rating wins over the sidecar"
+        );
+    }
+
+    #[test]
+    fn a_different_capture_under_a_known_name_does_not_inherit_its_rating() {
+        // The bug: `IMG_0000.CR3` is gone and a different photograph — another card whose counter
+        // restarted — is saved under that name. The id is a hash of the path, so nothing about the
+        // id says the file changed, and the new capture silently inherited the old one's rating.
+        let (_sessions, folder, session) = empty_session();
+        let meta = session.snapshot().photos[0].clone();
+        session.set_rating(meta.id, Rating::stars(5)).unwrap();
+        session.flush();
+        assert!(folder.path().join("IMG_0000.xmp").is_file());
+
+        // The replacement: different bytes (so a new inode), a different size, nothing that
+        // agrees with the photograph that was there.
+        fs::remove_file(folder.path().join("IMG_0000.CR3")).unwrap();
+        let mut replacement = crate::meta::cr3::SyntheticCr3::r8()
+            .at("2026:08:28 10:00:00")
+            .build();
+        replacement.extend_from_slice(&[0u8; 64]);
+        fs::write(folder.path().join("IMG_0000.CR3"), &replacement).unwrap();
+
+        session.rescan().unwrap();
+
+        let snapshot = session.snapshot();
+        let swapped = snapshot
+            .photos
+            .iter()
+            .find(|photo| photo.rel_path == "IMG_0000.CR3")
+            .expect("the name still has a photograph");
+        assert_eq!(
+            snapshot.ratings.get(&swapped.id.0),
+            None,
+            "the new capture starts unrated, not with the departed one's five stars"
+        );
+        assert!(
+            session.undo().is_none(),
+            "and undo cannot bring the departed photograph's rating back onto it"
+        );
+        // The departed photograph's sidecar is still on disk saying five stars — that is the
+        // photographer's data, not Firstcut's to delete — but it belongs to the departed capture
+        // and must not be read back as the new one's.
+        assert!(folder.path().join("IMG_0000.xmp").is_file());
+    }
+
+    #[test]
+    fn the_same_capture_back_under_the_same_name_keeps_its_rating() {
+        // The conservative side of the same check: a file deleted and restored from the card is
+        // a new inode with the same content, and lending it its own rating back is what REV-68
+        // is for. Only a capture that agrees on *nothing* is treated as new.
+        let (_sessions, folder, session) = empty_session();
+        let meta = session.snapshot().photos[0].clone();
+        session.set_rating(meta.id, Rating::stars(5)).unwrap();
+
+        let bytes = fs::read(folder.path().join("IMG_0000.CR3")).unwrap();
+        fs::remove_file(folder.path().join("IMG_0000.CR3")).unwrap();
+        fs::write(folder.path().join("IMG_0000.CR3"), &bytes).unwrap();
+
+        session.rescan().unwrap();
+        let snapshot = session.snapshot();
+        assert_eq!(
+            snapshot.ratings.get(&meta.id.0).map(|rating| rating.stars),
+            Some(5),
+            "the same capture is itself, whatever inode it landed on"
+        );
     }
 }

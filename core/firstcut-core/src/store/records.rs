@@ -745,6 +745,27 @@ pub fn clear_history(db: &Db) -> Result<()> {
     Ok(())
 }
 
+/// Drops one photograph's undo log. Used when a photograph is recognised as a *different* capture
+/// arriving under a name the session already knew: undoing back onto it would resurrect the
+/// departed photograph's rating on the new one.
+pub fn clear_history_for(db: &Db, photo_id: u64) -> Result<()> {
+    db.conn().execute(
+        "DELETE FROM history WHERE photo_id = ?1",
+        [id_to_i64(photo_id)],
+    )?;
+    Ok(())
+}
+
+/// Drops one photograph's rating row, so the name it arrived under does not carry the departed
+/// photograph's rating. Only used for the same-name swap; everything else keeps ratings forever.
+pub fn delete_rating(db: &Db, photo_id: u64) -> Result<()> {
+    db.conn().execute(
+        "DELETE FROM ratings WHERE photo_id = ?1",
+        [id_to_i64(photo_id)],
+    )?;
+    Ok(())
+}
+
 // -------------------------------------------------------------- file ops
 
 /// Appends one file operation to a Finish run's log. Undo walks `file_ops` in reverse.
