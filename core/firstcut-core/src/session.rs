@@ -239,7 +239,16 @@ impl Session {
         Session::open_in(folder, &sessions, listener)
     }
 
-    fn from_scan(
+    /// Opens a session from a scan that has already been made.
+    ///
+    /// [`Session::open_in`] scans the folder itself; this is the seam for a caller that has the
+    /// scan already and wants it timed, counted or checked separately — `firstcut bench --folder`
+    /// splits its phases along this line, so "scan" and "session" there add up to one open with
+    /// nothing counted twice. Everything from the database down is the production path:
+    /// `Db::open_in` (create or match), `reconcile` (the insert, and the rename reconciliation a
+    /// re-open does), the one-shot sidecar import a first open does, and `rebatch` (order, batch,
+    /// the batch rows).
+    pub fn from_scan(
         scan: ScanResult,
         folder: &Path,
         sessions_dir: &Path,

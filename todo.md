@@ -150,9 +150,8 @@ Not blocking v0.1.0; an agent can do these.
   1. ~~Wire the keep threshold from the app.~~ Done above.
   2. ~~Check the cache on a folder change.~~ Done above.
   3. ~~§7.5 work items~~ Done: the `PRVW` comment, the full-size JPEG byte range, `firstcut bench
-     --folder`, `os_signpost` names, the shared 256 px decode, display decodes from the byte range —
-     and the rows are measured in `docs/qa/perf-baselines.md`. Still open in bench: the **DB insert
-     phase** (needs a sessions directory and the `Session`, not just the scan).
+     --folder` (including the **db phase**, measured), `os_signpost` names, the shared 256 px decode,
+     display decodes from the byte range — and the rows are measured in `docs/qa/perf-baselines.md`.
   4. ~~The first-photo fast path.~~ Done: one header read puts a photograph on screen while the
      scan runs behind it (§7.5 work items, above).
   5. Sidecar ratings are imported only when a folder's session is first created, so a
@@ -714,10 +713,14 @@ and their rows in that file are still empty.
       the decode it costs, and the measurement that would decide it does not exist yet.
 - [x] Instrumentation: `os_signpost` intervals named after the rows above, plus the debug HUD
       (§7.3). **Done**, including the four spans that a presented frame has to close.
-- [x] `firstcut bench --folder <dir>`: scan (cold/warm), order, batch, per phase. **Done**, and
-      **measured on the photos** - see [docs/qa/perf-baselines.md](docs/qa/perf-baselines.md).
-      The DB insert is not in it yet (that needs a sessions directory and the `Session`, not just the
-      scan), so that phase is still open.
+- [x] `firstcut bench --folder <dir>`: scan (cold/warm), order, batch, **db (session open: create +
+      insert + sidecar import + rebatch)**, per phase. **Done, and measured on the photos** — see
+      [docs/qa/perf-baselines.md](docs/qa/perf-baselines.md) (format v2). `Session::from_scan` is
+      the seam: it takes the scan the bench already made, so "scan" and "db" add up to one open with
+      nothing counted twice; a fresh scratch sessions dir per run keeps every run on the Created
+      path, and the bench refuses a scratch dir that was not fresh. db cold 0.235–0.300 s across the
+      four games, scan+db 0.87–1.10 s scaled to 1,500 — inside the 3.5 s target with ~3× headroom.
+      The db phase is the second-biggest cost after the scan, not a rounding error.
 - [ ] **Owner:** run the perf suite and `firstcut bench` on the M1 Pro. Record the rows in
       `docs/qa/perf-baselines.md`. Pick by eye between the 3000 px DCT-scaled T2 and the
       full-decode-and-downscale T2 on a 16" screen.

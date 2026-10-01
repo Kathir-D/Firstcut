@@ -229,6 +229,7 @@ dependencies = [
  "firstcut-core",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

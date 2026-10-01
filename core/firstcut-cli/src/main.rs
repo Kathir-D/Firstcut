@@ -438,6 +438,100 @@ fn bench_folder_args(args: &[String]) -> Option<(PathBuf, usize)> {
     Some((PathBuf::from(dir), repeat))
 }
 
+/// One measured pass over a folder: the phases of a folder open, timed separately so they add up
+/// to "folder open → provisional batches ready" with nothing counted twice.
+///
+/// `sessions_dir` must be empty or absent: the session phase is the **Created** path (create the
+/// database, insert every photograph, write the batch rows), which is the first-open cost §7.3's
+/// target is written for. A re-open against an existing database is a different, cheaper question.
+#[derive(Debug, Clone)]
+struct BenchRun {
+    /// Seconds per phase, in the order they run.
+    scan_secs: f64,
+    order_secs: f64,
+    batch_secs: f64,
+    /// The session without the scan: database open + insert + the one-shot sidecar import +
+    /// rebatch. `Session::from_scan` is the app's open with the scan left out.
+    db_secs: f64,
+    /// All phases, end to end.
+    total_secs: f64,
+    photos: usize,
+    batches: usize,
+    /// What the session phase decided about the database, so a mis-configured scratch directory
+    /// (one that already had a database in it) is visible rather than silently timing the
+    /// cheaper re-open path.
+    matched: firstcut_core::store::MatchKind,
+}
+
+fn bench_run(dir: &std::path::Path, sessions_dir: &std::path::Path) -> Result<BenchRun, String> {
+    // Phase 1: the header scan. This is the whole cost of "open this folder" before any pixels.
+    let scan_start = std::time::Instant::now();
+    let scan = firstcut_core::meta::scan_folder(dir).map_err(|e| format!("scan failed: {e}"))?;
+    let scan_secs = scan_start.elapsed().as_secs_f64();
+
+    // Phase 2 and 3: order, then batch. Sub-millisecond, but they are what the scan feeds.
+    let order_start = std::time::Instant::now();
+    let order = firstcut_core::order::order(&scan.photos);
+    let order_secs = order_start.elapsed().as_secs_f64();
+    let batch_start = std::time::Instant::now();
+    let outcome = firstcut_core::batch::batch_with(
+        &scan.photos,
+        &HashMap::new(),
+        &[],
+        BatchParams::default(),
+    );
+    let batch_secs = batch_start.elapsed().as_secs_f64();
+
+    // Phase 4: the session. `from_scan` takes the scan we already made, so the two timings add up
+    // to one open: database open, the insert, the first-open sidecar import, rebatch.
+    let db_start = std::time::Instant::now();
+    let session = firstcut_core::session::Session::from_scan(
+        scan.clone(),
+        dir,
+        sessions_dir,
+        std::sync::Arc::new(firstcut_core::session::NoListener),
+    )
+    .map_err(|e| format!("session failed: {e}"))?;
+    let db_secs = db_start.elapsed().as_secs_f64();
+    let total_secs = scan_secs + order_secs + batch_secs + db_secs;
+
+    let matched = session.matched();
+    let snapshot = session.snapshot();
+    // The session must agree with the pure phases, or the bench would be timing two different
+    // shoots and printing them as one. The scratch directory is fresh, so there is nothing in the
+    // database that could legitimately reorder, drop or add a photograph.
+    if snapshot.photos.len() != scan.photos.len() {
+        return Err(format!(
+            "the session saw {} photographs, the scan {}",
+            snapshot.photos.len(),
+            scan.photos.len()
+        ));
+    }
+    if snapshot.batches.len() != outcome.batches.len() {
+        return Err(format!(
+            "the session made {} batches, the pure batcher {}",
+            snapshot.batches.len(),
+            outcome.batches.len()
+        ));
+    }
+    std::hint::black_box(&order);
+    std::hint::black_box(&outcome);
+    std::hint::black_box(&snapshot);
+    // Close *after* the timing: flush and checkpoint are quit-time work, not open-time work.
+    session.close();
+
+    Ok(BenchRun {
+        scan_secs,
+        order_secs,
+        batch_secs,
+        db_secs,
+        total_secs,
+        photos: scan.photos.len(),
+        batches: outcome.batches.len(),
+        matched,
+    })
+}
+
 /// Time the real pipeline on a folder of photographs, phase by phase.
 ///
 /// This is the measurement todo.md §7.3 is written in, and the reason it exists separately from
@@ -451,15 +545,13 @@ fn bench_folder_args(args: &[String]) -> Option<(PathBuf, usize)> {
 /// | --- | --- |
 /// | header scan | < 3 s for 1,500 files |
 /// | order + batch | (already measured, sub-millisecond) |
+/// | session: database open + insert + rebatch | (the part of "batches ready" that is not the scan) |
 /// | total, folder open → batches ready | < 3.5 s |
 ///
 /// `--repeat` re-runs the whole thing, which is how a warm-cache number is separated from a cold
 /// one. The first run is the honest one for "open this folder" and the best of the rest is the honest
 /// one for "re-open it", so both are printed rather than one being chosen for you.
 fn bench_folder(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
-    use firstcut_core::batch::batch_with;
-    use firstcut_core::order;
-
     if !dir.is_dir() {
         return Err(format!("{} is not a folder", dir.display()));
     }
@@ -471,68 +563,83 @@ fn bench_folder(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     );
     println!();
 
-    let mut scan_best = f64::MAX;
-    let mut total_best = f64::MAX;
-    let mut scan_cold = 0.0;
-    let mut total_cold = 0.0;
-    let mut photos = 0usize;
-    let mut batches = 0usize;
+    // A scratch sessions directory, so the bench never opens a database in the user's real
+    // sessions dir, and a fresh subdirectory per run so every run pays the first-open cost.
+    let scratch_root =
+        std::env::temp_dir().join(format!("firstcut-bench-sessions-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch_root);
+
+    let mut best: Option<BenchRun> = None;
+    let mut cold: Option<BenchRun> = None;
+    let mut warm: Option<BenchRun> = None;
 
     for run in 1..=repeat {
-        let started = std::time::Instant::now();
-
-        // Phase 1: the header scan. This is the whole cost of "open this folder" before any pixels.
-        let scan_start = std::time::Instant::now();
-        let scan =
-            firstcut_core::meta::scan_folder(dir).map_err(|e| format!("scan failed: {e}"))?;
-        let scan_secs = scan_start.elapsed().as_secs_f64();
-        photos = scan.photos.len();
-
-        // Phase 2 and 3: order, then batch. Sub-millisecond, but they are what the scan feeds.
-        let order_start = std::time::Instant::now();
-        let order = order::order(&scan.photos);
-        let order_secs = order_start.elapsed().as_secs_f64();
-        let batch_start = std::time::Instant::now();
-        let outcome = batch_with(&scan.photos, &HashMap::new(), &[], BatchParams::default());
-        let batch_secs = batch_start.elapsed().as_secs_f64();
-        batches = outcome.batches.len();
-        let total = started.elapsed().as_secs_f64();
-
-        std::hint::black_box(&order);
-        std::hint::black_box(&outcome);
-        // The first run is the one that pays for cold caches, so it is kept separately rather than
-        // averaged away: "open this folder" and "re-open it" are different questions, and the
-        // §7.3 target is written for the first.
-        if run == 1 {
-            scan_cold = scan_secs;
-            total_cold = total;
+        let sessions = scratch_root.join(run.to_string());
+        let result = bench_run(dir, &sessions)?;
+        if result.photos == 0 {
+            return Err("no photographs found; is this the right folder?".to_string());
         }
-        scan_best = scan_best.min(scan_secs);
-        total_best = total_best.min(total);
-
+        if !matches!(result.matched, firstcut_core::store::MatchKind::Created) {
+            return Err(format!(
+                "the scratch sessions dir {} was not empty, so run {run} timed a re-open \
+                 rather than an open",
+                sessions.display()
+            ));
+        }
         let tag = if run == 1 {
             "run 1 (cold)"
         } else {
             "run N (warm)"
         };
         println!(
-            "{tag}: scan {scan_secs:.3} s  order {:.3} ms  batch {:.3} ms  total {total:.3} s",
-            order_secs * 1_000.0,
-            batch_secs * 1_000.0
+            "{tag}: scan {:.3} s  order {:.3} ms  batch {:.3} ms  db {:.3} s  total {:.3} s",
+            result.scan_secs,
+            result.order_secs * 1_000.0,
+            result.batch_secs * 1_000.0,
+            result.db_secs,
+            result.total_secs
         );
+        // `best` is the fastest of *all* runs — the existing "warm" semantic for the scan, so a
+        // single-repeat bench still prints a warm column rather than an empty one.
+        if best
+            .as_ref()
+            .is_none_or(|b| b.total_secs > result.total_secs)
+        {
+            best = Some(result.clone());
+        }
+        if run == 1 {
+            cold = Some(result);
+        } else if warm
+            .as_ref()
+            .is_none_or(|w| w.total_secs > result.total_secs)
+        {
+            warm = Some(result);
+        }
     }
+    let _ = std::fs::remove_dir_all(&scratch_root);
 
-    if photos == 0 {
-        return Err("no photographs found; is this the right folder?".to_string());
-    }
+    let Some(cold) = cold else {
+        unreachable!("repeat is at least 1")
+    };
+    let best = best.expect("repeat is at least 1");
+    let warm = warm.unwrap_or(best.clone());
+    let photos = cold.photos;
+    let batches = cold.batches;
 
     println!();
     println!("{photos} photos, {batches} batches");
     println!(
         "scan: {:.3} s cold, {:.3} s warm (best of {repeat} repeats)  ({:.2} ms/photo warm)",
-        scan_cold,
-        scan_best,
-        scan_best / photos as f64 * 1_000.0
+        cold.scan_secs,
+        best.scan_secs,
+        best.scan_secs / photos as f64 * 1_000.0
+    );
+    println!(
+        "db:   {:.3} s cold, {:.3} s warm  ({:.2} ms/photo warm)  \
+         (database open + insert + sidecar import + rebatch)",
+        cold.db_secs,
+        best.db_secs,
+        best.db_secs / photos as f64 * 1_000.0
     );
 
     // The targets are written for 1,500 files, so scale and say so. Cold and warm are both reported
@@ -543,15 +650,15 @@ fn bench_folder(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     println!("scaled to 1,500 photos (todo.md §7.3):");
     println!(
         "  metadata scan        cold {:>7.3} s  warm {:>7.3} s   target < 3.000 s  {}",
-        scan_cold * scale,
-        scan_best * scale,
-        verdict(scan_cold * scale < 3.0)
+        cold.scan_secs * scale,
+        best.scan_secs * scale,
+        verdict(cold.scan_secs * scale < 3.0)
     );
     println!(
-        "  provisional batches  cold {:>7.3} s  warm {:>7.3} s   target < 3.500 s  {}",
-        total_cold * scale,
-        total_best * scale,
-        verdict(total_cold * scale < 3.5)
+        "  provisional batches  cold {:>7.3} s  warm {:>7.3} s   target < 3.500 s  {}  (scan + db)",
+        cold.total_secs * scale,
+        warm.total_secs * scale,
+        verdict(cold.total_secs * scale < 3.5)
     );
     println!();
     println!("todo.md §7.3. A number here is a measurement; the decode and the");
@@ -656,4 +763,83 @@ fn flag(args: &[String], i: &mut usize, name: &str) -> Result<String, String> {
 fn repo_path(relative: &str) -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     cwd.join(relative)
+}
+
+// --------------------------------------------------------------------- tests
+
+#[cfg(test)]
+mod tests {
+    use super::bench_run;
+    use firstcut_core::store::MatchKind;
+
+    /// A folder of parseable CR3s: 12 frames 90 ms apart inside one second, so the phases have a
+    /// real burst to read and the session has something to insert. The same builder the core's own
+    /// session tests use, so what the bench times is what the production path parses.
+    fn shoot() -> tempfile::TempDir {
+        let folder = tempfile::tempdir().unwrap();
+        for index in 0..12u32 {
+            std::fs::write(
+                folder.path().join(format!("IMG_{index:04}.CR3")),
+                firstcut_core::meta::cr3::SyntheticCr3::r8()
+                    .subsec(&format!("{:02}", index * 9))
+                    .build(),
+            )
+            .unwrap();
+        }
+        folder
+    }
+
+    #[test]
+    fn the_bench_phases_agree_on_one_shoot() {
+        let folder = shoot();
+        let sessions = tempfile::tempdir().unwrap();
+        let result = bench_run(folder.path(), sessions.path()).unwrap();
+
+        assert_eq!(result.photos, 12, "every CR3 the scan found");
+        assert_eq!(result.batches, 1, "12 frames 90 ms apart is one burst");
+        assert!(
+            matches!(result.matched, MatchKind::Created),
+            "a fresh sessions dir means the session is created, not matched"
+        );
+        // The phases are timed separately and must add up to the total they are reported as, or
+        // the summary would be printing overlapping work as if it were disjoint phases.
+        let sum = result.scan_secs + result.order_secs + result.batch_secs + result.db_secs;
+        assert!(
+            (sum - result.total_secs).abs() < 1e-9,
+            "{sum} vs {}",
+            result.total_secs
+        );
+        assert!(result.scan_secs > 0.0 && result.db_secs > 0.0);
+    }
+
+    #[test]
+    fn the_bench_refuses_a_scratch_dir_that_already_holds_a_database() {
+        let folder = shoot();
+        let sessions = tempfile::tempdir().unwrap();
+        // The scratch directory is supposed to be fresh; if it is not, `bench_folder` must fail
+        // rather than quietly timing the cheaper re-open and calling it an open.
+        bench_run(folder.path(), sessions.path()).unwrap();
+        let second = bench_run(folder.path(), sessions.path()).unwrap();
+        assert!(
+            matches!(second.matched, MatchKind::Exact),
+            "the second open against the same database is a re-open, not an open"
+        );
+    }
+
+    /// `bench_folder` hands `bench_run` a scratch path that does not exist yet
+    /// (`scratch_root/<run>`), so the session must create it — the same thing `Db::open_in`
+    /// does for the app's own sessions directory on a first run.
+    #[test]
+    fn the_bench_creates_its_scratch_sessions_dir() {
+        let folder = shoot();
+        let sessions = tempfile::tempdir().unwrap();
+        let fresh = sessions.path().join("fresh");
+        assert!(!fresh.exists(), "the per-run scratch dir starts absent");
+        let result = bench_run(folder.path(), &fresh).unwrap();
+        assert!(matches!(result.matched, MatchKind::Created));
+        assert!(
+            fresh.is_dir(),
+            "and exists once the session has opened in it"
+        );
+    }
 }

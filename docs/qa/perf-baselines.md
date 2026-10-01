@@ -2,7 +2,9 @@
 
 - **Owner:** qa
 - **Targets:** todo.md §7.3
-- **Format version:** 1 (this document). Bump when the metric set changes, and keep old rows.
+- **Format version:** 2. v1 → v2: `firstcut bench --folder` grew a **session/db phase** (database
+  open + insert + sidecar import + rebatch), so "provisional batches ready" now means scan + db
+  rather than scan alone. The v1 scan rows are kept unchanged below.
 
 Every number in this file is a **measurement**, taken from a test that still exists. No estimates,
 no numbers copied from a blog post, no "should be fine". A row that has no test behind it does not
@@ -97,20 +99,28 @@ judged against**, because "folder open → first photo" happens before any of it
 
 ### Provisional batches ready (§7.3, < 3.5 s)
 
-Scan + `order()` + `batch()`. `order()` + `batch()` are a rounding error next to the scan, which is
-the useful finding: the batching *algorithm* is not what costs time, the header reads are.
+v1 (scan + `order()` + `batch()` only — kept for the regression deltas): the scan is everything,
+`order()` + `batch()` together are **under 0.5 ms for 1,500 photos**, roughly 4,000× inside budget.
 
-| Game | Photos | Batches (provisional) | Total cold | order | batch | Budget |
+v2 (measured 2026-09-30, `firstcut bench --folder`, release build, `purge` first for cold, best of
+5 for warm): the same open with the **session** phase included — `Db::open_in` (create), the
+2,880-row insert, the first-open sidecar import, and `rebatch` — against a fresh scratch sessions
+directory per run, so every run is the *Created* path a first open takes. The bench refuses a run
+whose scratch directory was not fresh rather than quietly timing the cheaper re-open.
+
+| Game | Photos | Batches | db cold | db warm | Total cold (scan + db) | Budget |
 | --- | --- | --- | --- | --- | --- | --- |
-| Game1JENKS | 708 | 157 | 0.252 s | 0.008 ms | 0.275 ms | < 3.5 s |
-| Gane2NC | 529 | 109 | 0.186 s | 0.006 ms | 0.248 ms | < 3.5 s |
-| Game3KC | 920 | 207 | 0.343 s | 0.008 ms | 0.324 ms | < 3.5 s |
-| Game4VRE | 723 | 152 | 0.283 s | 0.007 ms | 0.270 ms | < 3.5 s |
-| **Scaled to 1,500** | 1500 | — | **0.535–0.588 s** | ~0.01 ms | ~0.4 ms | < 3.5 s |
+| Game1JENKS | 708 | 157 | 0.300 s | 0.060 s | 0.507 s | < 3.5 s |
+| Gane2NC | 529 | 109 | 0.235 s | 0.018 s | 0.389 s | < 3.5 s |
+| Game3KC | 920 | 207 | 0.268 s | 0.045 s | 0.535 s | < 3.5 s |
+| Game4VRE | 723 | 152 | 0.281 s | 0.066 s | 0.504 s | < 3.5 s |
+| **Scaled to 1,500** | 1500 | — | **~0.5–0.8 s** | **~0.04–0.19 s** | **0.87–1.10 s** | < 3.5 s |
 
-`order()` + `batch()` together are **under 0.5 ms for 1,500 photos**, against a 2 s target in §5 and a
-3.5 s one here — so the algorithm is roughly 4,000× inside budget and the remaining work on "open →
-first photo" is decode and first paint, not metadata.
+**Inside the target with roughly 3× headroom, cold, on every game** — and the session phase is the
+second-biggest line item after the scan (0.03–0.09 ms/photo warm), not a rounding error: creating the
+database, inserting every photograph and writing the batch rows costs more than the warm header scan
+does. Still nowhere near the budget, and the interactive targets (first photo on screen, arrow key)
+are not this command's to measure.
 
 ### One display decode, at the sizes the viewer asks for (§7.1 T2, §7.2)
 
@@ -195,6 +205,7 @@ after a game" — the tier counters alone would call that clean.
 | — | — | M1 Pro | — | no rows | Wave-1 harness landed with no baselines; load average on the dev machine was ~30 with nine agents compiling, which is exactly what the quiet-machine guard is for. |
 | 2026-09-30 | 5c5aa7d | M1 Pro, macOS 27, internal SSD | all four | scan + batches recorded | `firstcut bench --folder`, release build, cold (after `sudo purge`) and warm (best of 5). Interactive rows still empty: they need the app, and this session had no window measurement yet. |
 | 2026-09-30 | (this work) | M1 Pro, macOS 27, internal SSD | Game1JENKS | display-decode row recorded; 708-file scan through the core at **0.7 s** | `RealRawDecodeTests`, opt-in photo tests. The same scan through the legacy ImageIO `PhotoFolderScanner` takes 3.1–3.4 s, which is why the test now goes through the core — that is the path the app takes. Interactive rows still empty. |
+| 2026-09-30 | (this work) | M1 Pro, macOS 27, internal SSD | all four | **db phase recorded** | `firstcut bench --folder --repeat 5`, fresh scratch sessions dir per run. db cold 0.235–0.300 s, scan+db total 0.389–0.535 s (0.87–1.10 s scaled to 1,500), against the 3.5 s target. Scan cold on this run was 0.154–0.267 s — faster than the recorded baseline; the v1 rows stand, the faster re-run is noted here rather than replacing them. |
 
 ## Notes
 
