@@ -27,6 +27,6 @@ public enum CoreFirstPhoto {
     /// 2,880 entries. The caller decides which thread.
     public static func read(_ folder: URL) -> PhotoMeta? {
         guard let name = firstPhotoName(path: folder.path) else { return nil }
-        return readPhoto(folder: folder.path, relPath: name).map(PhotoMeta.init)
+        return readPhoto(folder: folder.path, relPath: name)
     }
 }

@@ -18,65 +18,32 @@ import Foundation
 public typealias PhotoID = UInt64
 public typealias BatchID = UInt64
 
-/// The generated `FfiAfInfo` is *richer* (imageWidth/imageHeight/pointsInFocus) and the
-/// conversion drops those, which is why this is not an alias yet (todo.md §0.3).
-public struct AfInfo: Sendable, Equatable {
-    public var areaMode: String
-    public var points: [AfPoint]
-}
-
-/// The app's photograph metadata: still an app type in this pass (the conversion in
-/// `CoreTypeMapping` loses nothing yet, but `AfInfo` inside it is the one field whose
-/// generated form is richer), and never persisted — nothing encodes it.
-public struct PhotoMeta: Sendable, Equatable, Identifiable {
-    public var id: PhotoID
-    public var relPath: String
-    public var companions: [String]
-    public var kind: FileKind
-    public var fileSize: UInt64
-    public var captureTime: CaptureTime?
-    public var shutterCount: UInt64?
-    public var fileNumber: UInt32?
-    public var cameraMake: String?
-    public var cameraModel: String?
-    public var cameraSerial: String?
-    public var lensModel: String?
-    public var focalLengthMm: Float?
-    public var exposureTimeS: Float?
-    public var fNumber: Float?
-    public var iso: UInt32?
-    public var exposureCompEv: Float?
-    public var meteringMode: String?
-    public var driveMode: String?
-    public var shutterMode: String?
-    public var orientation: UInt8
-    public var width: UInt32
-    public var height: UInt32
-    public var af: AfInfo?
-    /// The 1620×1080 `PRVW` JPEG. Good enough for a first-photo fast path; **not** the display
-    /// image — a 14" viewer needs more pixels than this has.
-    public var preview: EmbeddedPreview?
-    /// The full-resolution JPEG (6000×4000 on an R8) from the first image track. Display decodes read
-    /// this byte range, so ImageIO never parses the CR3 container (todo.md §7.5).
-    public var fullPreview: EmbeddedPreview?
-    public var warnings: [String]
-}
-
-public struct Batch: Sendable, Codable, Equatable, Identifiable {
-    public var id: BatchID
-    public var index: UInt32
-    public var photoIds: [PhotoID]
-    public var provisional: Bool
-}
-
-public struct VisualSig: Sendable, Codable, Equatable {
+/// A perceptual signature for a photograph: a 64-bit difference hash plus a 48-bin colour
+/// histogram (16 each for R, G, B). The core's `batch()` compares these to decide the ambiguous
+/// boundaries timing alone cannot (todo.md §5.2). **Still an app type**: Rust packs the histogram
+/// as a fixed 48-byte array and Swift wants `[UInt8]`, so the one conversion left in
+/// `CoreTypeMapping` is not a no-op.
+public struct VisualSig: Sendable, Equatable {
     public var dhash: UInt64
     public var hist: [UInt8]  // 48 values: 16 bins each for R, G, B
+
+    public init(dhash: UInt64, hist: [UInt8]) {
+        self.dhash = dhash
+        self.hist = hist
+    }
 }
 
-/// The app's rating, and the one type the wire record cannot replace: the generated
-/// `FfiRating` has no defaults on its memberwise init and the app writes `Rating()` in
-/// dozens of places. `flag`/`label` are the generated types under their plain names.
+/// The app's rating-mode vocabulary. **Not** the generated `FfiRatingMode`: Rust spells the keep
+/// mode `KeepNotKeep`, Swift spells it `keep`, and a case name cannot be aliased. The database
+/// string is `"keep"` on both sides, so this is vocabulary only (see `CoreTypeMapping`).
+public enum RatingMode: String, Sendable, Codable { case stars, keep }
+
+/// The app's rating. The four fields are the generated `FfiRating`'s, but this stays a struct: the
+/// app writes `Rating()` and `Rating(stars: 4)` in dozens of places and the generated initializer has
+/// no defaults, and a defaulted one cannot be added in an extension (delegating to the generated
+/// initializer of the same signature is infinite recursion; assigning the stored properties before
+/// `self.init` is an error). `CoreTypeMapping` therefore still converts, and the conversion is four
+/// assignments. `flag` and `label` are the generated types under their plain names.
 public struct Rating: Sendable, Equatable {
     public var stars: UInt8 = 0
     public var flag: Flag = .none
@@ -88,9 +55,8 @@ public struct Rating: Sendable, Equatable {
         self.label = label
         self.keep = keep
     }
-}
 
-/// The app's rating-mode vocabulary. **Not** the generated `FfiRatingMode`: Rust spells the keep
-/// mode `KeepNotKeep`, Swift spells it `keep`, and a case name cannot be aliased (the database
-/// string is `"keep"` on both sides, so this is vocabulary only — see CoreTypeMapping).
-public enum RatingMode: String, Sendable, Codable { case stars, keep }
+    /// Nothing set. "The user has not said anything about this photo" is a different question from
+    /// "rated zero stars", and the cull rules ask it.
+    public var isNeutral: Bool { self == Rating() }
+}

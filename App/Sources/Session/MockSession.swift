@@ -109,6 +109,7 @@ import Foundation
                 height: 0,
                 af: nil,
                 preview: nil,
+                fullPreview: nil,
                 warnings: ["metadata parsed from the file system; core-meta's header parser not linked yet"])
             photos.append(meta)
         }

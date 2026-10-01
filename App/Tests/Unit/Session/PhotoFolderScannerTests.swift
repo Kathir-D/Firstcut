@@ -189,7 +189,7 @@ struct PhotoFolderScannerTests {
         let data = try PhotoFolderScanner.scan(folder)
         #expect(data.photos.count == 2)
         #expect(data.skipped.count == 1)
-        #expect(data.skipped.first?.path.hasSuffix("broken.jpg") == true)
+        #expect(data.skipped.first?.relPath.hasSuffix("broken.jpg") == true)
     }
 
     @Test("An empty folder and a missing folder both fail with a reason")

@@ -64,7 +64,7 @@ public enum PhotoFolderScanner {
         var skipped: [SkippedFile] = []
         for url in listing.photoURLs {
             guard let meta = photo(at: url, in: folder) else {
-                skipped.append(SkippedFile(path: url.lastPathComponent, reason: "no image data"))
+                skipped.append(SkippedFile(relPath: url.lastPathComponent, reason: "no image data"))
                 continue
             }
             photos.append(meta)
@@ -184,6 +184,7 @@ public enum PhotoFolderScanner {
             height: UInt32(clamping: height),
             af: nil,  // the AF point table is core-meta's parser, not ImageIO's
             preview: nil,  // needs the embedded-JPEG byte offset inside the CR3 (core-meta)
+            fullPreview: nil,  // likewise: core-meta reads the sample table, ImageIO does not
             warnings: [])
     }
 
@@ -289,7 +290,7 @@ public enum PhotoFolderScanner {
             defer { lock.unlock() }
             return results.indices.compactMap { index in
                 results[index] == nil
-                    ? SkippedFile(path: urls[index].lastPathComponent, reason: "no image data")
+                    ? SkippedFile(relPath: urls[index].lastPathComponent, reason: "no image data")
                     : nil
             }
         }

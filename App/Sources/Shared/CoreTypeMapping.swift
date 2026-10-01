@@ -27,19 +27,6 @@ import Foundation
 
 // MARK: - Rating
 
-extension Rating {
-    init(_ ffi: FfiRating) {
-        // `Flag` and `ColorLabel` are the generated types under their plain names, so stars/flag/
-        // label/keep move across as they are; what this conversion still adds is the *defaults*
-        // (the app writes `Rating()` 35 times) and it is why `Rating` stays an app type.
-        self.init(stars: ffi.stars, flag: ffi.flag, label: ffi.label, keep: ffi.keep)
-    }
-
-    var ffi: FfiRating {
-        FfiRating(stars: stars, flag: flag, label: label, keep: keep)
-    }
-}
-
 // MARK: - Modes and tiers
 
 extension RatingMode {
@@ -58,62 +45,7 @@ extension RatingMode {
     }
 }
 
-extension Tier {
-    init(_ ffi: FfiTier) {
-        switch ffi {
-        case .keep: self = .keep
-        case .good: self = .good
-        case .maybe: self = .maybe
-        case .unrated: self = .unrated
-        case .rejected: self = .rejected
-        }
-    }
-
-    var ffi: FfiTier {
-        switch self {
-        case .keep: .keep
-        case .good: .good
-        case .maybe: .maybe
-        case .unrated: .unrated
-        case .rejected: .rejected
-        }
-    }
-}
-
 // MARK: - Photo metadata
-
-extension PhotoMeta {
-    init(_ ffi: FfiPhotoMeta) {
-        self.init(
-            id: ffi.id,
-            relPath: ffi.relPath,
-            companions: ffi.companions,
-            kind: ffi.kind,
-            fileSize: ffi.fileSize,
-            captureTime: ffi.captureTime,
-            shutterCount: ffi.shutterCount,
-            fileNumber: ffi.fileNumber,
-            cameraMake: ffi.cameraMake,
-            cameraModel: ffi.cameraModel,
-            cameraSerial: ffi.cameraSerial,
-            lensModel: ffi.lensModel,
-            focalLengthMm: ffi.focalLengthMm,
-            exposureTimeS: ffi.exposureTimeS,
-            fNumber: ffi.fNumber,
-            iso: ffi.iso,
-            exposureCompEv: ffi.exposureCompEv,
-            meteringMode: ffi.meteringMode,
-            driveMode: ffi.driveMode,
-            shutterMode: ffi.shutterMode,
-            orientation: ffi.orientation,
-            width: ffi.width,
-            height: ffi.height,
-            af: ffi.af.map(AfInfo.init),
-            preview: ffi.preview,
-            fullPreview: ffi.fullPreview,
-            warnings: ffi.warnings)
-    }
-}
 
 extension AfInfo {
     init(_ ffi: FfiAfInfo) {
@@ -126,6 +58,16 @@ extension AfInfo {
 extension Batch {
     init(_ ffi: FfiBatch) {
         self.init(id: ffi.id, index: ffi.index, photoIds: ffi.photoIds, provisional: ffi.provisional)
+    }
+}
+
+extension Rating {
+    init(_ ffi: FfiRating) {
+        self.init(stars: ffi.stars, flag: ffi.flag, label: ffi.label, keep: ffi.keep)
+    }
+
+    var ffi: FfiRating {
+        FfiRating(stars: stars, flag: flag, label: label, keep: keep)
     }
 }
 
@@ -147,13 +89,13 @@ extension SessionData {
     init(_ ffi: FfiSessionSnapshot) {
         self.init(
             folder: ffi.folder,
-            photos: ffi.photos.map(PhotoMeta.init),
-            batches: ffi.batches.map(Batch.init),
+            photos: ffi.photos,
+            batches: ffi.batches,
             ratings: ffi.ratings.mapValues(Rating.init),
             visited: Set(ffi.visited),
             cursor: ffi.cursor,
             lastPhotoInBatch: ffi.lastPhotoInBatch,
-            skipped: ffi.skipped.map { SkippedFile(path: $0.relPath, reason: $0.reason) })
+            skipped: ffi.skipped)
     }
 }
 
@@ -172,7 +114,7 @@ extension Dictionary where Key == Tier, Value == Int {
     /// function.
     init(_ counts: [FfiTier: UInt32]) {
         var result = [Tier: Int](minimumCapacity: counts.count)
-        for (tier, count) in counts { result[Tier(tier)] = Int(count) }
+        for (tier, count) in counts { result[tier] = Int(count) }
         self = result
     }
 }

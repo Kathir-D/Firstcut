@@ -157,7 +157,7 @@ final class RealRawDecodeTests: XCTestCase {
         XCTAssertGreaterThan(sessionData.batches.count, 10, "a shoot is not one batch")
         XCTAssertTrue(
             sessionData.skipped.isEmpty,
-            "every CR3 must parse: \(sessionData.skipped.prefix(3).map(\.path))")
+            "every CR3 must parse: \(sessionData.skipped.prefix(3).map(\.relPath))")
         print("scanned 708 CR3 headers in \(String(format: "%.1f", elapsed))s")
 
         // Real metadata, read out of the file rather than off the file system.

@@ -348,38 +348,6 @@ public struct FinishReportData: Hashable, Sendable {
     }
 }
 
-/// A file that couldn't be parsed, kept in the filmstrip with a placeholder (todo.md §8).
-public struct SkippedFile: Hashable, Sendable {
-    public var path: String
-    public var reason: String
-
-    public init(path: String, reason: String) {
-        self.path = path
-        self.reason = reason
-    }
-}
-
-public enum Tier: String, Hashable, Sendable, CaseIterable {
-    case keep
-    case good
-    case maybe
-    case unrated
-    case rejected
-
-    public var title: String {
-        switch self {
-        case .keep: "Keep"
-        case .good: "Good"
-        case .maybe: "Maybe"
-        case .unrated: "Unrated"
-        case .rejected: "Rejected"
-        }
-    }
-
-    /// What Finish does with this tier by default (todo.md §9.7).
-    public var countsAsKept: Bool { self == .keep }
-}
-
 /// Totals for the summary sheet and the progress HUD.
 public struct FinishSummary: Hashable, Sendable {
     public var counts: [Tier: Int]

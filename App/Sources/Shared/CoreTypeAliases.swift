@@ -12,7 +12,10 @@
 // reasons; the short version is that each of these is a different type from the wire type, or the
 // app vocabulary is deliberately not the wire vocabulary:
 //
-//   `Rating`       the app builds `Rating()` everywhere; the generated memberwise init has no defaults
+//   `Rating`       the app builds `Rating()` everywhere and the generated memberwise init has no
+//                  defaults; a defaulted init in an extension is impossible here, because delegating
+//                  to the generated init of the same signature is recursion and assigning the stored
+//                  properties before `self.init` is an error. Four fields is a cheap mirror.
 //   `RatingMode`   `.keep` (app) vs `.keepNotKeep` (wire) — a case name cannot be aliased
 //   `PhotoMeta`    still an app type in this pass (converted in CoreTypeMapping), next steps alias it
 //   `AfInfo`       the generated record is *richer* (imageWidth/imageHeight/pointsInFocus); the
@@ -29,6 +32,9 @@ import FirstcutCore
 
 // MARK: - Photo metadata
 
+public typealias PhotoMeta = FfiPhotoMeta
+public typealias AfInfo = FfiAfInfo
+
 public typealias RawFormat = FfiRawFormat
 public typealias FileKind = FfiFileKind
 public typealias TimeSource = FfiTimeSource
@@ -42,11 +48,17 @@ public typealias AfPoint = FfiAfPoint
 public typealias Flag = FfiFlag
 public typealias ColorLabel = FfiColorLabel
 
+/// The per-tier totals come from the core's single `display_tier` (rating.rs), so `Tier` is the
+/// generated enum and the app only supplies the strings the sheets show.
+public typealias Tier = FfiTier
+
 // MARK: - Session state
 
+public typealias Batch = FfiBatch
 public typealias SessionCursor = FfiCursor
 public typealias MatchKind = FfiMatchKind
 public typealias FileOpFailure = FfiFileOpFailure
+public typealias SkippedFile = FfiSkipped
 
 // MARK: - Codable, because the mirrors were
 
@@ -86,5 +98,43 @@ extension FfiColorLabel: @retroactive Codable {
         case .blue: try container.encode("blue")
         case .purple: try container.encode("purple")
         }
+    }
+}
+
+// MARK: - What the app adds to the generated types
+
+// `Identifiable` for the two records the SwiftUI lists iterate (`\.self` ids would work, but
+// `Identifiable` is what `ForEach` and the diffing want, and the `id` fields are right there), and
+// `CaseIterable` for the tier list. Retroactive conformances: both the type and the protocol belong
+// to other modules, which is what the attribute is for.
+extension FfiPhotoMeta: @retroactive Identifiable {}
+extension FfiBatch: @retroactive Identifiable {}
+
+extension FfiTier: @retroactive CaseIterable {
+    /// Spelled out rather than synthesized: a conformance declared outside the file that declares
+    /// the type cannot use synthesis, and the order is the one the sheets and the summary show.
+    public static var allCases: [FfiTier] { [.keep, .good, .maybe, .unrated, .rejected] }
+
+    public var title: String {
+        switch self {
+        case .keep: "Keep"
+        case .good: "Good"
+        case .maybe: "Maybe"
+        case .unrated: "Unrated"
+        case .rejected: "Rejected"
+        }
+    }
+
+    /// Only the Keep tier is a keep; Good and Maybe are shown as keeps in the sense of "worth a
+    /// second look", and the Finish summary's split-by-tier uses this to decide what goes where.
+    public var countsAsKept: Bool { self == .keep }
+}
+
+extension FfiAfInfo {
+    /// The two-argument form the previews and fixtures build: no sensor frame, no focus indices,
+    /// which is what "unknown" looks like on both sides.
+    public init(areaMode: String, points: [AfPoint]) {
+        self.init(
+            areaMode: areaMode, imageWidth: 0, imageHeight: 0, points: points, pointsInFocus: [])
     }
 }

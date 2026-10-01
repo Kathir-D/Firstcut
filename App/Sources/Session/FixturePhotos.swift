@@ -304,6 +304,9 @@ struct ExifRow: Decodable {
             // The dump has no preview offset; the real scan fills this in so the pipeline can read
             // the embedded JPEG without re-parsing (§7.4).
             preview: nil,
+            // Nor a full-resolution offset: exiftool's dumps carry neither (§7.4), and the real
+            // scan fills both in so the pipeline can read the embedded JPEG without re-parsing.
+            fullPreview: nil,
             warnings: capture == nil ? ["no capture time in exiftool dump"] : [])
     }
 

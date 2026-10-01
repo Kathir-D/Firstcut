@@ -141,7 +141,7 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
         // `FfiScanResult` is the rescan's own report; `snapshot()` is the state of record. Keep the
         // skipped list from the rescan when it is the more complete of the two.
         if !scanned.skipped.isEmpty {
-            refreshed.skipped = scanned.skipped.map { SkippedFile(path: $0.relPath, reason: $0.reason) }
+            refreshed.skipped = scanned.skipped
         }
         return refreshed
     }
