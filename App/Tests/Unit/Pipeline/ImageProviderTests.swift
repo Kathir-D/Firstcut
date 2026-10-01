@@ -427,6 +427,17 @@ struct ImageProviderTests {
         #expect(peak <= 2, "never more decodes at once than were configured: peaked at \(peak)")
     }
 
+    @Test("A display decode outranks a thumbnail in the scheduler (todo.md §7.1)")
+    func decodeQualityOfService() {
+        // The rule §7.1 asks for and did not have: decode work at .userInitiated, thumbnail
+        // generation at .utility, so a thread filling in filmstrip thumbnails never outranks the
+        // photograph the user is waiting for. It is a scheduling hint, not a slot — `maxConcurrent`
+        // counts both kinds — and the comment on `DecodeEngine.qualityOfService` says so where the
+        // next person will look when they want more.
+        #expect(DecodeEngine.qualityOfService(for: .display) == .userInitiated)
+        #expect(DecodeEngine.qualityOfService(for: .thumbnail) == .utility)
+    }
+
     @Test("Moving on cancels queued work for photos the user left")
     func movingOnCancelsStaleWork() async {
         let shoot = ImageFixtures.shoot(count: 30)

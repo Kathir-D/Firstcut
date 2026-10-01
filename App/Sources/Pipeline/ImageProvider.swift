@@ -897,22 +897,56 @@ final class DecodeEngine: @unchecked Sendable {
         queue.async { [weak self] in self?.drain() }
     }
 
+    /// The quality of service a decode of `kind` runs at (todo.md §7.1: "decode work runs at
+    /// `.userInitiated`, thumbnail generation at `.utility` so it never competes with the current
+    /// batch").
+    ///
+    /// The mechanism is the queue a job is dispatched to, and it is worth being precise about what
+    /// that does and does not do: it is a *scheduling* hint to the kernel, not a reservation. What it
+    /// buys is that when the machine is busy, a thread decoding the photograph the user is waiting
+    /// for outranks a thread filling in filmstrip thumbnails. What it does **not** buy is a decode
+    /// slot: `maxConcurrent` counts every kind, so a thumbnail in flight still occupies one of the
+    /// four. Giving thumbnails their own budget would mean the focus window could ask for five
+    /// displays and find the cap full of filmstrip work — the failure this ranking exists to prevent.
+    static func qualityOfService(for kind: Kind) -> DispatchQoS.QoSClass {
+        switch kind {
+        case .display: .userInitiated
+        case .thumbnail: .utility
+        }
+    }
+
+    /// Thumbnails are decoded here so they never share a runloop with what the user is waiting for.
+    private let thumbnailQueue = DispatchQueue(
+        label: "com.kathird.firstcut.decode.thumbnails", qos: .utility, attributes: .concurrent)
+
     private func drain() {
         while let job = takeNext() {
-            let decoded: CGImage?
+            // Ranking stays here (one priority order, one cap); only the queue a job runs on differs.
+            // A thumbnail is dispatched rather than run inline so the drain loop can keep pulling
+            // higher-priority work instead of blocking on a 300 ms filmstrip decode.
             switch job.kind {
             case .thumbnail:
-                // The interval is the decode, and nothing else: computing a pixel count or a
-                // signature here would cost real time on every decode whether or not anything is
-                // tracing.
-                let interval = SignpostInterval.begin(Signposts.decodeThumbnail)
-                decoded = Self.decodeThumbnail(url: job.url, maxPixel: job.maxPixel)
-                interval.end()
+                thumbnailQueue.async { [weak self] in self?.run(job) }
             case .display:
-                decoded = decodeDisplayJob(job)
+                run(job)
             }
-            store(job, decoded)
         }
+    }
+
+    /// One decode, from start to the cache. The interval is the decode and nothing else:
+    /// computing a pixel count or a signature here would cost real time on every decode whether or
+    /// not anything is tracing.
+    private func run(_ job: Job) {
+        let decoded: CGImage?
+        switch job.kind {
+        case .thumbnail:
+            let interval = SignpostInterval.begin(Signposts.decodeThumbnail)
+            decoded = Self.decodeThumbnail(url: job.url, maxPixel: job.maxPixel)
+            interval.end()
+        case .display:
+            decoded = decodeDisplayJob(job)
+        }
+        store(job, decoded)
     }
 
     /// A display decode, preferring the reported byte range over the container.
