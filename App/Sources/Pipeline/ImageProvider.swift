@@ -1190,10 +1190,14 @@ final class DecodeEngine: @unchecked Sendable {
     static func isDisplayLayout(_ image: CGImage) -> Bool {
         guard image.bitsPerComponent == 8, image.bitsPerPixel == 32 else { return false }
         guard let space = image.colorSpace, space == deviceRGB else { return false }
-        // `CGBitmapInfo.byteOrder` is a `CGImageByteOrderInfo`, which has no `byteOrder32Little`
-        // case of its own, so the comparison is on the raw value.
+        // The byte order is compared through `rawValue & byteOrderMask` rather than the newer
+        // `bitmapInfo.byteOrder` accessor: the overlay member does not exist on the macOS 15 SDK,
+        // and CI builds against it (Xcode 16.x) while the app is developed on Xcode 27. The mask
+        // (`0x7000`) is as old as CGBitmapInfo itself, and `CGImageByteOrderInfo` has no
+        // `byteOrder32Little` case of its own, so the comparison is on raw values either way.
         guard
-            image.bitmapInfo.byteOrder.rawValue == CGBitmapInfo.byteOrder32Little.rawValue
+            image.bitmapInfo.rawValue & CGBitmapInfo.byteOrderMask.rawValue
+                == CGBitmapInfo.byteOrder32Little.rawValue
         else { return false }
         return image.alphaInfo == .noneSkipFirst || image.alphaInfo == .premultipliedFirst
     }
