@@ -34,37 +34,31 @@ import os
 
 /// One measurement point. Cheap to create, `Sendable`, and safe to pass into a decode thread.
 public struct SignpostInterval: Sendable {
-  private let signposter: OSSignposter
-  private let name: StaticString
-  private let state: OSSignpostIntervalState
+    private let signposter: OSSignposter
+    private let name: StaticString
+    private let state: OSSignpostIntervalState
 
-  /// Begin an interval. The returned value ends it on `end`, or on deinit if the caller forgets —
-  /// which is the safe direction to fail in: an unclosed interval is *visible* in Instruments, where a
-  /// crash in a decode callback is not recoverable at all.
-  public static func begin(_ name: StaticString) -> SignpostInterval {
-    let signposter = OSSignposter(subsystem: subsystem, category: category)
-    return SignpostInterval(
-      signposter: signposter, name: name, state: signposter.beginInterval(name))
-  }
+    /// Begin an interval. The returned value ends it on `end`, or on deinit if the caller forgets —
+    /// which is the safe direction to fail in: an unclosed interval is *visible* in Instruments, where a
+    /// crash in a decode callback is not recoverable at all.
+    public static func begin(_ name: StaticString) -> SignpostInterval {
+        let signposter = OSSignposter(subsystem: subsystem, category: category)
+        return SignpostInterval(
+            signposter: signposter, name: name, state: signposter.beginInterval(name))
+    }
 
-  /// A named point rather than an interval: "this happened", with no duration.
-  public static func event(_ name: StaticString) {
-    OSSignposter(subsystem: subsystem, category: category).emitEvent(name)
-  }
+    /// A named point rather than an interval: "this happened", with no duration.
+    public static func event(_ name: StaticString) {
+        OSSignposter(subsystem: subsystem, category: category).emitEvent(name)
+    }
 
-  private init(signposter: OSSignposter, name: StaticString, state: OSSignpostIntervalState) {
-    self.signposter = signposter
-    self.name = name
-    self.state = state
-  }
+    public func end() {
+        signposter.endInterval(name, state)
+    }
 
-  public func end() {
-    signposter.endInterval(name, state)
-  }
-
-  /// One log for the app, so a trace of `firstcut` has every interval on one timeline.
-  private static let subsystem = "com.kathird.firstcut"
-  private static let category = "pipeline"
+    /// One log for the app, so a trace of `firstcut` has every interval on one timeline.
+    private static let subsystem = "com.kathird.firstcut"
+    private static let category = "pipeline"
 }
 
 /// The interval names, as constants so a rename is a compile error at every use site.
@@ -73,30 +67,30 @@ public struct SignpostInterval: Sendable {
 /// two must not drift, because a signpost that measures the wrong span produces a number that looks
 /// fine and is not.
 public enum Signposts {
-  // §7.5 "Open → first photo": the open panel returning to the first commit with an image on screen.
-  // Ends in the view layer, which is the only place that can see a presented frame.
-  public static let openToFirstPhoto: StaticString = "openToFirstPhoto"
+    // §7.5 "Open → first photo": the open panel returning to the first commit with an image on screen.
+    // Ends in the view layer, which is the only place that can see a presented frame.
+    public static let openToFirstPhoto: StaticString = "openToFirstPhoto"
 
-  // §7.3 "Arrow key → sharp photo": `perform(_:)` to the next presented frame.
-  public static let keyToFrame: StaticString = "keyToFrame"
+    // §7.3 "Arrow key → sharp photo": `perform(_:)` to the next presented frame.
+    public static let keyToFrame: StaticString = "keyToFrame"
 
-  // §7.3 "Batch switch": the same, for ⌘→.
-  public static let batchToFrame: StaticString = "batchToFrame"
+    // §7.3 "Batch switch": the same, for ⌘→.
+    public static let batchToFrame: StaticString = "batchToFrame"
 
-  // §7.3 "100% zoom": the click to the full-resolution bitmap on screen.
-  public static let zoomToSharp: StaticString = "zoomToSharp"
+    // §7.3 "100% zoom": the click to the full-resolution bitmap on screen.
+    public static let zoomToSharp: StaticString = "zoomToSharp"
 
-  // The decode engine's own work, split by tier so a slow T2 and a slow T3 cannot hide in one
-  // average. Display decodes emit `decodeDisplay` whichever path they took, and `decodeFromBytes`
-  // when it was the byte-range one — the §7.5 claim is that the range is cheaper, and that is only a
-  // measurement if the two are distinguishable in a trace.
-  public static let decodeThumbnail: StaticString = "decodeThumbnail"
-  public static let decodeDisplay: StaticString = "decodeDisplay"
-  public static let decodeFromBytes: StaticString = "decodeFromBytes"
+    // The decode engine's own work, split by tier so a slow T2 and a slow T3 cannot hide in one
+    // average. Display decodes emit `decodeDisplay` whichever path they took, and `decodeFromBytes`
+    // when it was the byte-range one — the §7.5 claim is that the range is cheaper, and that is only a
+    // measurement if the two are distinguishable in a trace.
+    public static let decodeThumbnail: StaticString = "decodeThumbnail"
+    public static let decodeDisplay: StaticString = "decodeDisplay"
+    public static let decodeFromBytes: StaticString = "decodeFromBytes"
 
-  // The queue, which is where a prefetch that is not keeping up actually shows up.
-  public static let setFocus: StaticString = "setFocus"
-  public static let evictions: StaticString = "evictions"
+    // The queue, which is where a prefetch that is not keeping up actually shows up.
+    public static let setFocus: StaticString = "setFocus"
+    public static let evictions: StaticString = "evictions"
 }
 
 /// The four rows of todo.md §7.3 that only a **presented frame** can close, and what closes them.
@@ -106,14 +100,14 @@ public enum Signposts {
 /// so a span that says "arrow key → *sharp* photo" must not end on one, while a span that says
 /// "folder open → a photograph on screen" legitimately can.
 public enum FrameSpan {
-  public enum Accepts: Equatable, Sendable {
-    /// Only the display decode. For `keyToFrame`, `batchToFrame` and `zoomToSharp`, whose rows are
-    /// written in terms of the sharp photograph. A stand-in closing one of these would report a fast
-    /// frame for a soft picture, which is the lie §7.3 exists to prevent.
-    case displayOnly
+    public enum Accepts: Equatable, Sendable {
+        /// Only the display decode. For `keyToFrame`, `batchToFrame` and `zoomToSharp`, whose rows are
+        /// written in terms of the sharp photograph. A stand-in closing one of these would report a fast
+        /// frame for a soft picture, which is the lie §7.3 exists to prevent.
+        case displayOnly
 
-    /// Either frame. For `openToFirstPhoto`: the row is a photograph being *there*, and the first
-    /// paint is frequently a thumbnail while the display decode is still running.
-    case anyFrame
-  }
+        /// Either frame. For `openToFirstPhoto`: the row is a photograph being *there*, and the first
+        /// paint is frequently a thumbnail while the display decode is still running.
+        case anyFrame
+    }
 }

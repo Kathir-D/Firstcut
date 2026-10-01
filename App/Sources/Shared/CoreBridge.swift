@@ -18,8 +18,8 @@
 // the generated ones. infra swaps them when the real exports land -- see the wave 2 row in
 // docs/agents/infra.md. Until then, call Rust through here and mock the rest with CoreTypes.
 
-import Foundation
 import FirstcutCore
+import Foundation
 
 /// Namespace for the Rust core. Every symbol in `FirstcutCore` is a top-level function or a type,
 /// so importing it into a file puts those names in the file's scope; going through this enum

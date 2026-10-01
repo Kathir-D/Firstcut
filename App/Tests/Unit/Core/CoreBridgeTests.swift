@@ -28,7 +28,8 @@ import Testing
 /// broke; if it *gains* one that the inventory does not list, the app is quietly not using it.
 @Test func generatedBindingsAreFound() throws {
     let source = try #require(
-        FirstcutCoreBridge.generatedBindingsSource, "App/Generated/FirstcutCore.swift is not where it should be")
+        FirstcutCoreBridge.generatedBindingsSource,
+        "App/Generated/FirstcutCore.swift is not where it should be")
     #expect(source.contains("public func hello()"))
     #expect(source.contains("public func coreVersion()"))
     #expect(source.contains("open class Session: SessionProtocol"))
@@ -47,4 +48,3 @@ import Testing
     #expect(missing.isEmpty, "Finish members the app expects but the core does not export: \(missing)")
     #expect(SessionFactory.canFinish)
 }
-

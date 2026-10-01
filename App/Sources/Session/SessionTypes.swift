@@ -289,7 +289,8 @@ public struct FinishSettings: Hashable, Sendable, Codable {
     public var kept: KeptAction
     public var ratingMode: RatingMode
 
-    public init(unkept: UnkeptAction = .default, kept: KeptAction = .default, ratingMode: RatingMode = .stars) {
+    public init(unkept: UnkeptAction = .default, kept: KeptAction = .default, ratingMode: RatingMode = .stars)
+    {
         self.unkept = unkept
         self.kept = kept
         self.ratingMode = ratingMode
@@ -331,7 +332,8 @@ public struct FinishPlanData: Hashable, Sendable {
     public var opCount: Int { ops.count }
 
     public var bytesToCopyDescription: String {
-        bytesToCopy == 0 ? "—" : ByteCountFormatter.string(fromByteCount: Int64(bytesToCopy), countStyle: .file)
+        bytesToCopy == 0
+            ? "—" : ByteCountFormatter.string(fromByteCount: Int64(bytesToCopy), countStyle: .file)
     }
 }
 
@@ -402,7 +404,9 @@ public struct FinishSummary: Hashable, Sendable {
     public var batchCount: Int
     public var totalPhotos: Int
 
-    public init(counts: [Tier: Int] = [:], unvisitedBatches: Int = 0, batchCount: Int = 0, totalPhotos: Int = 0) {
+    public init(
+        counts: [Tier: Int] = [:], unvisitedBatches: Int = 0, batchCount: Int = 0, totalPhotos: Int = 0
+    ) {
         self.counts = counts
         self.unvisitedBatches = unvisitedBatches
         self.batchCount = batchCount

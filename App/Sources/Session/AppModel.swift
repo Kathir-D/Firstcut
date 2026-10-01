@@ -628,12 +628,11 @@ public final class AppModel: SessionListener, KeyRouterSource {
     public private(set) var standInFramesPresented = 0
 
     /// Opens the span, replacing (and ending) any that is still open.
-    private func beginFrameInterval(_ name: StaticString, accepts: FrameSpan.Accepts = .displayOnly)
-    {
-      endFrameInterval()
-      pendingFrameInterval = SignpostInterval.begin(name)
-      pendingFrameWaitsFor = accepts
-      frameIntervalStart = .now
+    private func beginFrameInterval(_ name: StaticString, accepts: FrameSpan.Accepts = .displayOnly) {
+        endFrameInterval()
+        pendingFrameInterval = SignpostInterval.begin(name)
+        pendingFrameWaitsFor = accepts
+        frameIntervalStart = .now
     }
 
     /// Called by the viewer once a frame has been committed. Public because the view layer is a
@@ -643,28 +642,28 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// is a signpost reporting sub-millisecond key-to-frame over a soft picture, which is the exact
     /// lie §7.3 is written to rule out.
     public func frameDidPresent(_ frame: PresentedFrame = .display) {
-      if frame == .standIn {
-        // Counted even with no span open: this counter is "the user saw a thumbnail", and a frame
-        // that arrives outside a measurement is still a frame the user looked at.
-        standInFramesPresented += 1
-      }
-      guard let start = frameIntervalStart, pendingFrameInterval != nil else { return }
-      if frame == .standIn, pendingFrameWaitsFor != .anyFrame { return }
-      let elapsed = ContinuousClock.now - start
-      let milliseconds =
-        Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
-      lastFrameLatencyMs = milliseconds
-      worstFrameLatencyMs = max(worstFrameLatencyMs ?? 0, milliseconds)
-      framesPresented += 1
-      endFrameInterval()
+        if frame == .standIn {
+            // Counted even with no span open: this counter is "the user saw a thumbnail", and a frame
+            // that arrives outside a measurement is still a frame the user looked at.
+            standInFramesPresented += 1
+        }
+        guard let start = frameIntervalStart, pendingFrameInterval != nil else { return }
+        if frame == .standIn, pendingFrameWaitsFor != .anyFrame { return }
+        let elapsed = ContinuousClock.now - start
+        let milliseconds =
+            Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
+        lastFrameLatencyMs = milliseconds
+        worstFrameLatencyMs = max(worstFrameLatencyMs ?? 0, milliseconds)
+        framesPresented += 1
+        endFrameInterval()
     }
 
     /// Ends any open span without a frame arriving — the window closing, a folder changing, quit.
     /// Leaving one open would put a permanently unclosed interval in every trace from that point on.
     public func endFrameInterval() {
-      pendingFrameInterval?.end()
-      pendingFrameInterval = nil
-      frameIntervalStart = nil
+        pendingFrameInterval?.end()
+        pendingFrameInterval = nil
+        frameIntervalStart = nil
     }
 
     // MARK: - Commands
@@ -741,10 +740,10 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// report the time until the *next* keystroke — a slow number for a key that did nothing, which
     /// is worse than no number because it is a wrong one.
     private func navigateForFrame(_ name: StaticString, _ navigate: () -> Void) {
-      let before = (currentBatchIndex, currentPhotoIndex)
-      beginFrameInterval(name)
-      navigate()
-      if (currentBatchIndex, currentPhotoIndex) == before { endFrameInterval() }
+        let before = (currentBatchIndex, currentPhotoIndex)
+        beginFrameInterval(name)
+        navigate()
+        if (currentBatchIndex, currentPhotoIndex) == before { endFrameInterval() }
     }
 
     public func movePhoto(by delta: Int) {
@@ -1209,7 +1208,8 @@ public final class AppModel: SessionListener, KeyRouterSource {
 
     private func reindexPhotos() {
         photoIndex = Dictionary(
-            allPhotos.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
+            allPhotos.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first }
+        )
     }
 
     private func rebuildBatches(from core: [Batch], visited: Set<BatchID>) {

@@ -101,12 +101,13 @@ public enum BoundarySampler {
     public static func plan(for game: Game) throws -> GameAuditPlan {
         let records = try Fixtures.exifToolRecords(for: game)
         let gaps = try gaps(for: game, records: records)
-        let mandatoryIndices = Set(gaps.enumerated().compactMap { index, gap in
-            (gap.gapClass == .ambiguous
-                || gap.reasons.contains(.orientationChange)
-                || gap.reasons.contains(.shutterCountJump)
-                || gap.reasons.contains(.fastTail)) ? index : nil
-        })
+        let mandatoryIndices = Set(
+            gaps.enumerated().compactMap { index, gap in
+                (gap.gapClass == .ambiguous
+                    || gap.reasons.contains(.orientationChange)
+                    || gap.reasons.contains(.shutterCountJump)
+                    || gap.reasons.contains(.fastTail)) ? index : nil
+            })
         let mandatory = gaps.enumerated().filter { mandatoryIndices.contains($0.offset) }.map(\.element)
 
         let candidates = gaps.enumerated().filter { !mandatoryIndices.contains($0.offset) }.map(\.element)
@@ -163,9 +164,11 @@ public enum BoundarySampler {
                 reasons.insert(.fastTail)
             }
             let gapClass: GapClass =
-                seconds < ambiguousRange.lowerBound ? .intraBurst
-                : seconds <= ambiguousRange.upperBound ? .ambiguous
-                : .hard
+                seconds < ambiguousRange.lowerBound
+                ? .intraBurst
+                : seconds <= ambiguousRange.upperBound
+                    ? .ambiguous
+                    : .hard
             return Gap(
                 beforeIndex: index, afterIndex: index + 1,
                 beforeName: before.fileName, afterName: after.fileName,
@@ -178,12 +181,12 @@ public enum BoundarySampler {
     /// make the audit unreproducible and therefore uncheckable.
     static func deterministicSample(_ items: [Gap], count: Int) -> [Gap] {
         guard count > 0, !items.isEmpty else { return [] }
-        var state: UInt64 = 0x9E3779B97F4A7C15
+        var state: UInt64 = 0x9E37_79B9_7F4A_7C15
         func next() -> UInt64 {
-            state &+= 0x9E3779B97F4A7C15
+            state &+= 0x9E37_79B9_7F4A_7C15
             var z = state
-            z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
-            z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
             return z ^ (z >> 31)
         }
         // Reservoir sampling in one pass: O(count) memory, and every item is equally likely.

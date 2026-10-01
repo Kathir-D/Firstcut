@@ -45,7 +45,6 @@ public enum TestEnvironment {
         ProcessInfo.processInfo.environment[photoTestsEnvVar] == "1"
     }
 
-
     public static let defaultPhotosFolder = "~/Documents/testing"
 
     /// Root of the repo checkout this test bundle was compiled from, derived from this file's own
@@ -84,13 +83,15 @@ public enum TestEnvironment {
             for subdirectory in subdirectories {
                 let found: URL?
                 if subdirectory.isEmpty {
-                    found = candidate.url(forResource: name, withExtension: nil)
+                    found =
+                        candidate.url(forResource: name, withExtension: nil)
                         ?? candidate.url(
                             forResource: (name as NSString).deletingPathExtension,
                             withExtension: (name as NSString).pathExtension)
                 } else {
-                    found = candidate.url(
-                        forResource: name, withExtension: nil, subdirectory: "\(subdirectory)/")
+                    found =
+                        candidate.url(
+                            forResource: name, withExtension: nil, subdirectory: "\(subdirectory)/")
                         ?? candidate.url(
                             forResource: name, withExtension: (name as NSString).pathExtension,
                             subdirectory: "\(subdirectory)/")
@@ -142,7 +143,8 @@ public enum TestEnvironment {
             (try? FileManager.default.contentsOfDirectory(
                 at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]))
             ?? []
-        return contents
+        return
+            contents
             .filter { url in
                 guard let isDir = try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory,
                     isDir == true
@@ -155,8 +157,10 @@ public enum TestEnvironment {
     public static func rawFileCount(in folder: URL) -> Int {
         let names =
             (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-        return names.filter { Self.rawExtensions.contains(URL(fileURLWithPath: $0).pathExtension.lowercased()) }
-            .count
+        return names.filter {
+            Self.rawExtensions.contains(URL(fileURLWithPath: $0).pathExtension.lowercased())
+        }
+        .count
     }
 
     public static let rawExtensions: Set<String> = ["cr3", "cr2", "crw", "arw", "dng", "nef", "raf"]
@@ -415,7 +419,10 @@ public enum Fixtures {
     /// Decodes `tests/fixtures/exiftool/<game>.json`.
     public static func exifToolRecords(for game: Game) throws -> [ExifToolRecord] {
         guard let url = game.exifToolFixtureURL, FileManager.default.fileExists(atPath: url.path)
-        else { throw FixtureError.fixtureMissing(game.exifToolFixtureURL?.path ?? "tests/fixtures/exiftool/\(game.rawValue).json") }
+        else {
+            throw FixtureError.fixtureMissing(
+                game.exifToolFixtureURL?.path ?? "tests/fixtures/exiftool/\(game.rawValue).json")
+        }
         let data = try Data(contentsOf: url)
         let records = try JSONDecoder().decode([ExifToolRecord].self, from: data)
         guard records.count == game.expectedPhotoCount else {
@@ -454,10 +461,10 @@ extension XCTestCase {
     /// touches RAW data; the committed-fixture tests must NOT use this.
     public func skipUnlessTestPhotos(
         _ message: String = """
-            Set \(TestEnvironment.photoTestsEnvVar)=1 to run this: it reads the real photos in \
-            \(TestEnvironment.defaultPhotosFolder), which a GUI test host cannot do unattended \
-            (a TCC consent prompt appears and nobody is there to allow it).
-            """
+        Set \(TestEnvironment.photoTestsEnvVar)=1 to run this: it reads the real photos in \
+        \(TestEnvironment.defaultPhotosFolder), which a GUI test host cannot do unattended \
+        (a TCC consent prompt appears and nobody is there to allow it).
+        """
     ) throws {
         try XCTSkipUnless(
             TestEnvironment.testPhotos != nil,

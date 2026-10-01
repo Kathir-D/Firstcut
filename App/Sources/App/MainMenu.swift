@@ -136,9 +136,11 @@ struct FirstcutCommands: Commands {
 
             Divider()
 
-            Toggle("Clipping Overlay", isOn: toggle({ $0.showsClippingOverlay }, sends: .toggleClippingOverlay))
-                .keyboardShortcut(shortcut(.toggleClippingOverlay))
-                .disabled(!isCulling)
+            Toggle(
+                "Clipping Overlay", isOn: toggle({ $0.showsClippingOverlay }, sends: .toggleClippingOverlay)
+            )
+            .keyboardShortcut(shortcut(.toggleClippingOverlay))
+            .disabled(!isCulling)
             Toggle("AF Point Overlay", isOn: toggle({ $0.showsAFOverlay }, sends: .toggleAFOverlay))
                 .keyboardShortcut(shortcut(.toggleAFOverlay))
                 .disabled(!isCulling)

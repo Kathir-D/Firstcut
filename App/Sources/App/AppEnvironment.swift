@@ -25,219 +25,219 @@ import UniformTypeIdentifiers
 @MainActor
 @Observable
 final class AppEnvironment {
-  static let shared = AppEnvironment()
+    static let shared = AppEnvironment()
 
-  /// The model. Everything the app knows, and the only thing allowed to mutate it.
-  let model: AppModel
+    /// The model. Everything the app knows, and the only thing allowed to mutate it.
+    let model: AppModel
 
-  /// The views' read-only projection of `model`. Same object, narrower surface: views cannot
-  /// mutate through this, which is what makes "the model is the only mutation path" (REV-50)
-  /// checkable rather than aspirational.
-  private(set) var state: any CullViewState
+    /// The views' read-only projection of `model`. Same object, narrower surface: views cannot
+    /// mutate through this, which is what makes "the model is the only mutation path" (REV-50)
+    /// checkable rather than aspirational.
+    private(set) var state: any CullViewState
 
-  /// The real decoder. Shared with the model so the viewer and the filmstrip hit one cache.
-  let images: ImageProvider
+    /// The real decoder. Shared with the model so the viewer and the filmstrip hit one cache.
+    let images: ImageProvider
 
-  /// The one keyboard router for the whole app (todo.md §10). Held here so it lives as long as the
-  /// process; without it no key reached the model at all.
-  @ObservationIgnored private var keyRouter: KeyRouter?
+    /// The one keyboard router for the whole app (todo.md §10). Held here so it lives as long as the
+    /// process; without it no key reached the model at all.
+    @ObservationIgnored private var keyRouter: KeyRouter?
 
-  /// A folder chosen but not opened yet — see `open(folder:)`, which is why this is not just a
-  /// property the views read.
-  private(set) var pendingFolderURL: URL?
+    /// A folder chosen but not opened yet — see `open(folder:)`, which is why this is not just a
+    /// property the views read.
+    private(set) var pendingFolderURL: URL?
 
-  private init() {
-    // `shared` is a `static let`, so this runs at `NSApplicationMain` — which in an XCTest process
-    // is the **test host**, before the runner has connected. Building a real `AppModel` there means
-    // a real Rust `Session`, which opens a database under Application Support, and that is enough
-    // to stop the host ever bootstrapping: the runner reports "test crashed with signal term before
-    // establishing connection", with no crash log and no failing test. It cost a long time to
-    // diagnose because "the app does nothing when I run it" and "the tests die" look nothing alike.
-    //
-    // So: in a test host, build an empty model and let the test set up its own session. In the real
-    // app, build the real thing. `isRunningUnderXCTest` is the whole mechanism, and it is checked
-    // once, here, where the side effect happens.
-    if Self.isRunningUnderXCTest {
-      // An empty `MockSession` rather than a real one: the test host must touch no database and no
-      // user folder, or the runner never connects. A suite that needs a session installs its own
-      // through `Dependencies.testing(backend:)`.
-      let model = AppModel(
-        .testing(backend: MockSession(data: SessionData(folder: "", photos: [], batches: []))))
-      self.model = model
-      self.images = ImageProvider(memoryBudgetBytes: 256 << 20)
-      self.state = ModelCullViewState(model: model, images: self.images)
-      PhotoViewerHostView.register { [images] _, _ in CGImageViewerHost(images: images) }
-      return
+    private init() {
+        // `shared` is a `static let`, so this runs at `NSApplicationMain` — which in an XCTest process
+        // is the **test host**, before the runner has connected. Building a real `AppModel` there means
+        // a real Rust `Session`, which opens a database under Application Support, and that is enough
+        // to stop the host ever bootstrapping: the runner reports "test crashed with signal term before
+        // establishing connection", with no crash log and no failing test. It cost a long time to
+        // diagnose because "the app does nothing when I run it" and "the tests die" look nothing alike.
+        //
+        // So: in a test host, build an empty model and let the test set up its own session. In the real
+        // app, build the real thing. `isRunningUnderXCTest` is the whole mechanism, and it is checked
+        // once, here, where the side effect happens.
+        if Self.isRunningUnderXCTest {
+            // An empty `MockSession` rather than a real one: the test host must touch no database and no
+            // user folder, or the runner never connects. A suite that needs a session installs its own
+            // through `Dependencies.testing(backend:)`.
+            let model = AppModel(
+                .testing(backend: MockSession(data: SessionData(folder: "", photos: [], batches: []))))
+            self.model = model
+            self.images = ImageProvider(memoryBudgetBytes: 256 << 20)
+            self.state = ModelCullViewState(model: model, images: self.images)
+            PhotoViewerHostView.register { [images] _, _ in CGImageViewerHost(images: images) }
+            return
+        }
+
+        let dependencies = Dependencies.live()
+        let model = AppModel(dependencies)
+        self.model = model
+        // The *same* provider the model holds, not a second one. Two providers means two caches, two
+        // decode queues, and two `focusMisses` counters, and only the one `AppModel.open` primes ever
+        // gets a folder — so the viewer's copy returns nil for every photo while the model's works. One
+        // instance, read from the model, is the only arrangement where the viewer and the filmstrip see
+        // the same pixels.
+        // `live()` always builds a real `ImageProvider`, so this is non-nil in the app. The fallback
+        // exists only so a future `live()` that does not would fail visibly rather than silently.
+        guard let provider = model.imageProvider else {
+            preconditionFailure("Dependencies.live() must supply a real ImageProvider")
+        }
+        self.images = provider
+        self.state = ModelCullViewState(model: model, images: self.images)
+        // The one registration call in the app (REQ-ui-2, REV-52). Until this ran, the viewer stayed
+        // empty and drew "Viewer layer pending from the pipeline agent" over every photo. It is
+        // unconditional: a test that wants a different host registers its own, and `register` is
+        // last-wins.
+        //
+        // Both the image source and the model are resolved from the **active** state when a pane is
+        // created, not captured from this environment's own provider here. The mock shoot
+        // (`-FirstcutMockShoot`, previews, the Screenshots workflow) swaps the whole state for one
+        // whose source is synthetic, and a viewer still holding the real `ImageProvider` — which the
+        // mock never gave a folder — answered nil for every photo and rendered black, while the
+        // filmstrip, which reads the state, drew its thumbnails quite happily.
+        PhotoViewerHostView.register { [weak self] _, _ in
+            guard let self else {
+                preconditionFailure("the environment outlives every viewer pane")
+            }
+            let state = self.state
+            let host = CGImageViewerHost(images: state.images)
+            // The closing end of the key-to-frame, batch-to-frame, zoom-to-sharp and open-to-first-photo
+            // intervals (todo.md §7.3): the model opens them, and only a committed frame can close them.
+            // The model that opened them is the active state's, so that is the one that closes them too.
+            if let model = state.activeModel {
+                host.onFramePresented = { [weak model] frame in model?.frameDidPresent(frame) }
+                // The opening end of the same story: the viewer is the only thing that knows how many pixels
+                // it covers, and T2 is decoded at exactly that many (todo.md §7.1/§7.2).
+                host.onViewportPixelSize = { [weak model] size in model?.setViewportPixelSize(size) }
+            }
+            return host
+        }
+
+        // The model asks for a panel and a window; it cannot make either. Without these two lines
+        // "Open Folder…" (⌘O, the toolbar, the Welcome button) and Full Screen (⌃⌘F) were consumed by
+        // the key router and then did nothing, because nothing was listening.
+        let router = KeyRouter(source: model)
+        router.isActive = {
+            // Only the culling window, and never while a text field has the keyboard: a folder name typed
+            // in the Finish sheet must not also rate the photo behind it.
+            guard let window = NSApp.keyWindow else { return false }
+            return window.identifier == WindowID.mainIdentifier && !(window.firstResponder is NSText)
+        }
+        router.install()
+        keyRouter = router
+
+        model.onRequestOpenFolder = { [weak self] in self?.presentOpenPanel() }
+        model.onRequestToggleFullScreen = { _ in NSApp.keyWindow?.toggleFullScreen(nil) }
+
+        // Launch flags, applied to *this* instance rather than through `AppEnvironment.shared`.
+        //
+        // The obvious spelling — a static helper that reaches back for `AppEnvironment.shared` — traps
+        // with EXC_BREAKPOINT in `_dispatch_once_wait`: `shared` is a `static let`, so asking for it
+        // from inside its own initialisation re-enters the `dispatch_once` that is still running. The
+        // app died on launch, every time, with a crash report that took a while to read because the
+        // frame that matters is `unsafeMutableAddressor`. `self` is already the singleton here, so the
+        // indirection was never needed.
+        if LaunchOptions.usesMockShoot {
+            let mock = AppModel.preview(game: nil, photoLimit: nil)
+            mock.open(mock.backend, folderName: "Preview")
+            use(
+                ModelCullViewState(
+                    model: mock, images: PreviewImageSource(seed: 0x5eed_f1c5) as any CullImageSource))
+        }
+        if let folder = LaunchOptions.folder {
+            open(folder: folder)
+        }
+        applyScreenshotFlags()
     }
 
-    let dependencies = Dependencies.live()
-    let model = AppModel(dependencies)
-    self.model = model
-    // The *same* provider the model holds, not a second one. Two providers means two caches, two
-    // decode queues, and two `focusMisses` counters, and only the one `AppModel.open` primes ever
-    // gets a folder — so the viewer's copy returns nil for every photo while the model's works. One
-    // instance, read from the model, is the only arrangement where the viewer and the filmstrip see
-    // the same pixels.
-    // `live()` always builds a real `ImageProvider`, so this is non-nil in the app. The fallback
-    // exists only so a future `live()` that does not would fail visibly rather than silently.
-    guard let provider = model.imageProvider else {
-      preconditionFailure("Dependencies.live() must supply a real ImageProvider")
-    }
-    self.images = provider
-    self.state = ModelCullViewState(model: model, images: self.images)
-    // The one registration call in the app (REQ-ui-2, REV-52). Until this ran, the viewer stayed
-    // empty and drew "Viewer layer pending from the pipeline agent" over every photo. It is
-    // unconditional: a test that wants a different host registers its own, and `register` is
-    // last-wins.
-    //
-    // Both the image source and the model are resolved from the **active** state when a pane is
-    // created, not captured from this environment's own provider here. The mock shoot
-    // (`-FirstcutMockShoot`, previews, the Screenshots workflow) swaps the whole state for one
-    // whose source is synthetic, and a viewer still holding the real `ImageProvider` — which the
-    // mock never gave a folder — answered nil for every photo and rendered black, while the
-    // filmstrip, which reads the state, drew its thumbnails quite happily.
-    PhotoViewerHostView.register { [weak self] _, _ in
-      guard let self else {
-        preconditionFailure("the environment outlives every viewer pane")
-      }
-      let state = self.state
-      let host = CGImageViewerHost(images: state.images)
-      // The closing end of the key-to-frame, batch-to-frame, zoom-to-sharp and open-to-first-photo
-      // intervals (todo.md §7.3): the model opens them, and only a committed frame can close them.
-      // The model that opened them is the active state's, so that is the one that closes them too.
-      if let model = state.activeModel {
-        host.onFramePresented = { [weak model] frame in model?.frameDidPresent(frame) }
-        // The opening end of the same story: the viewer is the only thing that knows how many pixels
-        // it covers, and T2 is decoded at exactly that many (todo.md §7.1/§7.2).
-        host.onViewportPixelSize = { [weak model] size in model?.setViewportPixelSize(size) }
-      }
-      return host
+    /// The screenshot workflow's flags: which screen to show, and where to write the picture. They
+    /// wait a moment so a folder opened at launch has loaded and the thumbnails have been drawn.
+    private func applyScreenshotFlags() {
+        let mode = LaunchOptions.viewMode
+        let finish = LaunchOptions.opensFinish
+        let snapshot = LaunchOptions.snapshotPath
+        guard mode != nil || finish || snapshot != nil else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard let self else { return }
+            if let mode { self.send(.setViewMode(mode)) }
+            if finish { self.send(.finishCull) }
+            guard let snapshot else { return }
+            try? await Task.sleep(for: .seconds(2))
+            Self.writeSnapshot(to: snapshot)
+        }
     }
 
-    // The model asks for a panel and a window; it cannot make either. Without these two lines
-    // "Open Folder…" (⌘O, the toolbar, the Welcome button) and Full Screen (⌃⌘F) were consumed by
-    // the key router and then did nothing, because nothing was listening.
-    let router = KeyRouter(source: model)
-    router.isActive = {
-      // Only the culling window, and never while a text field has the keyboard: a folder name typed
-      // in the Finish sheet must not also rate the photo behind it.
-      guard let window = NSApp.keyWindow else { return false }
-      return window.identifier == WindowID.mainIdentifier && !(window.firstResponder is NSText)
+    /// Draws every visible window of the app (the main window, and Settings or a sheet if open) into
+    /// PNGs next to `path`. Uses the view hierarchy, so it needs no screen-recording permission;
+    /// materials and Liquid Glass may draw flatter than on screen.
+    static func writeSnapshot(to path: String) {
+        let base = (path as NSString).deletingPathExtension
+        for (index, window) in NSApp.windows.enumerated() where window.isVisible {
+            guard let view = window.contentView?.superview ?? window.contentView else { continue }
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            guard let data = rep.representation(using: .png, properties: [:]) else { continue }
+            let name = index == 0 ? path : "\(base)-window\(index).png"
+            try? data.write(to: URL(fileURLWithPath: name))
+        }
     }
-    router.install()
-    keyRouter = router
 
-    model.onRequestOpenFolder = { [weak self] in self?.presentOpenPanel() }
-    model.onRequestToggleFullScreen = { _ in NSApp.keyWindow?.toggleFullScreen(nil) }
-
-    // Launch flags, applied to *this* instance rather than through `AppEnvironment.shared`.
-    //
-    // The obvious spelling — a static helper that reaches back for `AppEnvironment.shared` — traps
-    // with EXC_BREAKPOINT in `_dispatch_once_wait`: `shared` is a `static let`, so asking for it
-    // from inside its own initialisation re-enters the `dispatch_once` that is still running. The
-    // app died on launch, every time, with a crash report that took a while to read because the
-    // frame that matters is `unsafeMutableAddressor`. `self` is already the singleton here, so the
-    // indirection was never needed.
-    if LaunchOptions.usesMockShoot {
-      let mock = AppModel.preview(game: nil, photoLimit: nil)
-      mock.open(mock.backend, folderName: "Preview")
-      use(
-        ModelCullViewState(
-          model: mock, images: PreviewImageSource(seed: 0x5eed_f1c5) as any CullImageSource))
+    /// True when this process is an XCTest host rather than the app the user launched.
+    ///
+    /// `XCTestConfigurationFilePath` is set by the runner in the test process only; the shipped app
+    /// never has it. `XCTestBundlePath` is set too, but it is also present in some launch contexts, so
+    /// the configuration file is the reliable one.
+    private static var isRunningUnderXCTest: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
     }
-    if let folder = LaunchOptions.folder {
-      open(folder: folder)
+
+    /// The documented swap point (REV-74). ui reached this through a one-line `use(_:)`; that is kept
+    /// so the swap stays a single greppable line, and a test can install a stand-in.
+    func use(_ newState: any CullViewState) { state = newState }
+
+    /// Every command from every surface — the menus, the toolbar, the key router, the filmstrip —
+    /// funnels through here, so there is one place the rules are enforced.
+    func send(_ action: CullAction) { state.send(action) }
+
+    /// Drag a folder onto the window. A dropped folder is a security-scoped resource, so the URL has
+    /// to be claimed before the sandbox will let us read it.
+    func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            Task { @MainActor in self.open(folder: url) }
+        }
+        return true
     }
-    applyScreenshotFlags()
-  }
 
-  /// The screenshot workflow's flags: which screen to show, and where to write the picture. They
-  /// wait a moment so a folder opened at launch has loaded and the thumbnails have been drawn.
-  private func applyScreenshotFlags() {
-    let mode = LaunchOptions.viewMode
-    let finish = LaunchOptions.opensFinish
-    let snapshot = LaunchOptions.snapshotPath
-    guard mode != nil || finish || snapshot != nil else { return }
-    Task { @MainActor [weak self] in
-      try? await Task.sleep(for: .seconds(4))
-      guard let self else { return }
-      if let mode { self.send(.setViewMode(mode)) }
-      if finish { self.send(.finishCull) }
-      guard let snapshot else { return }
-      try? await Task.sleep(for: .seconds(2))
-      Self.writeSnapshot(to: snapshot)
+    /// The folder chooser. The URL it returns carries the user's grant for that folder, which is the
+    /// only way the app is meant to be given one (see `open(folder:)`).
+    func presentOpenPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Open a Folder of Photos"
+        panel.message = "Choose the folder that holds the whole shoot."
+        panel.prompt = "Open"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        open(folder: url)
     }
-  }
 
-  /// Draws every visible window of the app (the main window, and Settings or a sheet if open) into
-  /// PNGs next to `path`. Uses the view hierarchy, so it needs no screen-recording permission;
-  /// materials and Liquid Glass may draw flatter than on screen.
-  static func writeSnapshot(to path: String) {
-    let base = (path as NSString).deletingPathExtension
-    for (index, window) in NSApp.windows.enumerated() where window.isVisible {
-      guard let view = window.contentView?.superview ?? window.contentView else { continue }
-      guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
-      view.cacheDisplay(in: view.bounds, to: rep)
-      guard let data = rep.representation(using: .png, properties: [:]) else { continue }
-      let name = index == 0 ? path : "\(base)-window\(index).png"
-      try? data.write(to: URL(fileURLWithPath: name))
+    /// Open a real folder. The URL arrives from `NSOpenPanel` (which already carries the grant) or
+    /// from a launch flag, and either way this is the *only* place the app starts reading a
+    /// user-chosen directory — never a raw path from anywhere else (the TCC rule, and the reason the
+    /// test host used to hang: a GUI app reading under ~/Documents raises a consent prompt that
+    /// nobody is there to answer).
+    func open(folder url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        pendingFolderURL = url
+        model.open(folder: url)
+        pendingFolderURL = nil
     }
-  }
-
-  /// True when this process is an XCTest host rather than the app the user launched.
-  ///
-  /// `XCTestConfigurationFilePath` is set by the runner in the test process only; the shipped app
-  /// never has it. `XCTestBundlePath` is set too, but it is also present in some launch contexts, so
-  /// the configuration file is the reliable one.
-  private static var isRunningUnderXCTest: Bool {
-    ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-        || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
-  }
-
-  /// The documented swap point (REV-74). ui reached this through a one-line `use(_:)`; that is kept
-  /// so the swap stays a single greppable line, and a test can install a stand-in.
-  func use(_ newState: any CullViewState) { state = newState }
-
-  /// Every command from every surface — the menus, the toolbar, the key router, the filmstrip —
-  /// funnels through here, so there is one place the rules are enforced.
-  func send(_ action: CullAction) { state.send(action) }
-
-  /// Drag a folder onto the window. A dropped folder is a security-scoped resource, so the URL has
-  /// to be claimed before the sandbox will let us read it.
-  func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-    guard let provider = providers.first else { return false }
-    _ = provider.loadObject(ofClass: URL.self) { url, _ in
-      guard let url else { return }
-      Task { @MainActor in self.open(folder: url) }
-    }
-    return true
-  }
-
-  /// The folder chooser. The URL it returns carries the user's grant for that folder, which is the
-  /// only way the app is meant to be given one (see `open(folder:)`).
-  func presentOpenPanel() {
-    let panel = NSOpenPanel()
-    panel.title = "Open a Folder of Photos"
-    panel.message = "Choose the folder that holds the whole shoot."
-    panel.prompt = "Open"
-    panel.canChooseDirectories = true
-    panel.canChooseFiles = false
-    panel.canCreateDirectories = false
-    panel.allowsMultipleSelection = false
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    open(folder: url)
-  }
-
-  /// Open a real folder. The URL arrives from `NSOpenPanel` (which already carries the grant) or
-  /// from a launch flag, and either way this is the *only* place the app starts reading a
-  /// user-chosen directory — never a raw path from anywhere else (the TCC rule, and the reason the
-  /// test host used to hang: a GUI app reading under ~/Documents raises a consent prompt that
-  /// nobody is there to answer).
-  func open(folder url: URL) {
-    let scoped = url.startAccessingSecurityScopedResource()
-    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-    pendingFolderURL = url
-    model.open(folder: url)
-    pendingFolderURL = nil
-  }
 }

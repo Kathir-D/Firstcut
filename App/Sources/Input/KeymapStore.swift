@@ -36,7 +36,8 @@ public struct KeymapStore: Sendable {
     }
 
     public static var defaultDirectory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let base =
+            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
         return base.appendingPathComponent("Firstcut", isDirectory: true)
     }

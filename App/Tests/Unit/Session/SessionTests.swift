@@ -745,10 +745,10 @@ struct BatchesChangedTests {
             #expect(batch.index == offset)
             #expect(model.batchIndex(for: batch.id) == offset)
             #expect(batch.photoIDs.count == batch.range.count)
-        // Only rebuilt batches stop being provisional; the batch the user is in is frozen and comes
-        // back exactly as it was (batching.md).
-        #expect(model.batches[0].provisional)
-        #expect(model.batches.dropFirst().allSatisfy { !$0.provisional })
+            // Only rebuilt batches stop being provisional; the batch the user is in is frozen and comes
+            // back exactly as it was (batching.md).
+            #expect(model.batches[0].provisional)
+            #expect(model.batches.dropFirst().allSatisfy { !$0.provisional })
         }
         #expect(model.photos(inBatch: 0).map(\.id) == model.batches[0].photoIDs)
     }

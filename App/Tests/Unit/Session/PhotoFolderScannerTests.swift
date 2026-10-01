@@ -224,10 +224,19 @@ struct PhotoFolderScannerTests {
         private let lock = NSLock()
         private var _total = 0
         private var _lastDone = 0
-        var total: Int { lock.lock(); defer { lock.unlock() }; return _total }
-        var lastDone: Int { lock.lock(); defer { lock.unlock() }; return _lastDone }
+        var total: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _total
+        }
+        var lastDone: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _lastDone
+        }
         func record(done: Int, total: Int) {
-            lock.lock(); defer { lock.unlock() }
+            lock.lock()
+            defer { lock.unlock() }
             _total = total
             _lastDone = done
         }

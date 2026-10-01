@@ -164,7 +164,8 @@ final class GroundTruthAuditTests: XCTestCase {
                 )
             }
 
-            let worksheet = AuditWorksheet(game: game, plan: plan, sheetNames: written.map(\.lastPathComponent))
+            let worksheet = AuditWorksheet(
+                game: game, plan: plan, sheetNames: written.map(\.lastPathComponent))
             let worksheetURL = directory.appendingPathComponent("worksheet.json")
             try JSONEncoder.prettyPrinted.encode(worksheet).write(to: worksheetURL, options: .atomic)
 
@@ -230,7 +231,9 @@ struct AuditWorksheet: Codable {
         self.gapCount = plan.gaps.count
         self.ambiguousCount = plan.gaps.filter { $0.gapClass == .ambiguous }.count
         self.hardSplitCount = plan.gaps.filter { $0.gapClass == .hard }.count
-        self.entries = zip(plan.allReviewed, sheetNames + Array(repeating: "", count: max(0, names.count - sheetNames.count))).map { gap, sheet in
+        self.entries = zip(
+            plan.allReviewed, sheetNames + Array(repeating: "", count: max(0, names.count - sheetNames.count))
+        ).map { gap, sheet in
             Entry(
                 identifier: gap.identifier,
                 beforeName: gap.beforeName,

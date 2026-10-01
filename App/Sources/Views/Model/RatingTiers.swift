@@ -25,22 +25,22 @@
 import Foundation
 
 enum RatingTiers {
-  /// app-logic's single implementation, in both modes.
-  static func tier(for rating: Rating, mode: RatingMode) -> Tier {
-    RatingRules.tier(of: rating, mode: mode)
-  }
+    /// app-logic's single implementation, in both modes.
+    static func tier(for rating: Rating, mode: RatingMode) -> Tier {
+        RatingRules.tier(of: rating, mode: mode)
+    }
 
-  /// Keep, for the given mode. The one a view should use.
-  static func isKeep(_ rating: Rating, mode: RatingMode) -> Bool {
-    RatingRules.isKeep(rating, mode: mode)
-  }
+    /// Keep, for the given mode. The one a view should use.
+    static func isKeep(_ rating: Rating, mode: RatingMode) -> Bool {
+        RatingRules.isKeep(rating, mode: mode)
+    }
 
-  /// Keep in *either* mode: "the Finish step will keep this", which is what a filmstrip ring and a
-  /// summary count both mean, and what this function was reaching for by hand before.
-  ///
-  /// Derived from the same mapping as the two above rather than re-tested as `keep || stars >= 4`,
-  /// so a third definition of "is a keep" cannot exist in this tree.
-  static func isKeep(_ rating: Rating) -> Bool {
-    isKeep(rating, mode: .stars) || isKeep(rating, mode: .keep)
-  }
+    /// Keep in *either* mode: "the Finish step will keep this", which is what a filmstrip ring and a
+    /// summary count both mean, and what this function was reaching for by hand before.
+    ///
+    /// Derived from the same mapping as the two above rather than re-tested as `keep || stars >= 4`,
+    /// so a third definition of "is a keep" cannot exist in this tree.
+    static func isKeep(_ rating: Rating) -> Bool {
+        isKeep(rating, mode: .stars) || isKeep(rating, mode: .keep)
+    }
 }

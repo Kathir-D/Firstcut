@@ -60,7 +60,8 @@ extension KeyBinding: Codable {
         command = try c.decode(String.self, forKey: .command)
         argument = try c.decodeIfPresent(Int.self, forKey: .argument)
         chord = KeyChord(
-            try c.decode(Key.self, forKey: .key), KeyModifiers(names: try c.decode([String].self, forKey: .modifiers)))
+            try c.decode(Key.self, forKey: .key),
+            KeyModifiers(names: try c.decode([String].self, forKey: .modifiers)))
         modes = try c.decodeIfPresent(Set<RatingMode>.self, forKey: .modes)
     }
 
@@ -132,9 +133,11 @@ public struct Keymap: Hashable, Sendable {
     public func binding(for chord: KeyChord, mode: RatingMode) -> KeyBinding? {
         let candidates = byChord[Keymap.normalized(chord)] ?? []
         // Mode-specific first, then mode-agnostic; within a group, the earliest binding wins.
-        return candidates
+        return
+            candidates
             .map { bindings[$0] }
-            .first { $0.modes?.contains(mode) == true } ?? candidates
+            .first { $0.modes?.contains(mode) == true }
+            ?? candidates
             .map { bindings[$0] }
             .first { $0.applies(to: mode) }
     }
@@ -150,8 +153,10 @@ public struct Keymap: Hashable, Sendable {
 
     /// What a menu item shows as its shortcut.
     public func primaryChord(for command: Command, mode: RatingMode) -> KeyChord? {
-        bindings.first { $0.command == command.id && $0.argument == command.argument && $0.applies(to: mode) }?
-            .chord
+        bindings.first {
+            $0.command == command.id && $0.argument == command.argument && $0.applies(to: mode)
+        }?
+        .chord
     }
 
     public func isBound(_ command: Command) -> Bool {
@@ -192,7 +197,7 @@ public struct Keymap: Hashable, Sendable {
     private static func modesOverlap(_ a: Set<RatingMode>?, _ b: Set<RatingMode>?) -> Bool {
         switch (a, b) {
         case (nil, _), (_, nil): true
-        case let (a?, b?): !a.isDisjoint(with: b)
+        case (let a?, let b?): !a.isDisjoint(with: b)
         }
     }
 
@@ -237,7 +242,9 @@ public struct Keymap: Hashable, Sendable {
     /// Drops a command's user overrides so the defaults apply again.
     public mutating func reset(_ command: Command, to defaults: Keymap) {
         bindings.removeAll { $0.command == command.id && $0.argument == command.argument }
-        let restored = defaults.bindings.filter { $0.command == command.id && $0.argument == command.argument }
+        let restored = defaults.bindings.filter {
+            $0.command == command.id && $0.argument == command.argument
+        }
         bindings.insert(contentsOf: restored, at: min(bindings.count, insertionIndex(of: command)))
         reindex()
     }

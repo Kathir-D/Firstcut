@@ -17,8 +17,8 @@
 // from an old build of the generated bindings; these are free functions the app calls by name, so a
 // bindings file without them is a compile error, which is a better failure than `false`.
 
-import Foundation
 import FirstcutCore
+import Foundation
 
 public enum CoreFirstPhoto {
     /// One photograph from a folder, or nil when the folder has none this core can read.

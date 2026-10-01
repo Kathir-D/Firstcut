@@ -133,15 +133,18 @@ public final class CoreSessionBackend: SessionBackend {
     private let bridge: SessionListenerBridge
 
     /// The usual path: the backend makes its own bridge and hands it to the core.
-    public convenience init(core: any CoreSessionAPI, initial data: SessionData, matched: MatchKind = .created) {
+    public convenience init(
+        core: any CoreSessionAPI, initial data: SessionData, matched: MatchKind = .created
+    ) {
         self.init(core: core, initial: data, bridge: SessionListenerBridge(), matched: matched)
     }
 
     /// The path the app's non-blocking open takes: the bridge already exists (UniFFI took the
     /// listener by value at `Session::open`) and only its `owner` is still unassigned.
-    init(core: any CoreSessionAPI, initial data: SessionData, bridge: SessionListenerBridge,
-         matched: MatchKind = .created)
-    {
+    init(
+        core: any CoreSessionAPI, initial data: SessionData, bridge: SessionListenerBridge,
+        matched: MatchKind = .created
+    ) {
         self.core = core
         self.data = data
         self.snapshotReads = 1

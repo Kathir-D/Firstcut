@@ -23,50 +23,50 @@ import QuartzCore
 
 @MainActor
 protocol PhotoViewerHost: AnyObject {
-  /// The photo to show. Called on every navigation; must not reallocate the backing surface when
-  /// the id is unchanged.
-  func setPhoto(_ id: PhotoID, aspectRatio: Double)
+    /// The photo to show. Called on every navigation; must not reallocate the backing surface when
+    /// the id is unchanged.
+    func setPhoto(_ id: PhotoID, aspectRatio: Double)
 
-  /// Zoom state pushed down from the model (app-model.md's `ViewerState`). The host owns pinch and
-  /// click-to-100% itself; this is only so the window chrome can react.
-  func setViewerState(_ state: ViewerPresentation)
+    /// Zoom state pushed down from the model (app-model.md's `ViewerState`). The host owns pinch and
+    /// click-to-100% itself; this is only so the window chrome can react.
+    func setViewerState(_ state: ViewerPresentation)
 
-  /// The viewer's own frame changed, so the implementation can re-decode for the new backing size
-  /// (todo.md §7.1) while keeping the old image visible.
-  func setViewportSize(_ size: CGSize)
+    /// The viewer's own frame changed, so the implementation can re-decode for the new backing size
+    /// (todo.md §7.1) while keeping the old image visible.
+    func setViewportSize(_ size: CGSize)
 
-  /// The zoom level currently presented, for the HUD. Read on demand, not pushed.
-  var presentedZoom: Double { get }
+    /// The zoom level currently presented, for the HUD. Read on demand, not pushed.
+    var presentedZoom: Double { get }
 
-  /// Takes a zoom and spot from a peer in the same sync group. Must not broadcast again.
-  func applySynced(_ state: ViewerSyncGroup.State)
+    /// Takes a zoom and spot from a peer in the same sync group. Must not broadcast again.
+    func applySynced(_ state: ViewerSyncGroup.State)
 
-  /// Hosts that share a group zoom and pan together (Compare view, todo.md §9.6).
-  var syncGroup: ViewerSyncGroup? { get set }
+    /// Hosts that share a group zoom and pan together (Compare view, todo.md §9.6).
+    var syncGroup: ViewerSyncGroup? { get set }
 
-  /// Called once the newly presented frame has been **committed**, not merely drawn into a layer.
-  ///
-  /// This is the closing end of todo.md §7.3's "arrow key → sharp photo" interval, and the distinction
-  /// is the whole measurement: the handler returning says nothing about what the user sees, and the
-  /// decode landing says nothing either if the commit has not happened. A `CATransaction` completion
-  /// is the closest synchronous signal AppKit offers, and it is what the signpost closes on.
-  ///
-  /// The argument matters as much as the call. §7.3 says *sharp* photo, and a stand-in is not one, so
-  /// a span that closed on `PresentedFrame.standIn` would report a fast frame for a soft picture.
-  var onFramePresented: ((PresentedFrame) -> Void)? { get set }
+    /// Called once the newly presented frame has been **committed**, not merely drawn into a layer.
+    ///
+    /// This is the closing end of todo.md §7.3's "arrow key → sharp photo" interval, and the distinction
+    /// is the whole measurement: the handler returning says nothing about what the user sees, and the
+    /// decode landing says nothing either if the commit has not happened. A `CATransaction` completion
+    /// is the closest synchronous signal AppKit offers, and it is what the signpost closes on.
+    ///
+    /// The argument matters as much as the call. §7.3 says *sharp* photo, and a stand-in is not one, so
+    /// a span that closed on `PresentedFrame.standIn` would report a fast frame for a soft picture.
+    var onFramePresented: ((PresentedFrame) -> Void)? { get set }
 }
 
 /// What the viewer just put on screen. The distinction is todo.md §7.1's whole promise: navigation
 /// never shows the stand-in, and the intervals that measure it are not allowed to pretend otherwise.
 public enum PresentedFrame: Equatable, Sendable {
-  /// The 256 px thumbnail standing in while a display decode is in flight. §7.1 says the user can
-  /// never reach one by navigating — a `standIn` between a keystroke and the photograph is a bug in
-  /// the prefetch, and the counter that shows it is `PipelineStats.focusMisses`.
-  case standIn
+    /// The 256 px thumbnail standing in while a display decode is in flight. §7.1 says the user can
+    /// never reach one by navigating — a `standIn` between a keystroke and the photograph is a bug in
+    /// the prefetch, and the counter that shows it is `PipelineStats.focusMisses`.
+    case standIn
 
-  /// The display decode: T2 at the viewer's size, or the full-resolution bitmap when zoomed. This is
-  /// the "sharp photo" §7.3 measures to.
-  case display
+    /// The display decode: T2 at the viewer's size, or the full-resolution bitmap when zoomed. This is
+    /// the "sharp photo" §7.3 measures to.
+    case display
 }
 
 /// Keeps several viewer hosts at the same zoom and the same spot, so two or more frames of a burst
@@ -74,77 +74,77 @@ public enum PresentedFrame: Equatable, Sendable {
 /// closed pane alive.
 @MainActor
 final class ViewerSyncGroup {
-  struct State: Equatable {
-    var zoom: CGFloat
-    var center: CGPoint
-  }
-
-  private struct Member { weak var host: (any PhotoViewerHost)? }
-  private var members: [Member] = []
-
-  func add(_ host: any PhotoViewerHost) {
-    members.removeAll { $0.host == nil }
-    members.append(Member(host: host))
-  }
-
-  /// Called by the host the user is touching. Peers take the state without re-broadcasting.
-  func broadcast(_ state: State, from origin: any PhotoViewerHost) {
-    for member in members {
-      guard let host = member.host, host !== origin else { continue }
-      host.applySynced(state)
+    struct State: Equatable {
+        var zoom: CGFloat
+        var center: CGPoint
     }
-  }
+
+    private struct Member { weak var host: (any PhotoViewerHost)? }
+    private var members: [Member] = []
+
+    func add(_ host: any PhotoViewerHost) {
+        members.removeAll { $0.host == nil }
+        members.append(Member(host: host))
+    }
+
+    /// Called by the host the user is touching. Peers take the state without re-broadcasting.
+    func broadcast(_ state: State, from origin: any PhotoViewerHost) {
+        for member in members {
+            guard let host = member.host, host !== origin else { continue }
+            host.applySynced(state)
+        }
+    }
 }
 
 /// What the window tells the viewer: whether zoom is locked across photos, which overlays to
 /// draw, and how big the photograph really is. Mirrored from app-model.md's `ViewerState` (REV-46);
 /// app-logic owns the value.
 struct ViewerPresentation: Equatable {
-  var isZoomed = false
-  var zoomScale: Double = 1
-  var isZoomLocked = false
-  /// Autofocus points to draw, in the *upright* image's normalized coordinates (top-left origin).
-  var afRects: [AFRect] = []
-  var showsClipping = false
-  /// The photograph's own pixel size, as the scan reported it (pre-rotation). Zero when unknown.
-  ///
-  /// It is here because "100%" has to mean 100% of the *photograph*, not of whatever bitmap happens
-  /// to be on screen. T2 is decoded at the viewer's size (§7.1), so a view that computed 1:1 from
-  /// the bitmap it was handed would call a 3000 px half-size image "100%" and the user would see a
-  /// soft picture with a confident label. With this, the viewer asks the pipeline for the
-  /// photograph's own pixels when it is at 1:1, and for its window's pixels when it is not.
-  var pixelSize: CGSize = .zero
+    var isZoomed = false
+    var zoomScale: Double = 1
+    var isZoomLocked = false
+    /// Autofocus points to draw, in the *upright* image's normalized coordinates (top-left origin).
+    var afRects: [AFRect] = []
+    var showsClipping = false
+    /// The photograph's own pixel size, as the scan reported it (pre-rotation). Zero when unknown.
+    ///
+    /// It is here because "100%" has to mean 100% of the *photograph*, not of whatever bitmap happens
+    /// to be on screen. T2 is decoded at the viewer's size (§7.1), so a view that computed 1:1 from
+    /// the bitmap it was handed would call a 3000 px half-size image "100%" and the user would see a
+    /// soft picture with a confident label. With this, the viewer asks the pipeline for the
+    /// photograph's own pixels when it is at 1:1, and for its window's pixels when it is not.
+    var pixelSize: CGSize = .zero
 
-  static let fit = ViewerPresentation()
+    static let fit = ViewerPresentation()
 
-  struct AFRect: Equatable {
-    /// Centre and size, normalized 0…1.
-    var x: CGFloat
-    var y: CGFloat
-    var w: CGFloat
-    var h: CGFloat
-    var inFocus: Bool
-  }
-
-  /// The AF points of a photo mapped from the sensor's frame into the upright frame the viewer
-  /// displays, by EXIF orientation. `decodeFull` rotates the pixels the same way, so the box lands
-  /// on the thing that was in focus rather than on the same spot of a sideways sensor.
-  static func afRects(from af: AfInfo?, orientation: UInt8) -> [AFRect] {
-    guard let af else { return [] }
-    return af.points.map { point in
-      let (x, y, w, h) = (CGFloat(point.x), CGFloat(point.y), CGFloat(point.w), CGFloat(point.h))
-      switch orientation {
-      case 2: return AFRect(x: 1 - x, y: y, w: w, h: h, inFocus: point.inFocus)
-      case 3: return AFRect(x: 1 - x, y: 1 - y, w: w, h: h, inFocus: point.inFocus)
-      case 4: return AFRect(x: x, y: 1 - y, w: w, h: h, inFocus: point.inFocus)
-      case 5: return AFRect(x: y, y: x, w: h, h: w, inFocus: point.inFocus)
-      case 6: return AFRect(x: 1 - y, y: x, w: h, h: w, inFocus: point.inFocus)
-      case 7: return AFRect(x: 1 - y, y: 1 - x, w: h, h: w, inFocus: point.inFocus)
-      case 8: return AFRect(x: y, y: 1 - x, w: h, h: w, inFocus: point.inFocus)
-      default: return AFRect(x: x, y: y, w: w, h: h, inFocus: point.inFocus)
-      }
+    struct AFRect: Equatable {
+        /// Centre and size, normalized 0…1.
+        var x: CGFloat
+        var y: CGFloat
+        var w: CGFloat
+        var h: CGFloat
+        var inFocus: Bool
     }
-  }
+
+    /// The AF points of a photo mapped from the sensor's frame into the upright frame the viewer
+    /// displays, by EXIF orientation. `decodeFull` rotates the pixels the same way, so the box lands
+    /// on the thing that was in focus rather than on the same spot of a sideways sensor.
+    static func afRects(from af: AfInfo?, orientation: UInt8) -> [AFRect] {
+        guard let af else { return [] }
+        return af.points.map { point in
+            let (x, y, w, h) = (CGFloat(point.x), CGFloat(point.y), CGFloat(point.w), CGFloat(point.h))
+            switch orientation {
+            case 2: return AFRect(x: 1 - x, y: y, w: w, h: h, inFocus: point.inFocus)
+            case 3: return AFRect(x: 1 - x, y: 1 - y, w: w, h: h, inFocus: point.inFocus)
+            case 4: return AFRect(x: x, y: 1 - y, w: w, h: h, inFocus: point.inFocus)
+            case 5: return AFRect(x: y, y: x, w: h, h: w, inFocus: point.inFocus)
+            case 6: return AFRect(x: 1 - y, y: x, w: h, h: w, inFocus: point.inFocus)
+            case 7: return AFRect(x: 1 - y, y: 1 - x, w: h, h: w, inFocus: point.inFocus)
+            case 8: return AFRect(x: y, y: 1 - x, w: h, h: w, inFocus: point.inFocus)
+            default: return AFRect(x: x, y: y, w: w, h: h, inFocus: point.inFocus)
+            }
+        }
+    }
 }
 
 /// Hosts pipeline's viewer layer without a compile-time dependency on it. `register` is the one
@@ -152,77 +152,77 @@ struct ViewerPresentation: Equatable {
 /// placeholder.
 @MainActor
 final class PhotoViewerHostView: NSView {
-  typealias HostFactory = @MainActor (PhotoID, Double) -> any PhotoViewerHost
+    typealias HostFactory = @MainActor (PhotoID, Double) -> any PhotoViewerHost
 
-  nonisolated(unsafe) private static var storedFactory: HostFactory?
+    nonisolated(unsafe) private static var storedFactory: HostFactory?
 
-  /// Register pipeline's viewer layer. Idempotent; the last registration wins. One factory, one
-  /// host **per host view** — the factory is called once per `PhotoViewerHostView`, so two windows
-  /// never share a drawing surface.
-  static func register(_ factory: @escaping HostFactory) {
-    storedFactory = factory
-  }
-
-  static var isRegistered: Bool { storedFactory != nil }
-
-  var photoID: PhotoID? {
-    didSet {
-      guard photoID != oldValue else { return }
-      guard let id = photoID, let host else { return }
-      host.setPhoto(id, aspectRatio: aspectRatio)
+    /// Register pipeline's viewer layer. Idempotent; the last registration wins. One factory, one
+    /// host **per host view** — the factory is called once per `PhotoViewerHostView`, so two windows
+    /// never share a drawing surface.
+    static func register(_ factory: @escaping HostFactory) {
+        storedFactory = factory
     }
-  }
 
-  var aspectRatio: Double = 1.5 {
-    didSet {
-      guard aspectRatio != oldValue else { return }
-      guard let id = photoID, let host else { return }
-      host.setPhoto(id, aspectRatio: aspectRatio)
+    static var isRegistered: Bool { storedFactory != nil }
+
+    var photoID: PhotoID? {
+        didSet {
+            guard photoID != oldValue else { return }
+            guard let id = photoID, let host else { return }
+            host.setPhoto(id, aspectRatio: aspectRatio)
+        }
     }
-  }
 
-  /// Set before the first layout; every host in the group zooms and pans together.
-  var syncGroup: ViewerSyncGroup? {
-    didSet {
-      host?.syncGroup = syncGroup
-      if let host, let syncGroup { syncGroup.add(host) }
+    var aspectRatio: Double = 1.5 {
+        didSet {
+            guard aspectRatio != oldValue else { return }
+            guard let id = photoID, let host else { return }
+            host.setPhoto(id, aspectRatio: aspectRatio)
+        }
     }
-  }
 
-  var viewerState = ViewerPresentation.fit {
-    didSet {
-      guard viewerState != oldValue else { return }
-      host?.setViewerState(viewerState)
+    /// Set before the first layout; every host in the group zooms and pans together.
+    var syncGroup: ViewerSyncGroup? {
+        didSet {
+            host?.syncGroup = syncGroup
+            if let host, let syncGroup { syncGroup.add(host) }
+        }
     }
-  }
 
-  private var host: (any PhotoViewerHost)?
+    var viewerState = ViewerPresentation.fit {
+        didSet {
+            guard viewerState != oldValue else { return }
+            host?.setViewerState(viewerState)
+        }
+    }
 
-  override init(frame frameRect: NSRect) {
-    super.init(frame: frameRect)
-    wantsLayer = true
-    guard let factory = Self.storedFactory else { return }
-    host = factory(0, aspectRatio)
-    adopt(host)
-  }
+    private var host: (any PhotoViewerHost)?
 
-  @available(*, unavailable)
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) is not used")
-  }
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        guard let factory = Self.storedFactory else { return }
+        host = factory(0, aspectRatio)
+        adopt(host)
+    }
 
-  override func layout() {
-    super.layout()
-    guard bounds.size != .zero else { return }
-    host?.setViewportSize(bounds.size)
-  }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used")
+    }
 
-  private func adopt(_ host: (any PhotoViewerHost)?) {
-    guard let host, let view = host as? NSView else { return }
-    view.removeFromSuperview()
-    view.frame = bounds
-    view.autoresizingMask = [.width, .height]
-    addSubview(view)
-    setAccessibilityLabel("Photo viewer")
-  }
+    override func layout() {
+        super.layout()
+        guard bounds.size != .zero else { return }
+        host?.setViewportSize(bounds.size)
+    }
+
+    private func adopt(_ host: (any PhotoViewerHost)?) {
+        guard let host, let view = host as? NSView else { return }
+        view.removeFromSuperview()
+        view.frame = bounds
+        view.autoresizingMask = [.width, .height]
+        addSubview(view)
+        setAccessibilityLabel("Photo viewer")
+    }
 }

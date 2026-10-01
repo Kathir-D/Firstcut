@@ -122,7 +122,8 @@ struct KeyChordTests {
         let event = try #require(
             NSEvent.keyEvent(
                 with: .keyDown, location: .zero, modifierFlags: [.shift], timestamp: 0, windowNumber: 0,
-                context: nil, characters: "P", charactersIgnoringModifiers: "p", isARepeat: false, keyCode: 35))
+                context: nil, characters: "P", charactersIgnoringModifiers: "p", isARepeat: false, keyCode: 35
+            ))
         #expect(KeyChord(event: event) == KeyChord(.p, [.shift]))
     }
 
@@ -130,7 +131,8 @@ struct KeyChordTests {
     func fromFlagsEvent() throws {
         let event = try #require(
             NSEvent.keyEvent(
-                with: .flagsChanged, location: .zero, modifierFlags: [.capsLock], timestamp: 0, windowNumber: 0,
+                with: .flagsChanged, location: .zero, modifierFlags: [.capsLock], timestamp: 0,
+                windowNumber: 0,
                 context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 57))
         #expect(KeyChord(event: event) == KeyChord(.capsLock, [.capsLock]))
     }
@@ -350,7 +352,9 @@ struct KeyRouterTests {
         return store.effective
     }
 
-    static func event(_ key: Key, _ modifiers: NSEvent.ModifierFlags = [], isRepeat: Bool = false) throws -> NSEvent {
+    static func event(_ key: Key, _ modifiers: NSEvent.ModifierFlags = [], isRepeat: Bool = false) throws
+        -> NSEvent
+    {
         try #require(
             NSEvent.keyEvent(
                 with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0,

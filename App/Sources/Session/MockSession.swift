@@ -114,7 +114,9 @@ import Foundation
         }
 
         if photos.isEmpty {
-            throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey: "No photos found in \(url.lastPathComponent)"])
+            throw CocoaError(
+                .fileReadCorruptFile,
+                userInfo: [NSLocalizedDescriptionKey: "No photos found in \(url.lastPathComponent)"])
         }
         return SessionData(
             folder: url.path, photos: photos, batches: FixturePhotos.batches(for: photos), skipped: skipped)
@@ -221,7 +223,8 @@ import Foundation
         let hashes = Dictionary(sigs.map { ($0.0, $0.1.dhash) }, uniquingKeysWith: { first, _ in first })
         guard !hashes.isEmpty else { return }
         let times = Dictionary(
-            data.photos.map { ($0.id, $0.captureTime?.unixMs ?? -1) }, uniquingKeysWith: { first, _ in first })
+            data.photos.map { ($0.id, $0.captureTime?.unixMs ?? -1) }, uniquingKeysWith: { first, _ in first }
+        )
 
         var rebuilt: [Batch] = []
         for batch in data.batches {
@@ -334,7 +337,10 @@ public struct FinishPlanner {
                         bytes += photo.fileSize
                     }
                 case .writeList(let path):
-                    ops.append(FileOp(kind: .writeList, from: (photo.relPath as NSString).lastPathComponent, to: join(base, path)))
+                    ops.append(
+                        FileOp(
+                            kind: .writeList, from: (photo.relPath as NSString).lastPathComponent,
+                            to: join(base, path)))
                 case .none:
                     break
                 }

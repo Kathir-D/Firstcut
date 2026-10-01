@@ -69,8 +69,9 @@ public enum PhotoFolderScanner {
             }
             photos.append(meta)
         }
-        return try session(folder: folder, photos: photos, companions: listing.companions,
-                          skipped: skipped)
+        return try session(
+            folder: folder, photos: photos, companions: listing.companions,
+            skipped: skipped)
     }
 
     /// The same scan, concurrently, reporting progress. Reading 2 880 CR3 headers is seconds of
@@ -96,8 +97,9 @@ public enum PhotoFolderScanner {
             }
         }
         progress(total, total)
-        return try session(folder: folder, photos: slots.photos,
-                           companions: listing.companions, skipped: slots.skipped)
+        return try session(
+            folder: folder, photos: slots.photos,
+            companions: listing.companions, skipped: slots.skipped)
     }
 
     private static func session(
@@ -112,7 +114,7 @@ public enum PhotoFolderScanner {
         // (app-model.md), so an out-of-order array is a broken shoot, not a cosmetic problem.
         photos.sort { lhs, rhs in
             switch (lhs.captureTime?.unixMs, rhs.captureTime?.unixMs) {
-            case let (left?, right?) where left != right: return left < right
+            case (let left?, let right?) where left != right: return left < right
             case (nil, _?): return false
             case (_?, nil): return true
             default: return lhs.relPath.localizedStandardCompare(rhs.relPath) == .orderedAscending
@@ -140,9 +142,11 @@ public enum PhotoFolderScanner {
         let tiff = (properties[kCGImagePropertyTIFFDictionary] ?? [:]) as? [CFString: Any] ?? [:]
         let exif = (properties[kCGImagePropertyExifDictionary] ?? [:]) as? [CFString: Any] ?? [:]
 
-        let width = int(properties[kCGImagePropertyPixelWidth])
+        let width =
+            int(properties[kCGImagePropertyPixelWidth])
             ?? int(exif[kCGImagePropertyExifPixelXDimension]) ?? 0
-        let height = int(properties[kCGImagePropertyPixelHeight])
+        let height =
+            int(properties[kCGImagePropertyPixelHeight])
             ?? int(exif[kCGImagePropertyExifPixelYDimension]) ?? 0
         // Orientation drives the aspect ratio everywhere a photo is drawn, and 0 would divide.
         let orientation = UInt8(clamping: int(tiff[kCGImagePropertyTIFFOrientation]) ?? 1)
@@ -252,7 +256,11 @@ public enum PhotoFolderScanner {
             results = [PhotoMeta?](repeating: nil, count: urls.count)
         }
 
-        var done: Int { lock.lock(); defer { lock.unlock() }; return completed }
+        var done: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return completed
+        }
 
         func claim() -> Int? {
             lock.lock()

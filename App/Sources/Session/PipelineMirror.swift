@@ -92,8 +92,11 @@ public struct FocusRequest: Hashable, Sendable {
         return CGColor(srgbRed: 0.25 + r * 0.6, green: 0.25 + g * 0.6, blue: 0.25 + b * 0.6, alpha: 1)
     }
 
-    public nonisolated static func thumbnail(for id: PhotoID, size: CGSize = CGSize(width: 96, height: 64)) -> CGImage? {
-        let width = Int(size.width), height = Int(size.height)
+    public nonisolated static func thumbnail(for id: PhotoID, size: CGSize = CGSize(width: 96, height: 64))
+        -> CGImage?
+    {
+        let width = Int(size.width)
+        let height = Int(size.height)
         guard width > 0, height > 0 else { return nil }
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         let color = Self.color(for: id)
@@ -116,9 +119,10 @@ public struct FocusRequest: Hashable, Sendable {
                 pixels[offset + 3] = 255
             }
         }
-        guard let context = CGContext(
-            data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        guard
+            let context = CGContext(
+                data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
         return context.makeImage()
     }

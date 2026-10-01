@@ -100,7 +100,8 @@ enum ImageFixtures {
     }
 
     /// N photos in one folder, ids 1...n, which is what `ImageProvider.open` wants.
-    static func shoot(count: Int) -> (folder: URL, photos: [PhotoMeta]) {        let folder = folder()
+    static func shoot(count: Int) -> (folder: URL, photos: [PhotoMeta]) {
+        let folder = folder()
         var photos: [PhotoMeta] = []
         for index in 0..<count {
             let name = "IMG_\(String(format: "%04d", index)).jpg"
@@ -390,7 +391,8 @@ struct ImageProviderTests {
     func movingOnCancelsStaleWork() async {
         let shoot = ImageFixtures.shoot(count: 30)
         // One decode at a time, so what is still queued when the focus moves is deterministic.
-        let provider = ImageProvider(memoryBudgetBytes: 64 << 20, prefetchPixels: 128, maxConcurrentDecodes: 1)
+        let provider = ImageProvider(
+            memoryBudgetBytes: 64 << 20, prefetchPixels: 128, maxConcurrentDecodes: 1)
         provider.open(folder: shoot.folder, photos: shoot.photos)
         provider.setFocus(focus(shoot.photos.map(\.id), current: 1))
         provider.setFocus(focus([29, 30], current: 30))
@@ -448,7 +450,8 @@ struct ImageProviderTests {
         // decoder this still compiles, but the integration target's CR3 test will fail.
         let shoot = ImageFixtures.shoot(count: 1)
         let thumb = try #require(
-            DecodeEngine.decodeThumbnail(url: shoot.folder.appendingPathComponent("IMG_0000.jpg"), maxPixel: 64))
+            DecodeEngine.decodeThumbnail(
+                url: shoot.folder.appendingPathComponent("IMG_0000.jpg"), maxPixel: 64))
         #expect(thumb.width <= 64)
         #expect(thumb.height <= 64)
         let full = try #require(
@@ -472,8 +475,9 @@ struct ImageProviderTests {
         let url = shoot.folder.appendingPathComponent("IMG_0000.jpg")
         let length = UInt64(
             try #require(
-                FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)
-                .intValue)
+                FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber
+            )
+            .intValue)
 
         for (what, image) in [
             ("thumbnail", DecodeEngine.decodeThumbnail(url: url, maxPixel: 256)),
@@ -481,7 +485,8 @@ struct ImageProviderTests {
             (
                 "byte-range decode",
                 DecodeEngine.decodeDisplay(
-                    byteRange: ByteRange(offset: 0, len: length), in: url, maxPixel: 400)),
+                    byteRange: ByteRange(offset: 0, len: length), in: url, maxPixel: 400)
+            ),
             ("rotated decode", DecodeEngine.decodeDisplay(url: url, orientation: 8, maxPixel: 400)),
         ] {
             let decoded = try #require(image, "\(what) should decode")
@@ -538,8 +543,9 @@ struct ImageProviderTests {
         let fromContainer = try #require(DecodeEngine.decodeDisplay(url: url, maxPixel: 400))
         let length = UInt64(
             try #require(
-                FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)
-                .intValue)
+                FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber
+            )
+            .intValue)
         #expect(length > 100, "the fixture should be a real JPEG, not a stub")
 
         // The whole file is a range that covers exactly one JPEG, so it must give the same picture.
@@ -578,8 +584,9 @@ struct ImageProviderTests {
         let provider = ImageProvider(memoryBudgetBytes: 64 << 20)
         var photos = shoot.photos
         // The fixture is a bare JPEG, so its "full preview" is the whole file.
-        let size = (try FileManager.default.attributesOfItem(
-            atPath: shoot.folder.appendingPathComponent("IMG_0000.jpg").path)[.size] as? NSNumber)
+        let size =
+            (try FileManager.default.attributesOfItem(
+                atPath: shoot.folder.appendingPathComponent("IMG_0000.jpg").path)[.size] as? NSNumber)
         photos[0].fullPreview = EmbeddedPreview(
             range: ByteRange(offset: 0, len: try #require(size).uint64Value),
             width: 400, height: 300)

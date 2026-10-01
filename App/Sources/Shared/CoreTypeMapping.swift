@@ -21,8 +21,8 @@
 //   (rating.rs). `RatingMode`/`Tier` conversion is what the *finish summary* reads, which is why
 //   the app asks the core for `tierCounts(mode:)` rather than counting tiers itself.
 
-import Foundation
 import FirstcutCore
+import Foundation
 
 // MARK: - Rating
 

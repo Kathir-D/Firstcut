@@ -149,8 +149,9 @@ struct FirstPhotoFastPathTests {
         #expect(model.currentPhoto?.rating == Rating(), "no rating on the provisional photograph")
         #expect(previous.data.ratings == starsBefore, "and none written to the previous shoot")
         #expect(model.finish == .hidden, "Finish cannot plan a one-photo placeholder shoot")
-        #expect(model.recents.allSatisfy { $0.name != "Game1JENKS" },
-                "'1 of 1 rated' is not a shoot, so it is not recorded as one")
+        #expect(
+            model.recents.allSatisfy { $0.name != "Game1JENKS" },
+            "'1 of 1 rated' is not a shoot, so it is not recorded as one")
 
         // Once the session is there, the same keystroke lands.
         await gate.release()
@@ -199,13 +200,15 @@ struct FirstPhotoFastPathTests {
     @Test("Moving to another folder takes the first folder's frame down")
     func aSupersededOpenDoesNotLeaveItsFrameUp() async throws {
         let second = OpenGate()
-        let model = Self.model(gate: second, first: { url in
-            // The frame is the photograph the *open* named, so the folder is legible in the answer.
-            var meta = Self.photos[0]
-            meta.relPath = url.lastPathComponent + "/" + meta.relPath
-            meta.id = FixturePhotos.stableID(meta.relPath)
-            return meta
-        })
+        let model = Self.model(
+            gate: second,
+            first: { url in
+                // The frame is the photograph the *open* named, so the folder is legible in the answer.
+                var meta = Self.photos[0]
+                meta.relPath = url.lastPathComponent + "/" + meta.relPath
+                meta.id = FixturePhotos.stableID(meta.relPath)
+                return meta
+            })
         model.open(folder: URL(fileURLWithPath: "/tmp/Game1JENKS", isDirectory: true))
         try await Self.waitFor("the first folder's frame") { model.phase == .culling }
         #expect(model.folderName == "Game1JENKS")

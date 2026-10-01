@@ -12,10 +12,10 @@
 // Output is NEVER written into the repo: contact sheets are derived from photos that must not be
 // committed. `AuditOutput.directory` is `$FIRSTCUT_QA_AUDIT_DIR`, defaulting to a temp directory.
 
+import AppKit
 import CoreGraphics
 import CoreText
 import Foundation
-import AppKit
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -154,10 +154,14 @@ public enum ContactSheet {
             let captionText = labels?[safe: index] ?? name
             context.setFillColor(CGColor(red: 0.10, green: 0.10, blue: 0.11, alpha: 1))
             context.fill(
-                CGRect(x: originX, y: originY + CGFloat(cell), width: CGFloat(cell), height: CGFloat(labelHeight)))
+                CGRect(
+                    x: originX, y: originY + CGFloat(cell), width: CGFloat(cell), height: CGFloat(labelHeight)
+                ))
             Self.draw(
                 captionText,
-                in: CGRect(x: originX + 4, y: originY + CGFloat(cell) + 3, width: CGFloat(cell) - 8, height: CGFloat(labelHeight) - 4),
+                in: CGRect(
+                    x: originX + 4, y: originY + CGFloat(cell) + 3, width: CGFloat(cell) - 8,
+                    height: CGFloat(labelHeight) - 4),
                 font: .monospacedSystemFont(ofSize: 11, weight: .regular),
                 in: context
             )
@@ -212,9 +216,11 @@ public enum ContactSheet {
     /// trick §7.3's thumbnail budget depends on.
     private static func downsample(url: URL, to pixelSize: Int) -> CGImage? {
         guard
-            let source = CGImageSourceCreateWithURL(url as CFURL, [
-                kCGImageSourceShouldCache: false
-            ] as CFDictionary)
+            let source = CGImageSourceCreateWithURL(
+                url as CFURL,
+                [
+                    kCGImageSourceShouldCache: false
+                ] as CFDictionary)
         else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,

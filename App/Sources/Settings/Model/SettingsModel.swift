@@ -267,8 +267,9 @@ public enum InfoField: String, Codable, Equatable, Sendable, CaseIterable, Ident
         return switch self {
         case .fileName: photo.fileName
         case .captureTime: InfoField.formatCaptureTime(meta)
-        case .camera: [meta.cameraMake, meta.cameraModel].compactMap { $0 }.joined(separator: " ")
-            .nilIfEmpty ?? meta.cameraModel
+        case .camera:
+            [meta.cameraMake, meta.cameraModel].compactMap { $0 }.joined(separator: " ")
+                .nilIfEmpty ?? meta.cameraModel
         case .lens: meta.lensModel
         case .focalLength: meta.focalLengthMm.map { "\(Int($0.rounded())) mm" }
         case .shutter: meta.exposureTimeS.map(InfoField.formatShutter)

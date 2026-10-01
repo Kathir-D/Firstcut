@@ -96,7 +96,8 @@ final class RealRawDecodeTests: XCTestCase {
             print(
                 "CR3 display decode at \(edge) px: \(decoded.width)×\(decoded.height) in "
                     + "\(String(format: "%.0f", elapsed * 1000)) ms "
-                    + "(\(String(format: "%.0f", Double(decoded.width * decoded.height * 4) / 1_048_576)) MB)")
+                    + "(\(String(format: "%.0f", Double(decoded.width * decoded.height * 4) / 1_048_576)) MB)"
+            )
         }
     }
 
@@ -116,7 +117,8 @@ final class RealRawDecodeTests: XCTestCase {
         let full = time { DecodeEngine.decodeDisplay(url: files[2], maxPixel: 6000) }
         print(
             "CR3 decode: 128px \(String(format: "%.0f", small * 1000)) ms · 1600px "
-                + "\(String(format: "%.0f", large * 1000)) ms · full \(String(format: "%.0f", full * 1000)) ms")
+                + "\(String(format: "%.0f", large * 1000)) ms · full \(String(format: "%.0f", full * 1000)) ms"
+        )
 
         // Asking for 12× the pixels must not cost 12× the time. If it does, a future change that
         // moved the filmstrip onto per-frame exact-size decodes would be 12× slower, and this is

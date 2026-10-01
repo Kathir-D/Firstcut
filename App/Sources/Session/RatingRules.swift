@@ -32,13 +32,17 @@ public enum RatingRules {
     /// True when the photo counts as kept, for the given mode.
     /// Exactly "the tier is Keep", as the core's `Rating::is_kept` decides it for Finish: a rejected
     /// photo is never a keep, whatever its stars.
-    public static func isKeep(_ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold) -> Bool {
+    public static func isKeep(_ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold)
+        -> Bool
+    {
         tier(of: rating, mode: mode, keepThreshold: keepThreshold) == .keep
     }
 
     /// The tier a photo sits in (app-model.md). `flag.pick` never changes the tier; it is stored
     /// for Lightroom parity and shown as a badge.
-    public static func tier(of rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold) -> Tier {
+    public static func tier(of rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold)
+        -> Tier
+    {
         if rating.flag == .reject { return .rejected }
         switch mode {
         case .keep:

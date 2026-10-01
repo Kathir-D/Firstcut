@@ -176,10 +176,16 @@ public enum FixturePhotos {
             let gap = gaps[index - 1]
             let orientationChanged = photos[index].orientation != photos[index - 1].orientation
             let joins: Bool
-            if gap < 0 { joins = false }  // unknown time: never guess, start a new batch
-            else if gap > 2000 { joins = false }
-            else if orientationChanged { joins = false }
-            else { joins = Double(gap) <= joinLimit }
+            if gap < 0 {
+                joins = false
+            }  // unknown time: never guess, start a new batch
+            else if gap > 2000 {
+                joins = false
+            } else if orientationChanged {
+                joins = false
+            } else {
+                joins = Double(gap) <= joinLimit
+            }
             if joins {
                 groups[groups.count - 1].append(photos[index].id)
             } else {

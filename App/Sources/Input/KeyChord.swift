@@ -230,7 +230,10 @@ public struct KeyChord: Hashable, Sendable, Codable, CustomStringConvertible {
     /// The compact form used by tests, clipboard copies and imported keymaps: "⇧⌘Z", "⌘←", "⇪".
     public init?(compact: String) {
         // ⇪ is both the Caps Lock key and the Caps Lock modifier, so a bare one means the key.
-        if compact == Key.capsLock.symbol { self.init(.capsLock, [.capsLock]); return }
+        if compact == Key.capsLock.symbol {
+            self.init(.capsLock, [.capsLock])
+            return
+        }
         var modifiers: KeyModifiers = []
         var rest = Substring(compact)
         // Longest symbols first so ⌘ isn't confused with ⌃ and "fn" isn't read as "f".

@@ -43,17 +43,20 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
     func setListener(_ listener: any CoreSessionListener) { self.listener = listener }
 
     func snapshot() -> SessionData {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return data
     }
 
     func ratingMode() -> RatingMode {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return mode
     }
 
     func setRatingMode(_ mode: RatingMode) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         ratingModeSets.append(mode)
         self.mode = mode
     }
@@ -61,12 +64,14 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
     /// The core clamps to 4…5, so the fake does too: a test that sends 3 must not see 3 reach a
     /// "core" and conclude the app is allowed to send one.
     func setKeepThreshold(_ stars: Int) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         keepThresholdSets.append(stars)
     }
 
     func setRating(photo: PhotoID, _ rating: Rating) throws -> RatingChange {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         if failRating { throw CocoaError(.fileWriteUnknown) }
         let change = RatingChange(
             id: nextChangeID, photo: photo, batch: 1, before: data.ratings[photo] ?? Rating(),
@@ -79,7 +84,8 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
     }
 
     func undo() -> RatingChange? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard let change = undoStack.popLast() else { return nil }
         data.ratings[change.photo] = change.before
         redoStack.append(change)
@@ -87,7 +93,8 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
     }
 
     func redo() -> RatingChange? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard let change = redoStack.popLast() else { return nil }
         data.ratings[change.photo] = change.after
         undoStack.append(change)
@@ -95,25 +102,29 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
     }
 
     func setCursor(batch: BatchID, photo: PhotoID) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         cursors.append(SessionCursor(batch: batch, photo: photo))
         data.cursor = SessionCursor(batch: batch, photo: photo)
         data.lastPhotoInBatch[batch] = photo
     }
 
     func markVisited(batch: BatchID) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         visited.append(batch)
         data.visited.insert(batch)
     }
 
     func submitVisualSigs(_ sigs: [(PhotoID, VisualSig)]) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         submittedSigBatches += 1
     }
 
     func rescan() throws -> SessionData {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         rescanCount += 1
         return data
     }
@@ -129,12 +140,14 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
     func undoFinish() throws -> FinishReportData { FinishReportData(done: 0, undoable: false) }
 
     func flush() {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         flushed += 1
     }
 
     func close() {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         closed += 1
     }
 

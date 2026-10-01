@@ -28,8 +28,8 @@
 // thread — hop to the main actor before touching UI state."* `CoreSessionBridge` below is the one
 // place that hop happens.
 
-import Foundation
 import FirstcutCore
+import Foundation
 
 /// The real `Session`, wrapped so the app sees `CoreSessionAPI`.
 public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
@@ -139,7 +139,9 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
         var refreshed = SessionData(session.snapshot())
         // `FfiScanResult` is the rescan's own report; `snapshot()` is the state of record. Keep the
         // skipped list from the rescan when it is the more complete of the two.
-        if !scanned.skipped.isEmpty { refreshed.skipped = scanned.skipped.map { SkippedFile(path: $0.relPath, reason: $0.reason) } }
+        if !scanned.skipped.isEmpty {
+            refreshed.skipped = scanned.skipped.map { SkippedFile(path: $0.relPath, reason: $0.reason) }
+        }
         return refreshed
     }
 

@@ -299,7 +299,8 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         zoomed: Bool, zoomLock: Bool
     ) -> [PhotoID: Int] {
         let viewportEdge = max(viewport.width, viewport.height)
-        let t2 = viewportEdge > 0
+        let t2 =
+            viewportEdge > 0
             ? max(Self.minimumDisplayEdge, Int(viewportEdge.rounded(.up)))
             : Self.fallbackDisplayEdge
         var full: Set<PhotoID> = []
@@ -385,7 +386,8 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
     /// decode the same photograph twice and call one of them a cache miss.
     var t2Edge: Int {
         let edge = max(viewportPixelSize.width, viewportPixelSize.height)
-        return edge > 0 ? max(Self.minimumDisplayEdge, Int(edge.rounded(.up)))
+        return edge > 0
+            ? max(Self.minimumDisplayEdge, Int(edge.rounded(.up)))
             : Self.fallbackDisplayEdge
     }
 
@@ -536,7 +538,8 @@ final class DecodeEngine: @unchecked Sendable {
     /// shed far batches first, never the current one). The focus window is only the batches the
     /// user can reach, so that is the order the spec asks for.
     private func watchMemoryPressure() {
-        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .global(qos: .utility))
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical], queue: .global(qos: .utility))
         source.setEventHandler { [weak self] in self?.shedToFocus() }
         source.resume()
         pressureSource = source
@@ -606,14 +609,16 @@ final class DecodeEngine: @unchecked Sendable {
         // `countsAsFocusMiss: false` on both: the prefetch *is* the thing that prevents a focus
         // miss, so counting it would make the guarantee impossible to satisfy by construction.
         for id in displayIDs {
-            _ = display(id, minimumLongestEdge: displaySizes[id] ?? 0, url: urls[id],
-                        orientation: orientations[id] ?? 1,
-                        priority: rank[id] ?? 0, fullPreview: fullPreviews[id],
-                        countsAsFocusMiss: false)
+            _ = display(
+                id, minimumLongestEdge: displaySizes[id] ?? 0, url: urls[id],
+                orientation: orientations[id] ?? 1,
+                priority: rank[id] ?? 0, fullPreview: fullPreviews[id],
+                countsAsFocusMiss: false)
         }
         for (position, id) in ids.enumerated() {
-            _ = thumbnail(id, minimumLongestEdge: Double(prefetchPixels), slack: 1, url: urls[id],
-                           priority: position, countsAsFocusMiss: false)
+            _ = thumbnail(
+                id, minimumLongestEdge: Double(prefetchPixels), slack: 1, url: urls[id],
+                priority: position, countsAsFocusMiss: false)
         }
     }
 
@@ -715,8 +720,10 @@ final class DecodeEngine: @unchecked Sendable {
     ) -> CGImage? {
         lock.lock()
         clock &+= 1
-        if var entry = thumbnails[id], Self.satisfies(entry.image, needed: needed, slack: slack,
-                                                       prefetch: Double(prefetchPixels))
+        if var entry = thumbnails[id],
+            Self.satisfies(
+                entry.image, needed: needed, slack: slack,
+                prefetch: Double(prefetchPixels))
         {
             entry.stamp = clock
             thumbnails[id] = entry
@@ -726,9 +733,14 @@ final class DecodeEngine: @unchecked Sendable {
         }
         counters.thumbnailCacheMisses += 1
         if countsAsFocusMiss, focus.contains(id) { counters.focusMisses += 1 }
-        let queued = url.map { enqueueLocked(Job(id: id, url: $0, kind: .thumbnail,
-                                                  maxPixel: max(prefetchPixels, Int(needed.rounded(.up))),
-                                                  priority: priority)) } ?? false
+        let queued =
+            url.map {
+                enqueueLocked(
+                    Job(
+                        id: id, url: $0, kind: .thumbnail,
+                        maxPixel: max(prefetchPixels, Int(needed.rounded(.up))),
+                        priority: priority))
+            } ?? false
         lock.unlock()
         if queued { pump() }
         return nil
@@ -760,9 +772,11 @@ final class DecodeEngine: @unchecked Sendable {
             let bigEnough = entry.pixels >= wanted || entry.image.longestEdge >= Double(wanted)
             entry.stamp = clock
             displays[id] = entry
-            let queued = (!bigEnough && url != nil)
+            let queued =
+                (!bigEnough && url != nil)
                 ? enqueueLocked(
-                    Job(id: id, url: url!, kind: .display, maxPixel: wanted, priority: priority,
+                    Job(
+                        id: id, url: url!, kind: .display, maxPixel: wanted, priority: priority,
                         orientation: orientation, fullPreview: fullPreview))
                 : false
             if bigEnough {
@@ -776,11 +790,13 @@ final class DecodeEngine: @unchecked Sendable {
             return entry.image
         }
         if countsAsFocusMiss, focus.contains(id) { counters.focusMisses += 1 }
-        let queued = url.map {
-            enqueueLocked(
-                Job(id: id, url: $0, kind: .display, maxPixel: wanted, priority: priority,
-                    orientation: orientation, fullPreview: fullPreview))
-        } ?? false
+        let queued =
+            url.map {
+                enqueueLocked(
+                    Job(
+                        id: id, url: $0, kind: .display, maxPixel: wanted, priority: priority,
+                        orientation: orientation, fullPreview: fullPreview))
+            } ?? false
         lock.unlock()
         if queued { pump() }
         return nil
@@ -1074,7 +1090,8 @@ final class DecodeEngine: @unchecked Sendable {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
         guard
             let raw = CGImageSourceCreateThumbnailAtIndex(
-                source, 0, [
+                source, 0,
+                [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceThumbnailMaxPixelSize: max(16, maxPixel),
                     kCGImageSourceCreateThumbnailWithTransform: true,
@@ -1146,7 +1163,8 @@ final class DecodeEngine: @unchecked Sendable {
     /// produce identical pixels, and a test asserts it.
     private static func displayImage(at source: CGImageSource, maxPixel: Int) -> CGImage? {
         CGImageSourceCreateThumbnailAtIndex(
-            source, 0, [
+            source, 0,
+            [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceThumbnailMaxPixelSize: max(16, maxPixel),
                 kCGImageSourceCreateThumbnailWithTransform: false,
@@ -1213,7 +1231,8 @@ final class DecodeEngine: @unchecked Sendable {
         // Transparency is preserved rather than dropped: the formats Firstcut opens are opaque, but
         // a PNG in a mixed folder is not, and a black rectangle where a cut-out PNG used to be
         // would be a worse bug than a few milliseconds of extra decode.
-        let opaque = image.alphaInfo == .none || image.alphaInfo == .noneSkipFirst
+        let opaque =
+            image.alphaInfo == .none || image.alphaInfo == .noneSkipFirst
             || image.alphaInfo == .noneSkipLast
         let alpha = opaque ? CGImageAlphaInfo.noneSkipFirst : CGImageAlphaInfo.premultipliedFirst
         let info = CGBitmapInfo(
@@ -1338,7 +1357,9 @@ final class DecodeEngine: @unchecked Sendable {
         var luminance = [Double](repeating: 0, count: bins)
         for index in 0..<(width * height) {
             let offset = index * 4
-            let r = Int(bytes[offset]), g = Int(bytes[offset + 1]), b = Int(bytes[offset + 2])
+            let r = Int(bytes[offset])
+            let g = Int(bytes[offset + 1])
+            let b = Int(bytes[offset + 2])
             red[r * bins / 256] += 1
             green[g * bins / 256] += 1
             blue[b * bins / 256] += 1
