@@ -81,9 +81,13 @@ Not blocking v0.1.0; an agent can do these.
   toolchain and not the other (the Settings launcher now sends the AppKit action directly).
   `GCC_TREAT_WARNINGS_AS_ERRORS` is deliberately *not* set: it also covers the linker, which warns
   about the locally built Rust library's SDK — nothing to do with code quality.
-- **Pipeline refinements (§7.1, §7.2):** a display-sized (T2) decode per window size instead of the
-  full image scaled by the layer; thumbnails at `.utility`; the embedded-preview vs `CIRAWFilter`
-  quality comparison; the "Exact RAW" (T4) decode; `os_signpost` and a debug HUD.
+- **Pipeline refinements (§7.1, §7.2):** ~~a display-sized (T2) decode per window size~~ done,
+  ~~thumbnails at `.utility`~~ done (thumbnails decode on their own `.utility` queue now; the
+  ranking and the shared cap are unchanged, and the comment says why the cap stays shared),
+  ~~`os_signpost` and a debug HUD~~ done. **Left:** the "Exact RAW" (T4) decode — the setting is
+  plumbed to `FocusRequest.exactRaw` and read nowhere; the design and its one trap (T4 must be a
+  distinct cache *kind*, or RAW pixels get served for a T2 entry) are in §0.5's "Next, in order" —
+  and the embedded-preview vs `CIRAWFilter` comparison, which needs a person to judge the pictures.
 - ~~**Settings in the model but not shown**~~ **Done, all three, and one of them found two bugs.**
   - *Clipping thresholds* reach `ClippingMask` through the viewer's presentation, and the model
     defaults were **wrong for the code that would read them** (1.0/0.0 means every pixel clips), so
@@ -105,9 +109,13 @@ Not blocking v0.1.0; an agent can do these.
     not exist.
 - **Tests that need the photos or a person (§12):** performance baselines, the hold-→ stress test,
   a full manual QA pass, macOS 15 (only 26 is tested).
-- **Contracts** in `docs/contracts/` predate the merge (pipeline-api.md still describes an IOSurface
-  layer). `build.md` and `session-api.md` are corrected for the type/import design (this session);
-  `pipeline-api.md`, `photo-meta.md`, `batching.md` and `app-model.md` are still to be checked.
+- **Contracts** in `docs/contracts/` — **done, all six.** `build.md` and `session-api.md` were
+  corrected for the conversion layer and the type aliases; then `pipeline-api.md` (it described an
+  IOSurface viewer layer, two provider methods and a `PipelineFocus` type that do not exist),
+  `photo-meta.md` (it did not mention `full_preview` — the byte range every display decode reads —
+  and still called `PRVW` full size), `batching.md` (no thresholds, no freeze rule) and
+  `app-model.md` (no `canAct`, no fast path, stale `Tier` mapping). Every claim now carries a
+  file:line, and T1/T4 are recorded as *not implemented* rather than described as if they were.
 - **Performance plan (§7.5):** the research is done; the agent-side items there (CR3 full-size JPEG
   location, force-decoded display-space bitmaps, DCT-scaled T2, first-photo fast path, signposts,
   the `bench` extensions) can be built before the owner measures.
@@ -157,14 +165,27 @@ Not blocking v0.1.0; an agent can do these.
 >
 > **Next, in order:**
 >
-> 1. **Contracts** (§0.3): `pipeline-api.md` still describes an IOSurface layer the app does not use,
->    `photo-meta.md`/`batching.md`/`app-model.md` unchecked. `build.md` and `session-api.md` are done.
-> 2. **Pipeline refinements** (§7.1/§7.2): thumbnails at `.utility`; the "Exact RAW" (T4) decode; the
->    embedded-preview vs `CIRAWFilter` comparison (needs a person to judge the pictures).
+> 1. **"Exact RAW" (T4) decode** — the last agent-side §0.3 pipeline item. `settings.viewer.exactRaw`
+>    reaches `FocusRequest.exactRaw` and the pipeline **reads it nowhere**, so the toggle does
+>    nothing. The design, with the one trap: T4 is a *different cache kind*, not a different size.
+>    `DecodeEngine.Key` is `id + kind` (`ImageProvider.swift`), so add `case exactRaw` to the `Kind`
+>    enum and the cache separation is free — **without** it, RAW pixels could be served for a T2
+>    entry, which is a wrong-picture bug rather than a slow one. Then: `setFocus` marks the *current
+>    photo* as exact-raw when the setting is on (T4 is "on demand", §7.1 — not the whole window, it
+>    is 92 MB a picture); the decode is `CIImage(contentsOf:)` → `CIContext.createCGImage` with the
+>    EXIF orientation applied (`ViewerPresentation.afRects` already has the orientation table to
+>    copy), then **`DecodeEngine.inDisplayLayout`** on the result, because a CI-created image is not
+>    in the BGRA layout the layer needs; and a graceful fall back to the embedded preview for a
+>    format `CIRAWFilter` cannot read (any JPEG), which is a test CI can run without photos.
+>    Test: with the setting on, the current photo's display entry is the RAW's own pixels (different
+>    from the preview, same dimensions), a JPEG folder falls back, and turning it off returns to T2.
+> 2. **Pipeline:** the embedded-preview vs `CIRAWFilter` comparison (§7.2) needs a person to judge
+>    the pictures — the timings can be measured, the "which looks better" cannot.
 > 3. **Speculative T3 after a dwell** (§7.5) — deliberately deferred until the arrow-key measurement
 >    exists, because the measurement is what decides whether it is worth a decode.
 > 4. **The owner's items** in §0.2, unchanged and still first in line for a human: the boundary-F1
->    ground truth, the Game1JENKS re-press decision, the perf numbers, the visual sign-off.
+>    ground truth, the Game1JENKS re-press decision, the perf numbers on the running app, the
+>    visual sign-off against Finder, and the tap secret / `v0.1.0` tag.
 >
 > **How to run things quickly** (the full suite is ~15 min of builds; these are seconds):
 > - Rust, one area: `cargo test -p firstcut-core --lib session::` (or `meta::`, `batch::`).
