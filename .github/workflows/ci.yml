@@ -95,8 +95,15 @@ jobs:
           key: ${{ runner.os }}-dd-${{ hashFiles('project.yml', 'core/firstcut-core/src/**', 'App/**') }}
           restore-keys: ${{ runner.os }}-dd-
 
-      - name: Install xcodegen
-        run: brew install xcodegen
+      - name: Install xcodegen and swift-format
+        # swift-format was **not** installed on this runner, so the advisory lint had been exiting
+        # 127 (command not found) behind `continue-on-error` and reporting nothing. It is Homebrew's
+        # build for the same reason the tree was formatted with the local one: the toolchain-bundled
+        # `xcrun swift format` is a dev build whose rules need not agree with `.swift-format`'s.
+        run: |
+          brew install xcodegen
+          brew install swift-format
+          swift-format --version
 
       - name: Build the Rust core and generate the Swift bindings
         run: ./scripts/build-core.sh
@@ -132,7 +139,8 @@ jobs:
 
       - name: swift-format lint
         # Enforced since the tree was formatted (2291435): the lint is --strict, so any file that
-        # has not been through `swift-format format` fails the build rather than being reported.
+        # has not been through `swift-format format` fails the build rather than being reported. It
+        # reads `.swift-format` from the repository root, so it uses the project's own config.
         run: swift-format lint --strict --recursive App/Sources App/Tests
 
       - name: Upload the log on failure
