@@ -468,6 +468,103 @@ pub fn scan_folder(folder: &Path) -> Result<ScanResult, ScanError> {
     Ok(ScanResult { photos, skipped })
 }
 
+/// The first photograph of a folder, from **one** header read.
+///
+/// This is the first half of todo.md §7.3's "folder open → first photo on screen < 1 s": the app
+/// can put a photograph on screen before it has read the other 2,879 headers. It is the same
+/// [`meta_for`] call the full scan makes, on the same candidate list, so the photograph it returns
+/// is byte-for-byte the one the full scan will return for that file — which is what lets the app
+/// show it now and replace it with the properly *ordered* first photo later without the picture
+/// changing underneath.
+///
+/// `candidates` is the folder's photo files in `rel_path` order, so the choice is deterministic.
+/// It is **not** the capture-ordered first photograph, and cannot be: capture time is what orders a
+/// shoot (§2), and reading it is what the scan is for. The app treats this as a placeholder frame,
+/// not as the shoot's first frame.
+pub fn read_photo(folder: &Path, rel_path: &str) -> Option<PhotoMeta> {
+    let root = std::fs::canonicalize(folder).ok()?;
+    let mut candidates: Vec<Candidate> = Vec::new();
+    collect(&root, &root, &mut candidates).ok()?;
+    let file = candidates
+        .iter()
+        .find(|c| c.rel_path == rel_path)
+        .or_else(|| {
+            candidates
+                .iter()
+                .find(|c| group_key(&c.rel_path) == group_key(rel_path))
+        })?;
+    // A sidecar is not a photograph of its own, so the primary is chosen the same way `scan_folder`
+    // chooses it: the RAW, or the first member of the group in path order. `candidates` is in path
+    // order (see `collect`), so the first RAW in the group wins.
+    let key = group_key(&file.rel_path);
+    let mut primary = file;
+    for candidate in &candidates {
+        if group_key(&candidate.rel_path) != key {
+            continue;
+        }
+        if matches!(candidate.kind, FileKind::Raw(_)) && !matches!(primary.kind, FileKind::Raw(_)) {
+            primary = candidate;
+        }
+    }
+    let mut companions: Vec<String> = candidates
+        .iter()
+        .filter(|c| group_key(&c.rel_path) == key)
+        .filter(|c| c.rel_path != primary.rel_path)
+        .filter(|c| !matches!(c.kind, FileKind::Raw(_)))
+        .map(|c| c.rel_path.clone())
+        .collect();
+    for sidecar in [
+        crate::xmp::sidecar_path(&primary.rel_path),
+        crate::xmp::legacy_sidecar_path(&primary.rel_path),
+    ] {
+        let sidecar = sidecar.to_string_lossy().into_owned();
+        if root.join(&sidecar).is_file() && !companions.contains(&sidecar) {
+            companions.push(sidecar);
+        }
+    }
+    companions.sort();
+    meta_for(
+        &primary.rel_path,
+        &primary.path,
+        primary.kind,
+        primary.size,
+        companions,
+        primary.device,
+        primary.ino,
+    )
+    .ok()
+}
+
+/// The first photograph a folder *would* open on, by name, with no header read at all.
+///
+/// The cheap half of the fast path: a directory listing is enough, and a name is enough to ask for
+/// the one header that matters. `None` for a folder with no photo files, so the caller can leave the
+/// normal open path to report the real error.
+pub fn first_photo_name(folder: &Path) -> Option<String> {
+    let root = std::fs::canonicalize(folder).ok()?;
+    if !root.is_dir() {
+        return None;
+    }
+    let mut candidates: Vec<Candidate> = Vec::new();
+    collect(&root, &root, &mut candidates).ok()?;
+    // The RAW, so a shoot that has both a RAW and its JPEG companion opens on the RAW — the same
+    // primary `scan_folder` picks, and therefore the same file the full scan will hand the app.
+    let mut groups: std::collections::BTreeMap<String, &Candidate> = Default::default();
+    for candidate in &candidates {
+        groups
+            .entry(group_key(&candidate.rel_path))
+            .and_modify(|held| {
+                if matches!(candidate.kind, FileKind::Raw(_))
+                    && !matches!(held.kind, FileKind::Raw(_))
+                {
+                    *held = candidate;
+                }
+            })
+            .or_insert(candidate);
+    }
+    groups.values().map(|c| c.rel_path.clone()).min()
+}
+
 /// Maps `work` through `f` on a few threads and returns the results in input order.
 ///
 /// Header reads are small and mostly waiting on the disk, so a handful of threads is enough; more
@@ -809,6 +906,57 @@ mod tests {
             };
             assert_eq!(names(&first), names(&again));
         }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The first-photo fast path (todo.md §7.3, "folder open → first photo < 1 s") has to make the
+    /// *same choices* as the full scan, or the app would name one file and then be handed another.
+    /// `tests/cr3_exiftool.rs` proves the two return identical metadata on real photographs; this
+    /// proves the naming and the grouping, which need no parseable file to be meaningful.
+    #[test]
+    fn the_fast_path_names_the_file_the_scan_would_pick() {
+        let dir = std::env::temp_dir().join(format!("firstcut-fast-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Deliberately unreadable bytes: `read_photo` returns None for these and the scan reports
+        // them as skipped, which is the case the app has to survive either way.
+        for name in ["IMG_0002.jpg", "IMG_0001.jpg", "IMG_0003.jpg"] {
+            std::fs::write(dir.join(name), b"not a jpeg").unwrap();
+        }
+        // A RAW beside its JPEG, and a sidecar beside that: the group, so the primary is the RAW.
+        std::fs::write(dir.join("IMG_0000.CR3"), b"not a cr3").unwrap();
+        std::fs::write(dir.join("IMG_0000.xmp"), b"<xmp/>").unwrap();
+
+        let scan = scan_folder(&dir).unwrap();
+
+        // The lowest `rel_path` in the lowest group, and a RAW wins over its JPEG companion — which
+        // is how `scan_folder` picks a primary, so the app can name a file and read that one.
+        let name = first_photo_name(&dir).expect("a folder of photos has a first photo by name");
+        assert_eq!(
+            name, "IMG_0000.CR3",
+            "the RAW is the primary, as in scan_folder"
+        );
+
+        // The JPEG is *not* a photograph of its own here, so the scan reports the RAW (and not the
+        // JPEG, which is a companion) as skipped: one report for the group, not two.
+        let skipped: Vec<&str> = scan.skipped.iter().map(|s| s.rel_path.as_str()).collect();
+        assert_eq!(
+            skipped,
+            vec!["IMG_0000.CR3"],
+            "one report per group: {skipped:?}"
+        );
+
+        // Unreadable bytes read as None from both, rather than one of them inventing metadata.
+        assert!(read_photo(&dir, &name).is_none());
+        assert!(read_photo(&dir, "IMG_9999.jpg").is_none());
+        assert!(first_photo_name(&dir.join("does-not-exist")).is_none());
+
+        // A folder with nothing in it has no first photograph, so the app falls back to the normal
+        // open and reports the real error rather than showing an empty viewer.
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert_eq!(first_photo_name(&empty), None);
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

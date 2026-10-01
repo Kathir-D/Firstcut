@@ -149,18 +149,15 @@ Not blocking v0.1.0; an agent can do these.
 - **Next, in order:**
   1. ~~Wire the keep threshold from the app.~~ Done above.
   2. ~~Check the cache on a folder change.~~ Done above.
-  3. §7.5 work items: the CR3 full-size JPEG byte range next to `PRVW` (and the wrong "full-size"
-     doc comment on `PRVW` in `meta/cr3.rs`), `firstcut bench --folder`, `os_signpost` names. Then
-     run `firstcut bench --folder` **on the photos** and write the rows into
-     `docs/qa/perf-baselines.md` — the measurement earlier sessions could not make. All of this from
-     the **CLI in a shell**, never a GUI test host, so nothing raises a `~/Documents` consent prompt
-     with nobody there to answer it.
-  4. §7.5: one shared 256 px decode for the filmstrip and the visual signature
-     (`VisualSigWorker` decodes the file URL itself, so every photo is decoded twice today), and
-     the display image decoded from the JPEG byte range rather than the CR3 URL.
-  5. Known and left from the bug review: sidecar ratings are imported only when a folder's session
-     is first created, so a Lightroom-rated second card copied into an open shoot is not imported; a
-     different file saved under a known name (same path) inherits that name's rating.
+  3. ~~§7.5 work items~~ Done: the `PRVW` comment, the full-size JPEG byte range, `firstcut bench
+     --folder`, `os_signpost` names, the shared 256 px decode, display decodes from the byte range —
+     and the rows are measured in `docs/qa/perf-baselines.md`. Still open in bench: the **DB insert
+     phase** (needs a sessions directory and the `Session`, not just the scan).
+  4. ~~The first-photo fast path.~~ Done: one header read puts a photograph on screen while the
+     scan runs behind it (§7.5 work items, above).
+  5. Sidecar ratings are imported only when a folder's session is first created, so a
+     Lightroom-rated second card copied into an open shoot is not imported; a different file saved
+     under a known name (same path) inherits that name's rating.
   6. UI polish from screenshots the app can now be launched to take.
 - **Fixed — the ~/Documents TCC hang, and the timeout tool that made it findable.** `xcodebuild test`
   on this machine was hanging indefinitely (no prompt, no failure, no output), which is the worst
@@ -681,8 +678,16 @@ and their rows in that file are still empty.
       cost ~850 ms per decode. Every decode now goes through `CreateThumbnailAtIndex` (8-bit, DCT
       scaled) and `inDisplayLayout` (one 1:1 redraw into `noneSkipFirst | byteOrder32Little` in the
       device space, skipped when the decode is already there).
-- [ ] App: first-photo fast path (header + `PRVW` of the resume photo before the full scan).
-      Needs `AppModel.swift`.
+- [x] App: first-photo fast path (header + `PRVW` of the resume photo before the full scan).
+      **Done.** `first_photo_name` / `read_photo` in the core (a directory listing names a file, one
+      header read parses it — the same `meta_for` the scan uses, so the photograph is byte-for-byte
+      what the scan will return, asserted on the real photos in `tests/cr3_exiftool.rs`), and
+      `AppModel.startFastPath` shows that one frame in `.culling` while the 2,880-header scan runs
+      behind it. The frame is display-only (`canAct` false): every mutating command refuses rather
+      than writing through the *previous* folder's backend, it is not recorded as a recent, and the
+      watcher for the old folder cannot rescan into it. A failed open drops it and puts the shoot
+      that was open back; a superseded open takes it down before the new one shows its own. Eight
+      tests; the pipeline keeps the decode (same folder + id), so the real open costs nothing.
 - [x] App: one shared 256 px decode for the filmstrip and the visual signature. **Done.** The pass
       asked the pipeline's cache first and published whatever it decoded, so each photograph is
       decoded once whichever pass gets there first, and the filmstrip gets a free thumbnail for every

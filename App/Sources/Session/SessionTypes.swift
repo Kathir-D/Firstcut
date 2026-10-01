@@ -123,6 +123,16 @@ public enum Phase: Hashable, Sendable {
     case loading(LoadProgress)
     case culling
     case finishing
+
+    /// Whether the folder is still being read. Used by the first-photo fast path
+    /// (`AppModel.startFastPath`) to tell "the open I belong to is still running" from "a different
+    /// folder is opening now", which is the only thing that makes the frame worth showing.
+    public var isLoading: Bool {
+        switch self {
+        case .loading: true
+        case .welcome, .culling, .finishing: false
+        }
+    }
 }
 
 /// The Finish sheet's state machine (todo.md §9.7). Logic only — the sheet itself is ui's.

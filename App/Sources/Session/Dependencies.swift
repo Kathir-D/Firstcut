@@ -21,6 +21,16 @@ public struct Dependencies {
     /// When set, `AppModel.open(folder:)` opens through this instead, off the main thread, showing
     /// the loading screen meanwhile. nil (the tests, previews) keeps the synchronous factory.
     public var asyncSessionFactory: (@MainActor (URL) async throws -> any SessionBackend)?
+    /// Reads **one** photograph's metadata from a folder, without reading the rest — the core's
+    /// `first_photo_name` + `read_photo`. nil wherever there are no real files to read (tests,
+    /// previews), and the open path is then exactly as slow as it was.
+    ///
+    /// This is what todo.md §7.3's "folder open → first photo on screen < 1 s" is built on: a
+    /// directory listing plus one header read, so a photograph is on screen while the other 2,879
+    /// headers are still being read. The photo it names is the *first by file name*, not the first in
+    /// capture order — capture time is what orders a shoot (§2) and reading it is what the scan is
+    /// for — so it is a first frame, not the shoot's first frame. See `AppModel.showProvisional`.
+    public var firstPhoto: (@Sendable (URL) -> PhotoMeta?)?
 
     public init(
         backend: (any SessionBackend)? = nil,
@@ -32,7 +42,8 @@ public struct Dependencies {
         sessionFactory: @escaping (URL) throws -> any SessionBackend = { url in
             MockSession(data: try MockSession.dataForFolder(url))
         },
-        asyncSessionFactory: (@MainActor (URL) async throws -> any SessionBackend)? = nil
+        asyncSessionFactory: (@MainActor (URL) async throws -> any SessionBackend)? = nil,
+        firstPhoto: (@Sendable (URL) -> PhotoMeta?)? = nil
     ) {
         self.backend = backend
         self.images = images
@@ -42,6 +53,7 @@ public struct Dependencies {
         self.keymapStore = keymapStore
         self.sessionFactory = sessionFactory
         self.asyncSessionFactory = asyncSessionFactory
+        self.firstPhoto = firstPhoto
     }
 
     /// Everything on disk: real Application Support, the keymap shipped in the bundle, the real
@@ -65,7 +77,8 @@ public struct Dependencies {
             settingsStore: settingsStore,
             keymapStore: keymapStore,
             sessionFactory: SessionFactory.live(),
-            asyncSessionFactory: SessionFactory.liveAsync())
+            asyncSessionFactory: SessionFactory.liveAsync(),
+            firstPhoto: CoreFirstPhoto.read)
     }
 
     /// Fixtures (or a synthetic shoot) and a scratch directory, so a preview can't write over the

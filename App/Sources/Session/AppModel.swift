@@ -70,7 +70,21 @@ public final class AppModel: SessionListener, KeyRouterSource {
     private let backendBox = SessionBox()
     private let sessionFactory: (URL) throws -> any SessionBackend
     private let asyncSessionFactory: (@MainActor (URL) async throws -> any SessionBackend)?
+    /// One photograph from a folder, for the first-photo fast path. nil where there are no real
+    /// files to read; see `Dependencies.firstPhoto`.
+    private let firstPhoto: (@Sendable (URL) -> PhotoMeta?)?
     private var openTask: Task<Void, Never>?
+    /// todo.md §7.3's "folder open → first photo on screen < 1 s": the fast path's read of one
+    /// header, cancelled when the open it belongs to is superseded.
+    private var fastPathTask: Task<Void, Never>?
+    /// True while the one photograph on screen came from the fast path rather than from a session.
+    ///
+    /// The provisional frame is *display-only*, and this flag is what makes that structural rather
+    /// than a matter of remembering: a rating, an undo or a Finish here would be written through the
+    /// **previous** session's backend, because the session for this folder does not exist yet. So
+    /// every command that mutates refuses while it is set, and the toolbar says the folder is still
+    /// being read.
+    private var isProvisional = false
     private let settingsStore: SettingsStore
     private let recentsStore: RecentFoldersStore
     private var keymapStore: KeymapStore
@@ -102,6 +116,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         images = dependencies.images
         sessionFactory = dependencies.sessionFactory
         asyncSessionFactory = dependencies.asyncSessionFactory
+        firstPhoto = dependencies.firstPhoto
         settings = dependencies.settings
         settingsStore = dependencies.settingsStore
         recentsStore = RecentFoldersStore(directory: dependencies.settingsStore.directory)
@@ -214,7 +229,11 @@ public final class AppModel: SessionListener, KeyRouterSource {
         backend.flush()
         if let asyncSessionFactory {
             openTask?.cancel()
+            // A provisional frame for a folder the user has already moved on from. Left up, the next
+            // folder would be read behind a photograph from the last one, under this folder's name.
+            dropProvisionalFrame()
             phase = .loading(LoadProgress(title: "Opening \(url.lastPathComponent)", fraction: 0))
+            startFastPath(url)
             openTask = Task { [weak self] in
                 do {
                     let session = try await asyncSessionFactory(url)
@@ -228,6 +247,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
                     // No photograph is coming, so the span must not stay open across the rest of
                     // the session: it would report the time until the next folder's first frame.
                     self.endFrameInterval()
+                    self.dropProvisionalFrame()
                     self.lastError = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
                     // Back to the shoot that was open, if there was one, rather than to Welcome.
                     self.phase = self.allPhotos.isEmpty ? .welcome : Self.restorable(previous)
@@ -253,6 +273,12 @@ public final class AppModel: SessionListener, KeyRouterSource {
     }
 
     public func open(_ session: any SessionBackend, folderName: String? = nil) {
+        fastPathTask?.cancel()
+        fastPathTask = nil
+        isProvisional = false
+        // The real session has arrived, so whatever the provisional frame was standing in front of is
+        // gone for good: this open either succeeded or the frame is about to be dropped.
+        suspendedShoot = nil
         let data = session.data
         backend.listener = nil
         backendBox.session = session
@@ -344,7 +370,13 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// (REV-68), then rebuilds the model around what is there now while keeping the user on the
     /// photo they were looking at. Cheap when nothing that matters changed.
     public func folderDidChange() {
-        guard phase == .culling || phase == .finishing, let fresh = backend.rescan() else { return }
+        // `!isProvisional`, although a provisional frame is up in `.culling`: the watcher still
+        // belongs to the *previous* folder, so its event would rebuild this screen around that
+        // folder's files while the frame says it is the one being read. The folder being opened
+        // rescans for itself when its session arrives, so dropping the event loses nothing.
+        guard phase == .culling || phase == .finishing, !isProvisional,
+            let fresh = backend.rescan()
+        else { return }
         let selected = currentPhoto?.id
         let before = Set(allPhotos.map(\.id))
         let after = Set(fresh.photos.map(\.id))
@@ -388,7 +420,11 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// it closes and when the app quits, which is enough for "412 of 708 rated" on the Welcome
     /// screen without writing a file on every keystroke.
     public func recordRecent() {
-        guard phase == .culling || phase == .finishing, !allPhotos.isEmpty else { return }
+        // A provisional frame is one photo of a folder that has not been read yet: recording it
+        // would put "1 of 1 rated" in the Welcome list for a 708-photo shoot.
+        guard !isProvisional, phase == .culling || phase == .finishing, !allPhotos.isEmpty else {
+            return
+        }
         let folder = URL(fileURLWithPath: backend.data.folder, isDirectory: true)
         guard !folder.path.isEmpty else { return }
         recents = RecentFoldersStore.recording(
@@ -427,8 +463,122 @@ public final class AppModel: SessionListener, KeyRouterSource {
         flushSettings()
     }
 
+    /// The first-photo fast path: one header read and one decode, in parallel with the full scan.
+    ///
+    /// §7.3's "folder open → first photo < 1 s" is not achievable by waiting for the scan — a cold
+    /// 2,880-file shoot is over a second of header reads before anything is known. So the open does
+    /// two cheap things first (see `CoreFirstPhoto`): name a file from the directory listing, read
+    /// that one header, and show it. The scan, the batching and the T2 prefetch then run behind it.
+    ///
+    /// The frame is provisional and says so: `isProvisional` makes every mutating command a no-op
+    /// until the session arrives, because the backend those commands would go through still belongs
+    /// to the *previous* folder. The photograph is the first by **file name**; when the scan lands
+    /// the app moves to the first in **capture order**, which is the same file for every normal card
+    /// dump and a different one after a `IMG_9999 → IMG_0001` rollover — the price of a first frame
+    /// that costs two small reads instead of 2,880.
+    private func startFastPath(_ url: URL) {
+        fastPathTask?.cancel()
+        guard let firstPhoto else { return }
+        fastPathTask = Task { [weak self] in
+            let meta = await Task.detached(priority: .userInitiated) { firstPhoto(url) }.value
+            guard !Task.isCancelled, let self, let meta else { return }
+            // The open it belongs to may have been superseded while the read was running.
+            guard self.phase.isLoading else { return }
+            self.showProvisionalFrame(meta, folder: url)
+        }
+    }
+
+    /// One photograph on screen, with nothing else the user can act on yet.
+    private func showProvisionalFrame(_ meta: PhotoMeta, folder: URL) {
+        // Borrowed, not kept: a folder that fails to open has to put the shoot that *was* open back
+        // on screen, which is what `Phase.restorable` does for the phase alone. One copy of the
+        // shoot's value-type state, taken once per open, is what buys that.
+        suspendedShoot = ShootState(
+            photos: allPhotos, batches: batches, photoIndex: photoIndex,
+            batchIndexByID: batchIndexByID, currentBatchIndex: currentBatchIndex,
+            currentPhotoIndex: currentPhotoIndex, folderName: folderName, folderURL: folderURL)
+        let photo = PhotoVM(
+            meta: meta, rating: Rating(), mode: ratingMode, keepThreshold: settings.keepThreshold)
+        allPhotos = [photo]
+        batches = [
+            BatchVM(
+                core: Batch(id: Self.provisionalBatchID, index: 0, photoIds: [meta.id], provisional: true),
+                visited: false,
+                range: 0..<1)
+        ]
+        currentBatchIndex = 0
+        currentPhotoIndex = 0
+        folderName = folder.lastPathComponent
+        folderURL = folder
+        // The same folder and the same `PhotoID` the scan will produce, so the reconcile in
+        // `ImageProvider.open` keeps this decode instead of throwing it away.
+        if let provider = images as? ImageProvider {
+            provider.open(folder: folder, photos: [meta])
+        }
+        recomputeCounts()
+        isProvisional = true
+        phase = .culling
+        updatePipelineFocus()
+    }
+
+    /// Puts away a provisional frame that the real open did not replace: a folder that failed, or a
+    /// shoot the user closed while it was still being read. The shoot that was open before it, if
+    /// there was one, comes back — a failed open has always left it alone.
+    private func dropProvisionalFrame() {
+        fastPathTask?.cancel()
+        fastPathTask = nil
+        guard isProvisional else { return }
+        isProvisional = false
+        if let saved = suspendedShoot {
+            suspendedShoot = nil
+            allPhotos = saved.photos
+            batches = saved.batches
+            photoIndex = saved.photoIndex
+            batchIndexByID = saved.batchIndexByID
+            currentBatchIndex = saved.currentBatchIndex
+            currentPhotoIndex = saved.currentPhotoIndex
+            folderName = saved.folderName
+            folderURL = saved.folderURL
+            recomputeCounts()
+        } else {
+            allPhotos = []
+            batches = []
+            photoIndex = [:]
+            batchIndexByID = [:]
+            currentBatchIndex = 0
+            currentPhotoIndex = 0
+            folderName = ""
+            folderURL = nil
+        }
+    }
+
+    /// Whether the user can act on the shoot. False for a provisional frame (see `isProvisional`).
+    public var canAct: Bool { phase == .culling && !isProvisional }
+
+    /// A batch id the fast path's frame cannot collide with. The real scan's batch ids come from the
+    /// core, so any value outside the space it uses is safe; `UInt64.max` is the largest one it would
+    /// not hand out for a first batch.
+    static let provisionalBatchID = BatchID.max
+
+    /// The model state a provisional frame replaced, kept so `dropProvisionalFrame` can put it back.
+    /// All value types, so a copy is one retain per element and no aliasing to reason about.
+    private struct ShootState {
+        var photos: [PhotoVM]
+        var batches: [BatchVM]
+        var photoIndex: [PhotoID: Int]
+        var batchIndexByID: [BatchID: Int]
+        var currentBatchIndex: Int
+        var currentPhotoIndex: Int
+        var folderName: String
+        var folderURL: URL?
+    }
+
+    /// The shoot a provisional frame is standing in front of, if one was open.
+    private var suspendedShoot: ShootState?
+
     public func closeSession() {
         endFrameInterval()
+        dropProvisionalFrame()
         folderWatcher?.stop()
         folderWatcher = nil
         visualSigWorker.cancel()
@@ -734,7 +884,10 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// only rating entry point takes the *current* photo, and `currentPhoto` is always inside
     /// `currentBatch`. There is no API that can rate a photo in another batch.
     public func rateCurrent(_ mutate: (inout Rating) -> Void) {
-        guard phase == .culling, currentBatch != nil, let photo = currentPhoto else { return }
+        // `canAct`, not `phase == .culling`: while the first-photo fast path's frame is on screen the
+        // backend still belongs to the *previous* folder, so a rating written now would land in the
+        // wrong shoot's database and sidecar.
+        guard canAct, currentBatch != nil, let photo = currentPhoto else { return }
         let updated = RatingRules.applying(
             to: photo.rating, mode: ratingMode, keepThreshold: settings.keepThreshold, mutate)
         guard updated != photo.rating else { return }
@@ -776,11 +929,13 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// Undo navigates to the batch and photo the change was made in, then reverts it, so the "only
     /// rate in the current batch" rule still holds visibly (task.md §6.3).
     public func undo() {
+        guard canAct else { return }
         guard let change = backend.undo() else { return }
         apply(change: change, using: change.before)
     }
 
     public func redo() {
+        guard canAct else { return }
         guard let change = backend.redo() else { return }
         apply(change: change, using: change.after)
     }
@@ -927,7 +1082,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
     // MARK: - Finish Cull
 
     public func startFinish() {
-        guard phase == .culling, !batches.isEmpty else { return }
+        guard canAct, !batches.isEmpty else { return }
         finish = .summary(summary)
     }
 

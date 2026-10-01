@@ -470,6 +470,78 @@ fn a_whole_shoot_parses_and_orders_without_a_single_skip() {
     }
 }
 
+/// The first-photo fast path returns the *same photograph* the full scan returns.
+///
+/// todo.md §7.3's "folder open → first photo on screen < 1 s" is built on this: the app names one
+/// file from a directory listing, reads that one header, and shows it while the other 2,879 are
+/// still being read. If the two paths disagreed by anything the app would see — the id, the
+/// orientation, the full-preview byte range above all — it would show one picture and then replace
+/// it with a different one for the same file, which is the kind of flicker that reads as a bug in
+/// the app rather than in the fast path.
+#[test]
+fn the_fast_path_agrees_with_the_full_scan_on_a_real_shoot() {
+    let Some(root) = photos_root() else {
+        println!(
+            "skipping: no test photos. Set FIRSTCUT_TEST_PHOTOS or create ~/Documents/testing."
+        );
+        return;
+    };
+    let game = GAMES[0];
+    let folder = root.join(game);
+    let Some(name) = firstcut_core::meta::first_photo_name(&folder) else {
+        panic!("{game} has no photographs, so the fast path has nothing to name");
+    };
+    let scan = firstcut_core::meta::scan_folder(&folder).expect("the whole shoot scans");
+    let scanned = scan
+        .photos
+        .iter()
+        .find(|p| p.rel_path == name)
+        .unwrap_or_else(|| {
+            panic!(
+                "{game}: the fast path named {name}, which the scan does not report as a photograph \
+                 ({} skipped: {:?})",
+                scan.skipped.len(),
+                scan.skipped
+                    .iter()
+                    .map(|s| &s.rel_path)
+                    .collect::<Vec<_>>()
+            )
+        });
+    let fast = firstcut_core::meta::read_photo(&folder, &name)
+        .unwrap_or_else(|| panic!("{game}/{name} did not parse through the fast path"));
+
+    assert_eq!(fast.id, scanned.id, "the id is a hash of the file name");
+    assert_eq!(fast.rel_path, scanned.rel_path);
+    assert_eq!(fast.orientation, scanned.orientation);
+    assert_eq!(fast.width, scanned.width);
+    assert_eq!(fast.height, scanned.height);
+    assert_eq!(
+        fast.companions, scanned.companions,
+        "and its sidecar travels with it"
+    );
+    assert_eq!(
+        fast.full_preview, scanned.full_preview,
+        "the display decode's byte range has to be the same, or the picture changes underneath"
+    );
+    assert_eq!(fast.preview, scanned.preview);
+    assert_eq!(fast.file_size, scanned.file_size);
+    assert_eq!(
+        fast.capture_time, scanned.capture_time,
+        "and the capture time, which is what orders a shoot"
+    );
+
+    // The other direction, over a stride of the shoot: any file the app might name has to read the
+    // same way through the one-file path as through the batched one.
+    let stride = (scan.photos.len() / 20).max(1);
+    for photo in scan.photos.iter().step_by(stride) {
+        let fast = firstcut_core::meta::read_photo(&folder, &photo.rel_path)
+            .unwrap_or_else(|| panic!("{} did not parse through the fast path", photo.rel_path));
+        assert_eq!(fast.id, photo.id);
+        assert_eq!(fast.full_preview, photo.full_preview);
+        assert_eq!(fast.companions, photo.companions);
+    }
+}
+
 /// The three JPEGs a CR3 carries, and the fact that keeps being got wrong: `PRVW` is **not** the
 /// full-size image. todo.md §7.5 got this from the CR3 format description and then had to measure
 /// it, so this asserts the measurement: `THMB` 160×120, `PRVW` 1620×1080, the first `trak`

@@ -376,6 +376,29 @@ pub fn scan_folder(path: String) -> Result<FfiScanResult, FfiError> {
         })
 }
 
+/// The first photograph of a folder by name, without reading any header: Swift
+/// `firstPhotoName(path:)`.
+///
+/// todo.md §7.3's "folder open → first photo on screen < 1 s" is a two-step fast path: a directory
+/// listing names the file, then one header read and one decode put it on screen, all while the full
+/// scan reads the other 2,879 headers. Returns `None` for a folder with no photo files, so the
+/// caller falls back to the normal open and reports the real error.
+#[uniffi::export]
+pub fn first_photo_name(path: String) -> Option<String> {
+    crate::meta::first_photo_name(std::path::Path::new(&path))
+}
+
+/// One photograph's metadata, read with a single header read: Swift
+/// `readPhoto(folder:relPath:)`.
+///
+/// The same [`crate::meta::read_photo`] the full scan would have used for that file, so the picture
+/// the app shows immediately is the picture the scan returns later. `None` when the file is not a
+/// photo, is gone, or does not parse — the caller shows nothing and waits for the scan.
+#[uniffi::export]
+pub fn read_photo(folder: String, rel_path: String) -> Option<FfiPhotoMeta> {
+    crate::meta::read_photo(std::path::Path::new(&folder), &rel_path).map(FfiPhotoMeta::from)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // core-store exports (docs/contracts/session-api.md)
 
