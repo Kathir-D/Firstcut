@@ -58,7 +58,18 @@ private struct SettingsLaunchOpener: View {
     Color.clear.task {
       guard LaunchOptions.opensSettings else { return }
       try? await Task.sleep(for: .seconds(1))
-      openSettings()
+      do {
+        try openSettings()
+      } catch {
+        // The environment action has refused on some OS builds (it errored silently on macOS 27,
+        // leaving the screenshot workflow without a Settings window). The AppKit action the
+        // Settings menu item itself sends is the same thing and does not depend on the SwiftUI
+        // action's bookkeeping; the older `showPreferencesWindow:` spelling covers macOS 13.
+        NSLog("Firstcut: openSettings() failed at launch (\(error)); falling back to AppKit")
+        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+          NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        }
+      }
     }
   }
 }

@@ -60,6 +60,14 @@ protocol CullViewState: AnyObject {
   func forgetRecent(_ folder: RecentFolder)
 }
 
+extension CullViewState {
+  /// The model behind the state, when there is one. The viewer reports presented frames and its
+  /// viewport size to it, so a pane must resolve this from the *active* state rather than from
+  /// whatever the environment was built with. nil for the stand-ins, which have no pipeline to
+  /// report to.
+  var activeModel: AppModel? { nil }
+}
+
 /// A photo as the views consume it. REV-53 and REV-69: `tier` and `isKeep` are **values the model
 /// supplies**, never derived here. The rating-mode mapping is core-store's single pure function
 /// (session-api.md, REV-69) and app-logic's job to call; a view that recomputed it from

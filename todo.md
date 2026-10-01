@@ -167,7 +167,27 @@ Not blocking v0.1.0; an agent can do these.
      from a card, a parser that missed the shutter count) keeps the rating — destroying a rating
      on a guess is worse than lending one on a coincidence. Five tests, each verified by mutation
      to fail when its half of the fix is undone.
-  6. UI polish from screenshots the app can now be launched to take.
+  6. **Screenshot pass done, and it found two real bugs** (the loupe rendered flat black in the mock
+     shoot, and `-FirstcutSettings 1` opened nothing):
+     - **The viewer bound the wrong image source.** `AppEnvironment`'s host factory captured the
+       real `ImageProvider` at registration, so after the mock shoot swapped the whole cull state
+       (whose source is synthetic) the viewer still held a provider that had never been given a
+       folder — every lookup nil, a black loupe, while the filmstrip read the state and drew its
+       thumbnails. The factory now resolves **`state.images` and `state.activeModel` when a pane
+       is created** (`CullViewState.activeModel`, new seam, nil for the preview stand-in), so a
+       `use(_:)` swap is honoured and the panes report frames/viewport to the model on screen.
+       Verified by pixel analysis of a `screencapture` before and after: the viewer region went
+       from one flat colour to content. The CI Screenshots workflow benefits directly — its loupe
+       captures were black.
+     - **`-FirstcutSettings 1` opened nothing**: `openSettings()` threw silently on macOS 27
+       (`try?` swallowed it), so the screenshot workflow had no Settings screen. It now reports
+       the error and falls back to the AppKit action the Settings menu item itself sends
+       (`showSettingsWindow:`, then the macOS 13 spelling) — verified: the General window opens.
+     - Every screen was then launched and checked (pixel statistics — the agent cannot see, so
+       this is a structural pass): loupe, grid, compare2/4, Finish sheet, Settings, Welcome all
+       render content; no blank or one-colour region remains except where one belongs.
+     - What is still the owner's: the *look* — spacing, text truncation, Finder-likeness (§0.2
+       item 1). Those need eyes.
 - **Fixed — the ~/Documents TCC hang, and the timeout tool that made it findable.** `xcodebuild test`
   on this machine was hanging indefinitely (no prompt, no failure, no output), which is the worst
   failure mode there is. Causes, all of them now gone:

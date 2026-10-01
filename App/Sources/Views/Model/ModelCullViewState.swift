@@ -46,6 +46,10 @@ final class ModelCullViewState: CullViewState {
 
   var folderName: String { model.folderDisplayName }
 
+  /// The model this state wraps (`CullViewState.activeModel`). Overridden rather than defaulted
+  /// so a viewer pane created after a `use(_:)` swap reports to the model that is on screen.
+  var activeModel: AppModel? { model }
+
   var batches: [CullBatch] {
     model.batches.map {
       CullBatch(

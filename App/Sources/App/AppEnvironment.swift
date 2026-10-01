@@ -89,15 +89,28 @@ final class AppEnvironment {
     // empty and drew "Viewer layer pending from the pipeline agent" over every photo. It is
     // unconditional: a test that wants a different host registers its own, and `register` is
     // last-wins.
-    PhotoViewerHostView.register { [images, model] _, _ in
-      let host = CGImageViewerHost(images: images)
+    //
+    // Both the image source and the model are resolved from the **active** state when a pane is
+    // created, not captured from this environment's own provider here. The mock shoot
+    // (`-FirstcutMockShoot`, previews, the Screenshots workflow) swaps the whole state for one
+    // whose source is synthetic, and a viewer still holding the real `ImageProvider` — which the
+    // mock never gave a folder — answered nil for every photo and rendered black, while the
+    // filmstrip, which reads the state, drew its thumbnails quite happily.
+    PhotoViewerHostView.register { [weak self] _, _ in
+      guard let self else {
+        preconditionFailure("the environment outlives every viewer pane")
+      }
+      let state = self.state
+      let host = CGImageViewerHost(images: state.images)
       // The closing end of the key-to-frame, batch-to-frame, zoom-to-sharp and open-to-first-photo
       // intervals (todo.md §7.3): the model opens them, and only a committed frame can close them.
-      // Weak, so a torn-down window cannot keep the model alive.
-      host.onFramePresented = { [weak model] frame in model?.frameDidPresent(frame) }
-      // The opening end of the same story: the viewer is the only thing that knows how many pixels
-      // it covers, and T2 is decoded at exactly that many (todo.md §7.1/§7.2).
-      host.onViewportPixelSize = { [weak model] size in model?.setViewportPixelSize(size) }
+      // The model that opened them is the active state's, so that is the one that closes them too.
+      if let model = state.activeModel {
+        host.onFramePresented = { [weak model] frame in model?.frameDidPresent(frame) }
+        // The opening end of the same story: the viewer is the only thing that knows how many pixels
+        // it covers, and T2 is decoded at exactly that many (todo.md §7.1/§7.2).
+        host.onViewportPixelSize = { [weak model] size in model?.setViewportPixelSize(size) }
+      }
       return host
     }
 

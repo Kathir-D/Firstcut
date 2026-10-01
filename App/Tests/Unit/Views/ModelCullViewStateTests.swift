@@ -35,6 +35,27 @@ struct ModelCullViewStateTests {
         #expect(state.batches.isEmpty)
     }
 
+    @Test("A viewer pane resolves its image source and its model from the active state")
+    func theActiveModelIsTheOneTheStateWraps() {
+        // `AppEnvironment`'s host factory builds every viewer pane from `state.images` and reports
+        // frames and viewport size to `state.activeModel` — both resolved when the pane is created,
+        // so a `use(_:)` swap (the mock shoot, previews, the Screenshots workflow) is honoured.
+        // Before that, a pane held the real `ImageProvider` even in the mock shoot, which never
+        // gives it a folder: the loupe rendered flat black while the filmstrip drew its thumbnails.
+        // This is the seam that keeps the two answerable to the same state.
+        let (state, model, _) = Self.makeState()
+        #expect(state.activeModel === model, "the pane reports to the model that is on screen")
+
+        // The stand-in has no model to report to, and says so rather than reaching for a global.
+        let preview = PreviewCullViewState(batchCount: 0)
+        #expect(preview.activeModel == nil)
+
+        // And the image source is the state's, so a swap changes what a new pane draws.
+        let source = PreviewImageSource(seed: 7)
+        let swapped = ModelCullViewState(model: model, images: source)
+        #expect(swapped.images === source)
+    }
+
     @Test("Every `Phase` case maps to a `CullPhase`, exhaustively")
     func phaseMappingIsExhaustive() {
         let (state, model, _) = Self.makeState()
