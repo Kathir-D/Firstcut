@@ -177,7 +177,7 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
             writeSidecars: settings.writeXmp,
             sidecarsForNonRaw: settings.writeSidecarsForJpegs,
             keepStars: stars,
-            keepLabel: label)
+            keepLabel: label?.ffi)
     }
 
     public func flush() { session.flush() }

@@ -60,3 +60,16 @@ public struct Rating: Sendable, Equatable {
     /// "rated zero stars", and the cull rules ask it.
     public var isNeutral: Bool { self == Rating() }
 }
+
+/// The colour labels Lightroom shows (todo.md §6.3). An app type rather than the generated
+/// `FfiColorLabel` because `Settings.keepMapping` persists one (a keep can be a colour label), and
+/// `Codable` cannot be retroactively conformed onto an imported type without the compiler warning
+/// and `swift-format lint` disagreeing about it (see `CoreTypeAliases.swift`). The strings are the
+/// wire's strings, so a settings file written by any version decodes.
+public enum ColorLabel: String, Sendable, Codable {
+    case red
+    case yellow
+    case green
+    case blue
+    case purple
+}

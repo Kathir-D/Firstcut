@@ -63,11 +63,34 @@ extension Batch {
 
 extension Rating {
     init(_ ffi: FfiRating) {
-        self.init(stars: ffi.stars, flag: ffi.flag, label: ffi.label, keep: ffi.keep)
+        self.init(
+            stars: ffi.stars, flag: ffi.flag, label: ffi.label.map(ColorLabel.init), keep: ffi.keep)
     }
 
     var ffi: FfiRating {
-        FfiRating(stars: stars, flag: flag, label: label, keep: keep)
+        FfiRating(stars: stars, flag: flag, label: label.map(\.ffi), keep: keep)
+    }
+}
+
+extension ColorLabel {
+    init(_ ffi: FfiColorLabel) {
+        switch ffi {
+        case .red: self = .red
+        case .yellow: self = .yellow
+        case .green: self = .green
+        case .blue: self = .blue
+        case .purple: self = .purple
+        }
+    }
+
+    var ffi: FfiColorLabel {
+        switch self {
+        case .red: .red
+        case .yellow: .yellow
+        case .green: .green
+        case .blue: .blue
+        case .purple: .purple
+        }
     }
 }
 

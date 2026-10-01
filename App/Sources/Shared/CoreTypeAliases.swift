@@ -46,7 +46,6 @@ public typealias AfPoint = FfiAfPoint
 // MARK: - Ratings
 
 public typealias Flag = FfiFlag
-public typealias ColorLabel = FfiColorLabel
 
 /// The per-tier totals come from the core's single `display_tier` (rating.rs), so `Tier` is the
 /// generated enum and the app only supplies the strings the sheets show.
@@ -60,59 +59,14 @@ public typealias MatchKind = FfiMatchKind
 public typealias FileOpFailure = FfiFileOpFailure
 public typealias SkippedFile = FfiSkipped
 
-// MARK: - Codable, because the mirrors were
-
-// The hand-written mirrors were `Codable` and exactly one of them has to stay: `Settings.keepMapping`
-// stores the **color label** a keep is written as (`SettingsModel.swift`), so `ColorLabel` has to
-// decode from the same string earlier versions wrote (`"red"`), not from whatever a synthesized
-// conformance for a raw-value-less enum would produce. Nothing else in the app is encoded — the only
-// JSON Firstcut writes is `AppSettings` and the keymap — which is why `Rating`, `AfInfo` and
-// `PhotoMeta` lost a `Codable` nobody was using.
-//
-// It is a retroactive conformance (the type belongs to the generated module, `Codable` to the
-// standard library), hence `@retroactive` — which is also what the compiler asks for. Nothing else
-// here needs to be `Codable`: the only JSON the app writes is `AppSettings` and the keymap, and
-// `Rating`/`AfInfo`/`PhotoMeta` were declared `Codable` without anything ever encoding them.
-
-extension FfiColorLabel: @retroactive Codable {
-    public init(from decoder: any Decoder) throws {
-        switch try decoder.singleValueContainer().decode(String.self) {
-        case "red": self = .red
-        case "yellow": self = .yellow
-        case "green": self = .green
-        case "blue": self = .blue
-        case "purple": self = .purple
-        case let other:
-            throw DecodingError.dataCorrupted(
-                DecodingError.Context(
-                    codingPath: decoder.codingPath, debugDescription: "not a color label: \(other)"))
-        }
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .red: try container.encode("red")
-        case .yellow: try container.encode("yellow")
-        case .green: try container.encode("green")
-        case .blue: try container.encode("blue")
-        case .purple: try container.encode("purple")
-        }
-    }
-}
-
 // MARK: - What the app adds to the generated types
 
-// `Identifiable` for the two records the SwiftUI lists iterate (`\.self` ids would work, but
-// `Identifiable` is what `ForEach` and the diffing want, and the `id` fields are right there), and
-// `CaseIterable` for the tier list. Retroactive conformances: both the type and the protocol belong
-// to other modules, which is what the attribute is for.
-extension FfiPhotoMeta: @retroactive Identifiable {}
-extension FfiBatch: @retroactive Identifiable {}
-
-extension FfiTier: @retroactive CaseIterable {
-    /// Spelled out rather than synthesized: a conformance declared outside the file that declares
-    /// the type cannot use synthesis, and the order is the one the sheets and the summary show.
+extension FfiTier {
+    /// The order the sheets and the summary show. A plain static rather than a `CaseIterable`
+    /// conformance: the views already iterate this with `id: \.self`, and conforming an imported
+    /// type to an imported protocol needs `@retroactive` (a warning, and warnings are errors here)
+    /// which `swift-format lint --strict` then rejects as a retroactive conformance. Two linters
+    /// disagreeing is not a thing to satisfy by picking one; the list is one line either way.
     public static var allCases: [FfiTier] { [.keep, .good, .maybe, .unrated, .rejected] }
 
     public var title: String {
