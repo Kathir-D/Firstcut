@@ -280,17 +280,17 @@ final class RealRawDecodeTests: XCTestCase {
     /// the whole argument for making this opt-in and current-photo-only.
     ///
     /// Measured on this machine: develop 0.299 s, preview 0.089 s.
-    func testExactRawCostsMoreThanThePreviewItReplaces() throws {
+    func testExactRawCostsAboutTheSameAsThePreviewItReplaces() throws {
         let files = try realCR3s(count: 1)
         let url = files[0]
 
         func develop() -> TimeInterval {
             let start = Date()
-            let filter = CIRAWFilter(imageURL: url)
-            let context = CIContext(options: [.cacheIntermediates: false])
-            if let filter, let output = filter.outputImage {
-                _ = context.createCGImage(output, from: output.extent.integral)
+            guard let filter = CIRAWFilter(imageURL: url), let output = filter.outputImage else {
+                return 0
             }
+            let context = CIContext(options: [.cacheIntermediates: false])
+            _ = context.createCGImage(output, from: output.extent.integral)
             return Date().timeIntervalSince(start)
         }
 
@@ -300,16 +300,40 @@ final class RealRawDecodeTests: XCTestCase {
             return Date().timeIntervalSince(start)
         }
 
-        // Warm both once so the comparison is of steady-state cost, not first-read IO.
-        _ = develop()
-        _ = previewDecode()
-        let raw = develop()
-        let embedded = previewDecode()
+        // **Alternated, and the order reversed on alternate rounds.** A first measurement of this
+        // said 0.299 s for the develop against 0.089 s for the preview, which read as "RAW is 3.4×
+        // slower" and would have put T4 in the prefetch for entirely the wrong reason. It was the
+        // cold file cache: the first call in a process pays to read the 12 MB CR3 off the SSD, and
+        // whichever call went first got the bill. Warm, the two are the same order of magnitude
+        // (measured: develop ~79 ms, preview ~90 ms, over five alternating rounds).
+        //
+        // So the assertion is deliberately weak — the same order of magnitude, not an ordering.
+        // Pinning `develop > preview` would encode the cold-cache artefact, and pinning `develop <
+        // preview` would pin a coin flip on a loaded machine. What actually keeps T4 one
+        // photograph deep is the 92 MB, and that is asserted where it is deterministic instead.
+        var rawSamples: [TimeInterval] = []
+        var previewSamples: [TimeInterval] = []
+        for round in 0..<5 {
+            if round % 2 == 0 {
+                rawSamples.append(develop())
+                previewSamples.append(previewDecode())
+            } else {
+                previewSamples.append(previewDecode())
+                rawSamples.append(develop())
+            }
+        }
+        let raw = rawSamples.sorted()[2]
+        let embedded = previewSamples.sorted()[2]
         print(
             "CR3 RAW develop \(String(format: "%.0f", raw * 1000)) ms vs preview decode "
                 + "\(String(format: "%.0f", embedded * 1000)) ms "
-                + "(\(String(format: "%.1f", raw / max(embedded, 0.001)))×)")
-        XCTAssertGreaterThan(raw, embedded, "if the develop were free, T4 would belong in the prefetch")
+                + "(median of 5 alternating, \(String(format: "%.2f", raw / max(embedded, 0.001)))×)")
+        XCTAssertLessThan(
+            raw, embedded * 4,
+            "a develop four times the preview decode is not what was measured; if this fires, the "
+                + "cost of T4 has genuinely changed and §7.1's budget needs revisiting")
+        XCTAssertGreaterThan(
+            embedded, 0, "the preview decode must have done real work, or the comparison is void")
     }
 
     /// EXIF orientation is applied **once**.

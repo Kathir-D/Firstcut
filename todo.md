@@ -43,8 +43,9 @@ Only a person with the Mac, the test photos, the apps or the repo settings can d
 2b. **Preview or RAW?** (§7.2's benchmark task.) Settings → Viewer → "Develop the sensor data, not
    the embedded preview" now toggles between them, so this is a matter of looking at the same
    high-ISO frame at 100% both ways and saying which you would cull on. The numbers are already
-   measured (0.089 s preview vs 0.299 s RAW for the same 6000×4000, differing by 3–52/255 per
-   pixel); only the judgement is missing. Whatever you decide should become the **default**, and
+   measured (~0.09 s preview vs **~0.079 s** RAW for the same 6000×4000, differing by 3–52/255
+   per pixel — the two cost about the same, so the question is purely which *looks* better); only
+   the judgement is missing. Whatever you decide should become the **default**, and
    §7.2's checkbox should be updated to say which.
 3. **Game1JENKS re-press pauses** (`IMG_6117`–`IMG_6164`): one play or several? Decide by eye.
 4. **Timings (§7.3)** on the M1 Pro with the photos: folder open → first photo, metadata scan,
@@ -98,8 +99,10 @@ below is struck through where finished, and what remains is either in [§0.2](#0
   ~~`os_signpost` and a debug HUD~~ done, and ~~the "Exact RAW" (T4) decode~~ **done** (`087c22c`).
   T4 develops the sensor data through `CIRAWFilter` as a **separate cache kind** (`case exactRaw`),
   for the current photograph only, and is now a real toggle in Settings → Viewer. Measured:
-  **0.299 s and 92 MB** per develop against **0.089 s** for the embedded preview it replaces, which
-  is why it is on demand rather than in the prefetch. **Left:** the embedded-preview vs
+  **92 MB** per develop at roughly the same cost as the embedded preview it replaces (~0.079 s vs
+  ~0.09 s, measured over five alternating rounds). So T4 is kept one photograph deep by **memory**,
+  not by latency — a fact worth knowing, because the first measurement said 3.4× slower and was a
+  cold file cache. **Left:** the embedded-preview vs
   `CIRAWFilter` comparison, which needs a person to judge the pictures.
 - ~~**Settings in the model but not shown**~~ **Done, all three, and one of them found two bugs.**
   - *Clipping thresholds* reach `ClippingMask` through the viewer's presentation, and the model
@@ -235,8 +238,8 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >    cancellation.
 > 2. **Pipeline:** the embedded-preview vs `CIRAWFilter` comparison (§7.2) still needs a person to
 >    judge the pictures. Note the timings that make it a real question rather than a formality: the
->    shipped preview is 0.089 s and T4 is 0.299 s for the same 6000×4000, and they differ by
->    3–52/255 per pixel. Both are now reachable from the app (the toggle is in Settings → Viewer),
+>    shipped preview and T4 cost about the same for the same 6000×4000 (~0.09 s against ~0.079 s,
+>    measured over five alternating rounds) and they differ by 3–52/255 per pixel. Both are now reachable from the app (the toggle is in Settings → Viewer),
 >    so this is a matter of looking at the same frame both ways.
 > 3. **Speculative T3 after a dwell** (§7.5) — deliberately deferred until the arrow-key measurement
 >    exists, because the measurement is what decides whether it is worth a decode.
@@ -688,7 +691,7 @@ The single most important property of the app: **navigation never waits for deco
 | T1 | Compressed embedded preview bytes (JPEG, as stored in the RAW) | As many batches as the RAM budget allows, nearest first | ~3–6 MB each |
 | T2 | **Decoded display-resolution bitmaps** (fit to the viewer's pixel size, IOSurface/Metal textures) | **Previous + current + next batch, always**; extends further ahead/behind while under budget | ~10–25 MB each |
 | T3 | Decoded full-resolution (6000×4000, 8-bit) bitmaps for 100% zoom | The photo on screen while zoomed, plus the next one in the batch when zoom is locked | 92 MB each |
-| T4 | True RAW decode (`CIRAWFilter`) — **built** | Only when "Exact RAW" is toggled, and only the current photograph: 92 MB and 0.299 s a picture, measured, against 0.089 s for the preview it replaces | one picture at a time |
+| T4 | True RAW decode (`CIRAWFilter`) — **built** | Only when "Exact RAW" is toggled, and only the current photograph. It is not the slow option: ~0.079 s a picture against ~0.09 s for the preview it replaces. **92 MB** is what keeps it out of the prefetch | one picture at a time |
 
 - [x] **Memory budget**: default = 40% of physical RAM (≈6.4 GB on 16 GB), configurable in Settings
       → Performance. Respond to `DispatchSource` memory-pressure warnings by shedding T3 → T1 far
@@ -708,8 +711,8 @@ The single most important property of the app: **navigation never waits for deco
       threads and on eight, over 24 real CR3s), not `activeProcessorCount`, which includes the
       efficiency cores; thumbnails decode on their own `.utility` queue, ranked below the current
       batch but sharing the same 4-slot cap so a filmstrip pass cannot starve the frame the user is
-      waiting for. T4 shares `.userInitiated` with display decodes: at 0.299 s it is the longest
-      single decode in the app.
+      waiting for. T4 shares `.userInitiated` with display decodes — not because it is the slowest
+      (it is about the same as a preview decode) but because it is the one the user is looking at.
 - [ ] Pre-upload decoded bitmaps to the GPU (IOSurface-backed) so display = pointer swap, < 1 frame.
 - [x] Re-decode T2 when the window/screen size changes, keeping old bitmaps visible until new ones
       are ready. **Done**: a display entry carries the size it was decoded at; a request for more
@@ -743,11 +746,13 @@ The single most important property of the app: **navigation never waits for deco
 - [ ] **Benchmark task**: compare embedded preview vs `CIRAWFilter` decode on the high-ISO night
       shots in the test set at 100% and fit-to-screen; pick defaults from the result and document it
       here (grain structure, sharpness, noise reduction differences). **Both halves of this are now
-      in place:** the numbers are measured (preview **0.089 s**, T4 **0.299 s** for the same
-      6000×4000, and the two differ by 3–52/255 per pixel), and both paths are reachable from the
-      app — Settings → Viewer → "Develop the sensor data, not the embedded preview". What is left is
-      the only part no measurement can do: **a person looking at the same frame both ways** and
-      saying which is better, which is §0.2's judgement call, not an agent's.
+      in place:** the numbers are measured (preview ~0.09 s, T4 **~0.079 s** for the same
+      6000×4000 — the same order of cost — and the two differ by 3–52/255 per pixel), and both paths
+      are reachable from the app — Settings → Viewer → "Develop the sensor data, not the embedded
+      preview". What is left is the only part no measurement can do: **a person looking at the same
+      frame both ways** and saying which is better, which is §0.2's judgement call, not an agent's.
+      Because the cost is the same, that decision costs nothing but the attention — it is not a
+      speed-for-quality trade.
 
 ### 7.3 Performance targets (M1 Pro, 1,500-file shoot on internal SSD)
 

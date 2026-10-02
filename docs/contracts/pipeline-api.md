@@ -74,7 +74,7 @@ more than the ~300 ms decode it hides (`ImageProvider.swift:39-41`).
 | T1 | **not implemented** — the compressed preview bytes are read from the file per display decode rather than cached | `readBytes` (`ImageProvider.swift:1285`) |
 | T2 | Display bitmaps decoded at the viewer's longest backing edge | `displays:` (`ImageProvider.swift:530`); sized by `displayEdges` (`:327`) |
 | T3 | The same cache asked for the photograph's own longest edge while zoomed | `displayEdges` full set (`:336-342`) |
-| T4 | A true RAW develop of the sensor data (`CIRAWFilter`), while "Exact RAW" is on | The current photograph only — 92 MB and 0.299 s a picture, so one at a time, dropped on move (`exactRaws`) |
+| T4 | A true RAW develop of the sensor data (`CIRAWFilter`), while "Exact RAW" is on | The current photograph only — **92 MB** a picture at roughly the preview decode's cost, so one at a time, dropped on move (`exactRaws`). Memory, not latency, is the constraint |
 
 - **T2 is the viewer's backing size, not a guess** (`displayEdges`, `ImageProvider.swift:327-349`),
   floored at `minimumDisplayEdge = 64` and, before the window has reported a size, at
@@ -133,7 +133,7 @@ misleading span (`Signpost.swift:18-24`).
 | `batchToFrame` | `batch.previous` / `batch.next` (`AppModel.swift:676`) |
 | `zoomToSharp` | click-to-100% and pinch (`AppModel.swift:710`) |
 | `decodeThumbnail`, `decodeDisplay`, `decodeFromBytes` | `DecodeEngine.drain` (`ImageProvider.swift:908, 929, 951`) |
-| `decodeExactRaw` | `DecodeEngine.run`, because T4 is 0.299 s against 0.089 s for a preview and averaging them would hide exactly the cost a trace is opened to find |
+| `decodeExactRaw` | `DecodeEngine.run`, kept apart from `decodeDisplay` so a trace can attribute a slow frame to one tier or the other rather than averaging them |
 | `setFocus`, `evictions` | the focus update and the LRU pass (`ImageProvider.swift:621, 1034`) |
 
 The four `§7.3` rows that need a *presented* frame are closed by the viewer, not by the model:
@@ -207,10 +207,10 @@ the only thing that knows how many pixels it covers, and T2 is decoded at exactl
   the DCT and `kCGImageSourceShouldCacheImmediately` so the pixels are not decoded lazily inside the
   commit (`ImageProvider.swift:6-9, 1119-1132, 1194-1203`).
 - **T4 ("Exact RAW") is the one exception, and only while the setting is on.** It develops the
-  sensor data through `CIRAWFilter`, in a cache kind of its own. Measured on a Canon R8 CR3:
-  **0.299 s** for a full-resolution 6000×4000 develop (92 MB), against **0.089 s** for the preview
-  every other decode uses — which is why it is on demand and current-photo-only rather than part of
-  the prefetch. Its pixels differ from the camera's embedded JPEG by 3–52/255, compared inside one
+  sensor data through `CIRAWFilter`, in a cache kind of its own. Measured on a Canon R8 CR3 by
+  alternating the two calls over five rounds: **~0.079 s** for a full-resolution 6000×4000 develop
+  against **~0.09 s** for the preview every other decode uses. So a develop is *not* the slow
+  option — **92 MB of memory is what keeps it out of the prefetch**, one photograph deep. Its pixels differ from the camera's embedded JPEG by 3–52/255, compared inside one
   pipeline so colour management cannot account for it, so it is a different rendering rather than a
   re-decode (`RealRawDecodeTests.testExactRawDevelopsTheSensorDataNotThePreview`).
 - **T4 applies the EXIF orientation exactly once, in the filter.** `CIRAWFilter.orientation`
@@ -241,9 +241,10 @@ the only thing that knows how many pixels it covers, and T2 is decoded at exactl
   class method, **not** `CIFilter(name:)`, which returns a filter with no input keys and throws an
   uncatchable `NSException` on `inputImage` — and does **not** apply the EXIF orientation, because
   the filter already has. Gate is `PhotoMeta.kind`, because `CIRAWFilter` returns a usable filter
-  for a JPEG and for a junk `.cr3`. Measured and recorded in the tiers table: 0.299 s and 92 MB a
-  develop against 0.089 s for the preview; `scaleFactor` and draft mode do not help. Six unit tests
-  (no photos needed) and four integration tests (real CR3s).
+  for a JPEG and for a junk `.cr3`. Measured and recorded in the tiers table: **~0.079 s and 92 MB**
+  a develop against ~0.09 s for the preview — so memory, not latency, is what keeps T4 one
+  photograph deep; `scaleFactor` and draft mode do not help. Six unit tests (no photos needed) and
+  four integration tests (real CR3s).
 - v0.3 (2026-10-01): matched the contract to the shipped code. **`DisplayImage` is gone entirely** —
   the provider returns a bare `CGImage`, `fullImage(_:)` and `clippingMask(_:)` are no longer
   provider methods, and `thumbnailProgress` is a `Double` rather than an `AsyncStream`. The one

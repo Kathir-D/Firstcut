@@ -87,9 +87,10 @@ public enum Signposts {
     public static let decodeThumbnail: StaticString = "decodeThumbnail"
     public static let decodeDisplay: StaticString = "decodeDisplay"
     public static let decodeFromBytes: StaticString = "decodeFromBytes"
-    // T4's own interval, because it is the longest decode in the app by a wide margin (0.299 s
-    // against 0.089 s for the preview) and lumping it in with `decodeDisplay` would hide exactly
-    // the cost a trace is opened to find.
+    // T4's own interval, kept apart from `decodeDisplay` so a trace can attribute a slow frame to
+    // one tier or the other. It is not because T4 is slower -- measured, it is about the same as a
+    // preview decode (~0.079 s against ~0.09 s) -- but because a demosaic and a JPEG preview fail
+    // for entirely different reasons, and averaging them would hide both.
     public static let decodeExactRaw: StaticString = "decodeExactRaw"
 
     // The queue, which is where a prefetch that is not keeping up actually shows up.

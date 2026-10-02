@@ -70,7 +70,7 @@ public struct PipelineStats: Equatable, Sendable {
     public var displayCacheHits: Int = 0
     public var displayDecodes: Int = 0
     /// T4 RAW develops. Should stay tiny: one per photograph the user actually looks at with the
-    /// setting on, never one per prefetch, because each is ~92 MB and 0.299 s.
+    /// setting on, never one per prefetch, because each is 92 MB.
     public var exactRawDecodes: Int = 0
     public var histogramCacheHits: Int = 0
     public var histogramComputes: Int = 0
@@ -344,9 +344,10 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
 
     /// Keeps the T4 tier in step with the setting and the current photo.
     ///
-    /// Deliberately **one photograph**, not the focus window: a RAW develop is 92 MB and 0.299 s
-    /// measured (§0.5), so a window of them is neither affordable nor wanted — "Exact RAW" is a
-    /// judgement about the frame in front of you. Turning the setting off drops the tier
+    /// Deliberately **one photograph**, not the focus window: a RAW develop is 92 MB (§0.5), so a
+    /// window of them is not affordable — and "Exact RAW" is a judgement about the frame in front of
+    /// you, not about the batch. The *time* is not the constraint; it is about the same as a preview
+    /// decode. Turning the setting off drops the tier
     /// immediately rather than letting 92 MB per photograph sit in the cache until eviction.
     private func updateExactRaw(current: PhotoID, enabled: Bool, rank: [PhotoID]) {
         exactRawEnabled = enabled
@@ -449,7 +450,8 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
     /// With "Exact RAW" on, the current photograph answers from the T4 tier when it is there, and
     /// from T2/T3 until it arrives. Returning the smaller preview meanwhile is the same rule the
     /// resize path already follows (§7.1: a display decode never blanks the viewer), and it matters
-    /// more here: the RAW is 0.299 s, so blanking would be a third of a second of nothing.
+    /// more here than for a resize: the RAW is the slowest decode on screen, so blanking would
+    /// leave the loupe empty for the length of a develop.
     func displayImage(for id: PhotoID, minimumLongestEdge: Int = 0) -> CGImage? {
         _ = generation
         if exactRawEnabled, rawPhotos.contains(id), let exact = engine.exactRaw(id) {
@@ -523,7 +525,8 @@ final class DecodeEngine: @unchecked Sendable {
     /// `exactRaw` is here and not folded into `display` because the two hold **different
     /// pictures**. A `display` entry is the camera's embedded JPEG; an `exactRaw` entry is the
     /// sensor data developed by `CIRAWFilter`. They differ by ~3–52/255 per pixel and the RAW
-    /// costs 0.299 s against the preview's 0.089 s, so they are not interchangeable. Since
+    /// costs about the same as the preview decode but is not the same picture, so they are not
+    /// interchangeable. Since
     /// `Key` is `id + kind`, a separate case is all the cache separation there is: without it a T2
     /// lookup could return RAW pixels for a preview entry, which shows the user a picture the
     /// camera never took rather than merely a slow one.
@@ -596,9 +599,10 @@ final class DecodeEngine: @unchecked Sendable {
     private var thumbnails: [PhotoID: Entry] = [:]
     private var displays: [PhotoID: Entry] = [:]
     /// T4. Separate from `displays` on purpose: a RAW develop is a different picture from the
-    /// embedded preview, so it must never answer a display request. At most one or two entries
-    /// exist at a time (§7.1: on demand, current photo only), which is what keeps 92 MB a picture
-    /// affordable — but it is still budgeted and evicted like everything else.
+    /// embedded preview, so it must never answer a display request. At most one entry exists at a
+    /// time (§7.1: on demand, current photo only), which is what keeps 92 MB a picture affordable —
+    /// the time is about the same as a preview decode, so **memory is the whole constraint** here,
+    /// not latency — but it is still budgeted and evicted like everything else.
     private var exactRaws: [PhotoID: Entry] = [:]
     private var histograms: [PhotoID: CullHistogram] = [:]
     private var pending: [Job] = []
@@ -719,7 +723,7 @@ final class DecodeEngine: @unchecked Sendable {
             switch job.kind {
             case .display: return !wanted.contains(job.id)
             // A queued RAW develop is dropped as soon as focus moves off its photograph. It is
-            // 0.299 s of work for a frame the user is no longer looking at, and the queue is ranked
+            // real work for a frame the user is no longer looking at, and the queue is ranked
             // by what they can see. Already-running ones are handled by `clearExactRaws`.
             case .exactRaw: return false
             case .thumbnail: return rank[job.id] == nil
@@ -974,7 +978,8 @@ final class DecodeEngine: @unchecked Sendable {
             Job(
                 id: id, url: url, kind: .exactRaw,
                 // Always the photograph's own size: `scaleFactor` on the filter costs more than it
-                // saves (0.622 s at 0.50 against 0.299 s at 1.0, measured), so there is no smaller
+                // saves (0.622 s at 0.50 against ~0.30 s at 1.0 in the same cold-cache run), so
+                // there is no smaller
                 // RAW develop to ask for.
                 maxPixel: 0, priority: priority))
         lock.unlock()
@@ -1127,7 +1132,7 @@ final class DecodeEngine: @unchecked Sendable {
             decoded = decodeDisplayJob(job)
         case .exactRaw:
             // At `.userInitiated`, like a display decode: the user is looking at this photograph, and
-            // at 0.299 s it is the longest single decode in the app.
+            // it is the one the user is looking at, which is the same reason display decodes get it.
             let interval = SignpostInterval.begin(Signposts.decodeExactRaw)
             decoded = Self.decodeExactRaw(url: job.url)
             interval.end()
@@ -1525,15 +1530,20 @@ final class DecodeEngine: @unchecked Sendable {
     //
     // Everything else in this file reads the camera's **embedded JPEG preview**. This is the only
     // place the sensor data is developed, and it exists because Settings → Viewer → "Exact RAW"
-    // asks for it by name. Measured on a Canon R8 CR3 (`RealRawDecodeTests`, todo.md §0.5):
+    // asks for it by name. Measured on a Canon R8 CR3, alternating the two calls over five rounds
+    // so neither is systematically first (`RealRawDecodeTests.testExactRawCostsMoreThanThePreview`):
     //
     // | call | result | cost |
     // | --- | --- | --- |
-    // | `CIRAWFilter(imageURL:)` + render | 6000×4000, the sensor data | **0.299 s**, 92 MB |
-    // | the preview decode the app ships | 6000×4000, the camera's JPEG | 0.089 s |
+    // | `CIRAWFilter(imageURL:)` + render | 6000×4000, the sensor data | **~0.079 s**, 92 MB |
+    // | the preview decode the app ships | 6000×4000, the camera's JPEG | ~0.09 s |
     //
-    // So T4 is ~3.4× the cost of what it replaces, which is why it is on demand and current-photo
-    // only rather than part of the prefetch (§7.1).
+    // **So a RAW develop is not slower than the preview it replaces** — it is about the same, and
+    // what puts T4 out of the prefetch is the **92 MB**, not the time. That is the opposite of what
+    // an earlier note here claimed: a first measurement of 0.299 s against the preview's 0.089 s
+    // was a **cold file cache**, paid once by whichever call went first. It is recorded here because
+    // the wrong number is the more plausible one to act on, and it would have put T4 in the prefetch
+    // for the wrong reason.
     //
     // ## Three things that are easy to get wrong, and were
     //
@@ -1553,8 +1563,10 @@ final class DecodeEngine: @unchecked Sendable {
     // orientation 8. `RealRawDecodeTests.testExactRawKeepsTheExifOrientation` pins this.
     //
     // **3. Do not ask the filter to scale.** `scaleFactor` is documented as a drawing optimisation,
-    // and measured here it costs *more*: 0.50 took 0.622 s and 0.34 took 0.579 s, against 0.299 s
-    // at 1.0. `isDraftModeEnabled` is no help either at full size (0.291 s vs 0.299 s). So the
+    // and measured here it costs *more*: 0.50 took 0.622 s and 0.34 took 0.579 s, against 0.299 s at
+    // 1.0. (Those three were measured back to back in one process, so the 1.0 figure in that set
+    // carries the cold-cache cost described above; the ordering is still the finding — scaling is
+    // not a saving.) `isDraftModeEnabled` is no help either at full size (0.291 s vs 0.299 s). So the
     // develop is always full resolution and the layer resamples, which is also the only way the
     /// picture keeps the detail the user turned the setting on for.
     static func decodeExactRaw(url: URL) -> CGImage? {

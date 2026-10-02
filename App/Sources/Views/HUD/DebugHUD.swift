@@ -73,7 +73,7 @@ struct DebugHUDView: View {
                     "exact RAW",
                     "\(stats.exactRawDecodes) developed"
                         + (stats.exactRawInFlight > 0 ? " · 1 running" : ""),
-                    note: "T4 · 0.299 s each",
+                    note: "T4 · 92 MB each",
                     tint: stats.exactRawInFlight > 0 ? .orange : nil)
             }
             Divider().opacity(0.4)

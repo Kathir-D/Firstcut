@@ -198,17 +198,17 @@ private struct ViewerSettingsTab: View {
 
             Section("Exact RAW") {
                 // Shown because the pipeline honours it (todo.md §0.3): this is the one decode that
-                // develops the sensor data instead of reading the camera's embedded preview. The
-                // cost is the reason for the wording -- measured on a Canon R8 CR3, a full-resolution
-                // develop is 0.299 s against 0.089 s for the preview, and it is redone for each
-                // photograph you move to. It is off by default for that reason, not because it is
-                // unfinished.
+                // develops the sensor data instead of reading the camera's embedded preview. It is
+                // off by default because the camera's own processing is the safer thing to cull on,
+                // not because the feature is unfinished -- and, measured, it is not the slow option
+                // (~0.079 s against ~0.09 s for a full-resolution preview on a Canon R8 CR3). What it
+                // costs is 92 MB, so only the photograph you are looking at is ever developed.
                 Toggle(
                     "Develop the sensor data, not the embedded preview",
                     isOn: settingBinding(model, \.viewer.exactRaw))
                 Text(
-                    "Slower per photograph, and only for RAW files. Off means the picture you see is "
-                        + "the preview the camera wrote into the file."
+                    "Developed from the sensor data instead of the preview the camera wrote into the "
+                        + "file. RAW files only, and only the photo you are on."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
