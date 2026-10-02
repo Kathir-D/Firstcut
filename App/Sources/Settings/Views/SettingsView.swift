@@ -6,9 +6,12 @@
 // disagreeing.
 //
 // Only settings the app actually honors are shown. A switch that does nothing is worse than no
-// switch, so the ones the code does not read yet (the T4 "Exact RAW" decode, the debug HUD, DNG
-// writes) are not offered; DNG writes are excluded on principle, because Firstcut never modifies an
-// original (todo.md §11).
+// switch, so the ones the code does not read yet (the debug HUD, DNG writes) are not offered; DNG
+// writes are excluded on principle, because Firstcut never modifies an original (todo.md §11).
+//
+// "Exact RAW" used to be on that list. It is not any more: `DecodeEngine.decodeExactRaw` develops
+// the sensor data through `CIRAWFilter` and `setFocus` points the tier at the current photograph
+// (`ImageProvider.updateExactRaw`), so the toggle has an effect.
 
 import AppKit
 import SwiftUI
@@ -191,6 +194,24 @@ private struct ViewerSettingsTab: View {
                 )
                 Toggle("Show autofocus points", isOn: settingBinding(model, \.viewer.afOverlay))
                 Toggle("Show the progress HUD", isOn: settingBinding(model, \.viewer.hudVisible))
+            }
+
+            Section("Exact RAW") {
+                // Shown because the pipeline honours it (todo.md §0.3): this is the one decode that
+                // develops the sensor data instead of reading the camera's embedded preview. The
+                // cost is the reason for the wording -- measured on a Canon R8 CR3, a full-resolution
+                // develop is 0.299 s against 0.089 s for the preview, and it is redone for each
+                // photograph you move to. It is off by default for that reason, not because it is
+                // unfinished.
+                Toggle(
+                    "Develop the sensor data, not the embedded preview",
+                    isOn: settingBinding(model, \.viewer.exactRaw))
+                Text(
+                    "Slower per photograph, and only for RAW files. Off means the picture you see is "
+                        + "the preview the camera wrote into the file."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section("Clipping overlay") {

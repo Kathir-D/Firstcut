@@ -2,7 +2,7 @@
 
 - **Owner:** pipeline
 - **Consumers:** app-logic (tells it where the user is), ui (displays what it provides), qa
-- **Version:** v0.3 (draft; frozen as v1.0 at the end of wave 1)
+- **Version:** v0.4 (draft; frozen as v1.0 at the end of wave 1)
 
 ## Swift API
 
@@ -20,7 +20,7 @@ struct FocusRequest: Hashable, Sendable {
                                      // until the window reports a size
     var zoomed: Bool                 // at 100% right now
     var zoomLock: Bool               // prefetch 1:1 neighbours
-    var exactRaw: Bool               // Settings → Viewer → Exact RAW (T4); not read by ImageProvider yet
+    var exactRaw: Bool               // Settings → Viewer → Exact RAW (T4); read by ImageProvider
 
     /// The previous/current/next window: the set that must never miss the cache (§7.1).
     var guaranteedWindows: [FocusWindow] { Array(windows.prefix(3)) }
@@ -57,10 +57,10 @@ Two things the draft said and the code does not:
   asks `displayImage(for:minimumLongestEdge:)` for the photograph's own pixels
   (`CGImageViewerHost.swift:166-172`); the clipping mask is computed by pipeline from the display
   bitmap it already holds (`ClippingMask.make`, `CGImageViewerHost.swift:484`).
-- `exactRaw` is carried from settings into every `FocusRequest`
-  (`AppModel.swift:867`) but **no T4 / `CIRAWFilter` decode exists yet**: the ImageIO embedded
-  preview is the only display path (`ImageProvider.swift:1160`). The flag is plumbed, the feature
-  is not implemented.
+- `exactRaw` is carried from settings into every `FocusRequest` (`AppModel.swift:867`) and is now
+  read: `ImageProvider.updateExactRaw` points the T4 tier at the current photograph and
+  `DecodeEngine.decodeExactRaw` develops the sensor data through `CIRAWFilter`. See **Cache tiers**
+  and **Guarantees** below for what it costs and the one trap in it.
 
 ## Cache tiers and the memory budget
 
@@ -74,7 +74,7 @@ more than the ~300 ms decode it hides (`ImageProvider.swift:39-41`).
 | T1 | **not implemented** — the compressed preview bytes are read from the file per display decode rather than cached | `readBytes` (`ImageProvider.swift:1285`) |
 | T2 | Display bitmaps decoded at the viewer's longest backing edge | `displays:` (`ImageProvider.swift:530`); sized by `displayEdges` (`:327`) |
 | T3 | The same cache asked for the photograph's own longest edge while zoomed | `displayEdges` full set (`:336-342`) |
-| T4 | not implemented (see `exactRaw` above) | — |
+| T4 | A true RAW develop of the sensor data (`CIRAWFilter`), while "Exact RAW" is on | The current photograph only — 92 MB and 0.299 s a picture, so one at a time, dropped on move (`exactRaws`) |
 
 - **T2 is the viewer's backing size, not a guess** (`displayEdges`, `ImageProvider.swift:327-349`),
   floored at `minimumDisplayEdge = 64` and, before the window has reported a size, at
@@ -90,6 +90,13 @@ more than the ~300 ms decode it hides (`ImageProvider.swift:39-41`).
   the current batch and to two frames behind / three ahead of the current one
   (`displayPrefetchIDs`, `:372`); display work outside that set is cancelled on every move and the
   rest is re-ranked (`:631-636`).
+- **T4 is a `Kind`, not a size** (`DecodeEngine.Kind.exactRaw`), so the cache separation is free
+  from `Key`'s `id + kind`. It has to be: a `display` entry is the camera's embedded JPEG and an
+  `exactRaw` entry is the sensor data, and they differ by 3–52/255 per pixel. Sharing a kind would
+  let a T2 request be answered with RAW pixels — a wrong picture, not a slow one. The one
+  photograph-deep rule is `setExactRaw`, which drops the queued, in-flight and cached develop for
+  the photograph just left; an in-flight one is marked `cancelled` so `store` discards it rather
+  than re-inserting 92 MB (`cancelled`, not `failed`, so asking again retries).
 - Decode concurrency: "auto" is `min(4, performance-core count)`, not the core count
   (`resolvedDecodeThreads`, `:184`; `performanceCoreCount` reads `hw.perflevel0.logicalcpu`, `:193`).
 - Thumbnails may satisfy a request up to `thumbnailSlack = 1.5×` the prefetch size
@@ -104,7 +111,8 @@ The counters qa and the debug HUD read (`ImageProvider.swift:62-88`; `DebugHUD.s
 `focusMisses`, `thumbnailCacheHits` / `thumbnailCacheMisses` / `thumbnailDecodes`,
 `displayCacheHits` / `displayDecodes`, `histogramCacheHits` / `histogramComputes`,
 `decodeFailures`, `decodesInProgress`, `queuedDecodes`, `thumbnailBytes`, `displayBytes`,
-`focusSize`, `pressureSheds`, `displayResizes`.
+`focusSize`, `pressureSheds`, `displayResizes`, and for T4 `exactRawDecodes`, `exactRawBytes` and
+`exactRawInFlight`.
 
 `decodesInProgress`, `queuedDecodes`, `thumbnailBytes` and `displayBytes` are computed per read
 rather than counted (`:601-610`). `ImageProvider.byteRangeDecodes` / `containerDecodes`
@@ -125,6 +133,7 @@ misleading span (`Signpost.swift:18-24`).
 | `batchToFrame` | `batch.previous` / `batch.next` (`AppModel.swift:676`) |
 | `zoomToSharp` | click-to-100% and pinch (`AppModel.swift:710`) |
 | `decodeThumbnail`, `decodeDisplay`, `decodeFromBytes` | `DecodeEngine.drain` (`ImageProvider.swift:908, 929, 951`) |
+| `decodeExactRaw` | `DecodeEngine.run`, because T4 is 0.299 s against 0.089 s for a preview and averaging them would hide exactly the cost a trace is opened to find |
 | `setFocus`, `evictions` | the focus update and the LRU pass (`ImageProvider.swift:621, 1034`) |
 
 The four `§7.3` rows that need a *presented* frame are closed by the viewer, not by the model:
@@ -192,11 +201,24 @@ the only thing that knows how many pixels it covers, and T2 is decoded at exactl
 - Honors the memory budget from settings and sheds under memory pressure: a pressure warning drops
   everything outside the focus window at once, never the current batch (`shedToFocus`, `:578`;
   `evictLocked`, `:1032`).
-- Decodes are ImageIO, never a RAW demosaic: `CGImageSourceCreateThumbnailAtIndex` on a CR3 reads the
-  camera's embedded JPEG preview, on **macOS 15+** (no TIFF/RAW path, no `libraw`), with
-  `kCGImageSourceThumbnailMaxPixelSize` so ImageIO subsamples in the DCT and
-  `kCGImageSourceShouldCacheImmediately` so the pixels are not decoded lazily inside the commit
-  (`ImageProvider.swift:6-9, 1119-1132, 1194-1203`).
+- Display decodes are ImageIO, which reads the camera's **embedded JPEG preview**, never the sensor
+  data: `CGImageSourceCreateThumbnailAtIndex` on a CR3 is a preview read on **macOS 15+** (no
+  TIFF/RAW path, no `libraw`), with `kCGImageSourceThumbnailMaxPixelSize` so ImageIO subsamples in
+  the DCT and `kCGImageSourceShouldCacheImmediately` so the pixels are not decoded lazily inside the
+  commit (`ImageProvider.swift:6-9, 1119-1132, 1194-1203`).
+- **T4 ("Exact RAW") is the one exception, and only while the setting is on.** It develops the
+  sensor data through `CIRAWFilter`, in a cache kind of its own. Measured on a Canon R8 CR3:
+  **0.299 s** for a full-resolution 6000×4000 develop (92 MB), against **0.089 s** for the preview
+  every other decode uses — which is why it is on demand and current-photo-only rather than part of
+  the prefetch. Its pixels differ from the camera's embedded JPEG by 3–52/255, compared inside one
+  pipeline so colour management cannot account for it, so it is a different rendering rather than a
+  re-decode (`RealRawDecodeTests.testExactRawDevelopsTheSensorDataNotThePreview`).
+- **T4 applies the EXIF orientation exactly once, in the filter.** `CIRAWFilter.orientation`
+  defaults to the file's tag and the output geometry follows it, so `decodeExactRaw` must *not*
+  also call `applying(orientation:to:)` — every other decode path in the app does, because
+  ImageIO's container read does not apply the tag, and doing both rotates an orientation-8 frame
+  twice. 26 of Game1JENKS's 708 frames are orientation 8.
+  `testExactRawKeepsTheExifOrientation` pins this on geometry, which is what a rotation changes.
 
 ## Proposed changes
 
@@ -211,12 +233,23 @@ the only thing that knows how many pixels it covers, and T2 is decoded at exactl
   which `ImageProvider` does ahead of time. `DisplayImage.image` replaces `DisplayImage.surface`. The
   host owns zoom (pinch, click to 100%, pan, zoom lock across photos, synced groups for Compare) and
   the AF and clipping overlays.
+- v0.4 (2026-10-01): **T4 shipped.** "Exact RAW" is implemented: `DecodeEngine.Kind.exactRaw` (a
+  separate cache kind, so a display request can never be answered with RAW pixels), `exactRaws`
+  holding the current photograph only, `setExactRaw` replacing whatever the tier was doing on every
+  focus report, and `cancelled` (distinct from `failed`) so a develop in flight when the setting is
+  turned off is discarded and still retryable. `decodeExactRaw` uses `CIRAWFilter(imageURL:)` — the
+  class method, **not** `CIFilter(name:)`, which returns a filter with no input keys and throws an
+  uncatchable `NSException` on `inputImage` — and does **not** apply the EXIF orientation, because
+  the filter already has. Gate is `PhotoMeta.kind`, because `CIRAWFilter` returns a usable filter
+  for a JPEG and for a junk `.cr3`. Measured and recorded in the tiers table: 0.299 s and 92 MB a
+  develop against 0.089 s for the preview; `scaleFactor` and draft mode do not help. Six unit tests
+  (no photos needed) and four integration tests (real CR3s).
 - v0.3 (2026-10-01): matched the contract to the shipped code. **`DisplayImage` is gone entirely** —
   the provider returns a bare `CGImage`, `fullImage(_:)` and `clippingMask(_:)` are no longer
   provider methods, and `thumbnailProgress` is a `Double` rather than an `AsyncStream`. The one
   protocol became two (`ImageProviding` for app-logic, `CullImageSource` for ui), `PipelineFocus`
   became `FocusRequest`. Added **Cache tiers and the memory budget** (T0/T2/T3 shipped; T1 and T4
-  not), **Signposts** (the interval names and who emits them) and **`PipelineStats`** (the field
+  not — T4 arrived in v0.4), **Signposts** (the interval names and who emits them) and **`PipelineStats`** (the field
   list). Replaced **Viewer view**: the host is `CGImageViewerHost` (`NSView` + `wantsLayer`, an
   `imageLayer` with `contentsGravity = .resize`, overlays as sublayers), installed through
   `PhotoViewerHostView.register` and resolving its source from the *active* `CullViewState`;

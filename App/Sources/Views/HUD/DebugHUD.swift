@@ -65,10 +65,24 @@ struct DebugHUDView: View {
                     ? "optimisation unused" : "\(containerDecodes) from container",
                 tint: byteRangeDecodes == 0 && stats.displayDecodes > 0 ? .orange : nil)
             row("histograms", "\(stats.histogramComputes) computed")
+            // T4, and only while it is doing something. Shown because it is the one decode that is
+            // neither a thumbnail nor a display, so its absence from the rows above would otherwise
+            // read as "nothing is happening" while 92 MB is being developed off the main thread.
+            if stats.exactRawDecodes > 0 || stats.exactRawInFlight > 0 {
+                row(
+                    "exact RAW",
+                    "\(stats.exactRawDecodes) developed"
+                        + (stats.exactRawInFlight > 0 ? " · 1 running" : ""),
+                    note: "T4 · 0.299 s each",
+                    tint: stats.exactRawInFlight > 0 ? .orange : nil)
+            }
             Divider().opacity(0.4)
             row("thumb memory", bytes(stats.thumbnailBytes))
             row("display memory", bytes(stats.displayBytes))
-            let used = stats.thumbnailBytes + stats.displayBytes
+            if stats.exactRawBytes > 0 {
+                row("RAW memory", bytes(stats.exactRawBytes))
+            }
+            let used = stats.thumbnailBytes + stats.displayBytes + stats.exactRawBytes
             row(
                 "of budget", "\(percent(used, of: budgetBytes)) of \(bytes(budgetBytes))",
                 tint: budgetBytes > 0 && used > budgetBytes ? .orange : nil)

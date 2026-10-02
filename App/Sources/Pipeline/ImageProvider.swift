@@ -52,6 +52,7 @@
 // makes that visible instead of letting the code pretend otherwise.
 
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import Observation
@@ -68,6 +69,9 @@ public struct PipelineStats: Equatable, Sendable {
     public var thumbnailDecodes: Int = 0
     public var displayCacheHits: Int = 0
     public var displayDecodes: Int = 0
+    /// T4 RAW develops. Should stay tiny: one per photograph the user actually looks at with the
+    /// setting on, never one per prefetch, because each is ~92 MB and 0.299 s.
+    public var exactRawDecodes: Int = 0
     public var histogramCacheHits: Int = 0
     public var histogramComputes: Int = 0
     public var decodeFailures: Int = 0
@@ -75,6 +79,14 @@ public struct PipelineStats: Equatable, Sendable {
     public var queuedDecodes: Int = 0
     public var thumbnailBytes: Int = 0
     public var displayBytes: Int = 0
+    /// Memory held by T4 RAW develops, which are ~92 MB each and only exist while the setting is
+    /// on. The number the debug HUD and the memory tests read to confirm the tier stays small.
+    public var exactRawBytes: Int = 0
+    /// RAW develops currently running. The one state with no other way to observe it: a develop that
+    /// is queued is visible in `queuedDecodes` and one that has landed in `exactRawDecodes`, but a
+    /// develop in between cannot be cancelled by a caller who only sees the totals — which is
+    /// exactly when the user turns the setting off.
+    public var exactRawInFlight: Int = 0
     public var focusSize: Int = 0
     /// Times a system memory-pressure warning made the cache drop everything outside the focus.
     public var pressureSheds: Int = 0
@@ -120,6 +132,20 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
     /// The folder the cache belongs to. Decides whether `open` is a new shoot (drop everything) or
     /// the same shoot with files added or removed (keep what is still there).
     private var folder: URL?
+
+    /// Which photographs are RAW, by the core's own reading of the file. This is what gates T4.
+    ///
+    /// The gate cannot be "`CIRAWFilter` returned nil": measured, `CIRAWFilter(imageURL:)` hands
+    /// back a usable filter for a **JPEG** and even for a file of pure junk with a `.cr3`
+    /// extension, so a nil check would let T4 "succeed" on formats it has no business touching and
+    /// would silently change what a JPEG folder shows. The core already reports `.raw(.cr3)`
+    /// versus `.jpeg` from the container, so the honest test is a fact about the file rather than
+    /// an accident of how a decoder responded.
+    private var rawPhotos: Set<PhotoID> = []
+
+    /// Whether "Exact RAW" is on. Set from every `FocusRequest`, because the setting can change
+    /// without the folder or the photo changing.
+    private var exactRawEnabled = false
 
     /// The viewer's backing size, in pixels, as of the last focus report. Zero until the window
     /// reports one, and a view's on-demand ask is answered at the fallback until then.
@@ -251,6 +277,9 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         let newLongestEdges = Dictionary(
             photos.map { ($0.id, Int(max($0.width, $0.height))) },
             uniquingKeysWith: { max($0, $1) })
+        // `kind` is an enum with an associated value, so it is matched rather than compared.
+        let newRawPhotos = Set(
+            photos.lazy.filter { if case .raw = $0.kind { return true } else { return false } }.map(\.id))
         engine.beginShoot(
             urls: newFiles,
             orientations: newOrientations,
@@ -260,6 +289,7 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         files = newFiles
         orientations = newOrientations
         longestEdges = newLongestEdges
+        rawPhotos = newRawPhotos
         fullPreviewRanges = Dictionary(
             photos.compactMap { meta -> (PhotoID, (url: URL, range: ByteRange))? in
                 guard let preview = meta.fullPreview, let url = newFiles[meta.id] else { return nil }
@@ -276,6 +306,8 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         orientations = [:]
         longestEdges = [:]
         fullPreviewRanges = [:]
+        rawPhotos = []
+        exactRawEnabled = false
         folder = nil
         generation &+= 1
     }
@@ -307,6 +339,22 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
             fullPreviews: Dictionary(
                 fullPreviewRanges.map { ($0.key, $0.value.range) },
                 uniquingKeysWith: { first, _ in first }))
+        updateExactRaw(current: focus.currentPhoto, enabled: focus.exactRaw, rank: ordered)
+    }
+
+    /// Keeps the T4 tier in step with the setting and the current photo.
+    ///
+    /// Deliberately **one photograph**, not the focus window: a RAW develop is 92 MB and 0.299 s
+    /// measured (§0.5), so a window of them is neither affordable nor wanted — "Exact RAW" is a
+    /// judgement about the frame in front of you. Turning the setting off drops the tier
+    /// immediately rather than letting 92 MB per photograph sit in the cache until eviction.
+    private func updateExactRaw(current: PhotoID, enabled: Bool, rank: [PhotoID]) {
+        exactRawEnabled = enabled
+        guard enabled, rawPhotos.contains(current), let url = files[current] else {
+            engine.setExactRaw(id: nil, url: nil)
+            return
+        }
+        engine.setExactRaw(id: current, url: url, priority: rank.firstIndex(of: current) ?? 0)
     }
 
     /// The longest edge each display bitmap in the focus window should have, in pixels.
@@ -397,8 +445,16 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
     /// asks for the photograph's own pixels, and one that is fitting it to the window asks for the
     /// window's. Zero asks for T2, which is the right answer for a view that has not been laid out
     /// yet and the only one available to a caller that does not track zoom.
+    ///
+    /// With "Exact RAW" on, the current photograph answers from the T4 tier when it is there, and
+    /// from T2/T3 until it arrives. Returning the smaller preview meanwhile is the same rule the
+    /// resize path already follows (§7.1: a display decode never blanks the viewer), and it matters
+    /// more here: the RAW is 0.299 s, so blanking would be a third of a second of nothing.
     func displayImage(for id: PhotoID, minimumLongestEdge: Int = 0) -> CGImage? {
         _ = generation
+        if exactRawEnabled, rawPhotos.contains(id), let exact = engine.exactRaw(id) {
+            return exact
+        }
         return engine.display(
             id, minimumLongestEdge: minimumLongestEdge > 0 ? minimumLongestEdge : t2Edge,
             url: files[id], orientation: orientations[id] ?? 1,
@@ -462,9 +518,20 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
 /// nothing in it is main-actor, because a decode that hopped to the main actor would freeze the
 /// window for ~300 ms.
 final class DecodeEngine: @unchecked Sendable {
+    /// The cache tiers, as a *kind* rather than a size.
+    ///
+    /// `exactRaw` is here and not folded into `display` because the two hold **different
+    /// pictures**. A `display` entry is the camera's embedded JPEG; an `exactRaw` entry is the
+    /// sensor data developed by `CIRAWFilter`. They differ by ~3–52/255 per pixel and the RAW
+    /// costs 0.299 s against the preview's 0.089 s, so they are not interchangeable. Since
+    /// `Key` is `id + kind`, a separate case is all the cache separation there is: without it a T2
+    /// lookup could return RAW pixels for a preview entry, which shows the user a picture the
+    /// camera never took rather than merely a slow one.
     enum Kind: Hashable, Sendable {
         case thumbnail
         case display
+        /// T4: a true RAW develop of the sensor data, on demand and only for the current photo.
+        case exactRaw
     }
 
     struct Job: Hashable, Sendable {
@@ -528,12 +595,22 @@ final class DecodeEngine: @unchecked Sendable {
 
     private var thumbnails: [PhotoID: Entry] = [:]
     private var displays: [PhotoID: Entry] = [:]
+    /// T4. Separate from `displays` on purpose: a RAW develop is a different picture from the
+    /// embedded preview, so it must never answer a display request. At most one or two entries
+    /// exist at a time (§7.1: on demand, current photo only), which is what keeps 92 MB a picture
+    /// affordable — but it is still budgeted and evicted like everything else.
+    private var exactRaws: [PhotoID: Entry] = [:]
     private var histograms: [PhotoID: CullHistogram] = [:]
     private var pending: [Job] = []
     private var inFlight: Set<Key> = []
     /// Decodes that already failed. The filmstrip re-asks every 200 ms; without this a single
     /// unreadable file would be re-opened forever.
     private var failed: Set<Key> = []
+    /// Work whose result must be thrown away even though it ran to completion: a T4 develop that
+    /// was still in flight when the setting was turned off. Distinct from `failed`, which means
+    /// "do not retry this", because a cancelled RAW develop *should* be redone if it is asked for
+    /// again.
+    private var cancelled: Set<Key> = []
     /// Never evicted: the current focus window ("never the current batch", [pipeline-api.md]).
     private var focus: Set<PhotoID> = []
     /// Every id the open folder currently holds, and each one's file size. Together they say
@@ -584,6 +661,12 @@ final class DecodeEngine: @unchecked Sendable {
         for id in Array(displays.keys) where !focus.contains(id) {
             bytes -= displays.removeValue(forKey: id)?.bytes ?? 0
         }
+        // A RAW develop is 92 MB, the largest single thing in the cache, so a memory warning drops
+        // every one that is not the photo on screen. It is cheap to redo on demand, which is the
+        // whole reason it is a tier rather than a permanent cache.
+        for id in Array(exactRaws.keys) where !focus.contains(id) {
+            bytes -= exactRaws.removeValue(forKey: id)?.bytes ?? 0
+        }
         histograms = histograms.filter { focus.contains($0.key) }
         counters.pressureSheds += 1
     }
@@ -606,6 +689,10 @@ final class DecodeEngine: @unchecked Sendable {
         snapshot.queuedDecodes = pending.count
         snapshot.thumbnailBytes = thumbnails.values.reduce(0) { $0 + $1.bytes }
         snapshot.displayBytes = displays.values.reduce(0) { $0 + $1.bytes }
+        snapshot.exactRawBytes = exactRaws.values.reduce(0) { $0 + $1.bytes }
+        // Per-kind, because `decodesInProgress` cannot tell a 26 ms RAW develop from a thumbnail:
+        // a test (or the HUD) that wants "is a develop running right now" needs this, not the total.
+        snapshot.exactRawInFlight = inFlight.filter { $0.kind == .exactRaw }.count
         return snapshot
     }
 
@@ -629,7 +716,14 @@ final class DecodeEngine: @unchecked Sendable {
         // again from where they are now; otherwise holding the arrow key queues a backlog that
         // the photo they stop on has to wait behind.
         pending.removeAll { job in
-            job.kind == .display ? !wanted.contains(job.id) : rank[job.id] == nil
+            switch job.kind {
+            case .display: return !wanted.contains(job.id)
+            // A queued RAW develop is dropped as soon as focus moves off its photograph. It is
+            // 0.299 s of work for a frame the user is no longer looking at, and the queue is ranked
+            // by what they can see. Already-running ones are handled by `clearExactRaws`.
+            case .exactRaw: return false
+            case .thumbnail: return rank[job.id] == nil
+            }
         }
         for index in pending.indices {
             pending[index].priority = rank[pending[index].id] ?? pending[index].priority
@@ -658,11 +752,13 @@ final class DecodeEngine: @unchecked Sendable {
         defer { lock.unlock() }
         thumbnails.removeAll()
         displays.removeAll()
+        exactRaws.removeAll()
         histograms.removeAll()
         focus.removeAll()
         pending.removeAll()
         inFlight.removeAll()
         failed.removeAll()
+        cancelled.removeAll()
         knownSizes.removeAll()
         live.removeAll()
         epoch &+= 1
@@ -703,6 +799,9 @@ final class DecodeEngine: @unchecked Sendable {
             for id in Array(displays.keys) where stale(id) {
                 bytes -= displays.removeValue(forKey: id)?.bytes ?? 0
             }
+            for id in Array(exactRaws.keys) where stale(id) {
+                bytes -= exactRaws.removeValue(forKey: id)?.bytes ?? 0
+            }
             histograms = histograms.filter { !stale($0.key) }
             failed = failed.filter { !stale($0.id) }
             // Queued work for a photo that is gone is pointless, and a decode in flight for one is
@@ -726,11 +825,13 @@ final class DecodeEngine: @unchecked Sendable {
     private func unlockAndReset() {
         thumbnails.removeAll()
         displays.removeAll()
+        exactRaws.removeAll()
         histograms.removeAll()
         focus.removeAll()
         pending.removeAll()
         inFlight.removeAll()
         failed.removeAll()
+        cancelled.removeAll()
         knownSizes.removeAll()
         live.removeAll()
         epoch &+= 1
@@ -832,6 +933,85 @@ final class DecodeEngine: @unchecked Sendable {
         return nil
     }
 
+    /// Points the T4 tier at a photograph, or at nothing.
+    ///
+    /// One call replaces whatever the tier was doing, which is what makes moving to the next frame
+    /// cheap: the develop for the photograph just left is dropped rather than left to finish and
+    /// land. `nil` means "no T4", so turning the setting off and arrowing onto a JPEG both land
+    /// here and need no separate path.
+    ///
+    /// Idempotent for the same photograph: a second call while one is in flight or already cached
+    /// does not queue anything, so `setFocus` firing on every window resize cannot start a develop
+    /// per resize.
+    @MainActor
+    func setExactRaw(id: PhotoID?, url: URL?, priority: Int = 0) {
+        lock.lock()
+        // Whatever is queued is for a photograph that is no longer the one on screen.
+        pending.removeAll { $0.kind == .exactRaw }
+        for key in inFlight where key.kind == .exactRaw {
+            cancelled.insert(key)
+        }
+        // Cached entries for other photographs go too: 92 MB each, and the tier is meant to hold the
+        // frame in front of the user and nothing else (§7.1).
+        let keep = id.map { exactRaws[$0] != nil } ?? false
+        if !keep {
+            for stale in exactRaws.keys where stale != id {
+                bytes -= exactRaws.removeValue(forKey: stale)?.bytes ?? 0
+            }
+        }
+        guard let id, let url else {
+            lock.unlock()
+            return
+        }
+        if exactRaws[id] != nil {
+            // Touch the stamp so it is the most recently used entry, which keeps the photograph on
+            // screen out of the eviction pass.
+            exactRaws[id]?.stamp = clock
+            lock.unlock()
+            return
+        }
+        let queued = enqueueLocked(
+            Job(
+                id: id, url: url, kind: .exactRaw,
+                // Always the photograph's own size: `scaleFactor` on the filter costs more than it
+                // saves (0.622 s at 0.50 against 0.299 s at 1.0, measured), so there is no smaller
+                // RAW develop to ask for.
+                maxPixel: 0, priority: priority))
+        lock.unlock()
+        if queued { pump() }
+    }
+
+    /// The cached RAW develop for `id`, or nil. Never schedules: `setExactRaw` owns that, so this
+    /// is a single lock-guarded read a view's `body` can make on every redraw.
+    func exactRaw(_ id: PhotoID) -> CGImage? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var entry = exactRaws[id] else { return nil }
+        entry.stamp = clock
+        exactRaws[id] = entry
+        return entry.image
+    }
+
+    /// Drops the whole T4 tier, and any develop queued or in flight for it.
+    ///
+    /// Cancelling matters as much as clearing: a develop already running cannot be interrupted, so
+    /// it is marked cancelled and `store` throws the result away. Clearing `inFlight` alone would
+    /// not do, because `store` puts the entry back — the 92 MB would land in the cache after the
+    /// reason for it had gone. It is recorded in `cancelled` rather than `failed` so that asking
+    /// for the photograph again is allowed to retry.
+    @MainActor
+    func clearExactRaws() {
+        lock.lock()
+        for stale in exactRaws.keys {
+            bytes -= exactRaws.removeValue(forKey: stale)?.bytes ?? 0
+        }
+        pending.removeAll { $0.kind == .exactRaw }
+        for key in inFlight where key.kind == .exactRaw {
+            cancelled.insert(key)
+        }
+        lock.unlock()
+    }
+
     @MainActor
     func histogram(
         _ id: PhotoID, url: URL?, fullPreview: ByteRange? = nil
@@ -910,7 +1090,7 @@ final class DecodeEngine: @unchecked Sendable {
     /// displays and find the cap full of filmstrip work — the failure this ranking exists to prevent.
     static func qualityOfService(for kind: Kind) -> DispatchQoS.QoSClass {
         switch kind {
-        case .display: .userInitiated
+        case .display, .exactRaw: .userInitiated
         case .thumbnail: .utility
         }
     }
@@ -927,7 +1107,7 @@ final class DecodeEngine: @unchecked Sendable {
             switch job.kind {
             case .thumbnail:
                 thumbnailQueue.async { [weak self] in self?.run(job) }
-            case .display:
+            case .display, .exactRaw:
                 run(job)
             }
         }
@@ -945,6 +1125,12 @@ final class DecodeEngine: @unchecked Sendable {
             interval.end()
         case .display:
             decoded = decodeDisplayJob(job)
+        case .exactRaw:
+            // At `.userInitiated`, like a display decode: the user is looking at this photograph, and
+            // at 0.299 s it is the longest single decode in the app.
+            let interval = SignpostInterval.begin(Signposts.decodeExactRaw)
+            decoded = Self.decodeExactRaw(url: job.url)
+            interval.end()
         }
         store(job, decoded)
     }
@@ -1016,13 +1202,23 @@ final class DecodeEngine: @unchecked Sendable {
         // `epoch` moves when a *different* folder is opened; `live` is what the folder holds now.
         // Both must still hold for the pixels to belong anywhere: a decode of a photo that was
         // deleted or replaced while it was running must not be filed under the id it had then.
+        let key = Key(id: job.id, kind: job.kind)
         guard job.epoch == epoch, live.contains(job.id), job.fileSize == knownSizes[job.id] else {
             // Queued for a folder that is no longer open, or for a file that is no longer there;
             // `reset`/`beginShoot` already forgot it was in flight.
             lock.unlock()
             return
         }
-        inFlight.remove(Key(id: job.id, kind: job.kind))
+        // Cancelled after it started: the work was real, so it is not a failure and not a cache
+        // entry either. Dropping it here is what stops a RAW develop from re-inserting 92 MB after
+        // the user turned the setting off.
+        if cancelled.remove(key) != nil {
+            inFlight.remove(key)
+            lock.unlock()
+            onLand?(job.id)
+            return
+        }
+        inFlight.remove(key)
         if let image {
             // The size the *pixels* have, not the size that was asked for: a file smaller than the
             // request comes back at its own size, and recording the request would make a 1200 px JPEG
@@ -1034,6 +1230,11 @@ final class DecodeEngine: @unchecked Sendable {
             case .thumbnail:
                 counters.thumbnailDecodes += 1
                 insert(&thumbnails, job.id, entry)
+            case .exactRaw:
+                // No "must not shrink the cache" dance here: a RAW develop is always the
+                // photograph's own size, so there is no smaller version of it to regress to.
+                counters.exactRawDecodes += 1
+                insert(&exactRaws, job.id, entry)
             case .display:
                 // A decode that finished after a bigger one must not shrink the cache: the window
                 // grew while this was in flight, and putting the small one back would make every
@@ -1074,9 +1275,16 @@ final class DecodeEngine: @unchecked Sendable {
         for (id, entry) in displays where !focus.contains(id) {
             candidates.append((id, entry.stamp, entry.bytes))
         }
+        // T4 entries join the same LRU pool. A RAW develop is the most expensive thing here, so it
+        // is the first thing worth dropping when the budget is tight — and the focus window is
+        // still protected, so the photo on screen keeps its pixels.
+        for (id, entry) in exactRaws where !focus.contains(id) {
+            candidates.append((id, entry.stamp, entry.bytes))
+        }
         for candidate in candidates.sorted(by: { $0.stamp < $1.stamp }) where bytes > budgetBytes {
             if let entry = thumbnails.removeValue(forKey: candidate.id) { bytes -= entry.bytes }
             if let entry = displays.removeValue(forKey: candidate.id) { bytes -= entry.bytes }
+            if let entry = exactRaws.removeValue(forKey: candidate.id) { bytes -= entry.bytes }
             histograms.removeValue(forKey: candidate.id)
         }
     }
@@ -1312,6 +1520,65 @@ final class DecodeEngine: @unchecked Sendable {
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         return context.makeImage() ?? image
     }
+
+    // MARK: - T4: the one true RAW develop
+    //
+    // Everything else in this file reads the camera's **embedded JPEG preview**. This is the only
+    // place the sensor data is developed, and it exists because Settings → Viewer → "Exact RAW"
+    // asks for it by name. Measured on a Canon R8 CR3 (`RealRawDecodeTests`, todo.md §0.5):
+    //
+    // | call | result | cost |
+    // | --- | --- | --- |
+    // | `CIRAWFilter(imageURL:)` + render | 6000×4000, the sensor data | **0.299 s**, 92 MB |
+    // | the preview decode the app ships | 6000×4000, the camera's JPEG | 0.089 s |
+    //
+    // So T4 is ~3.4× the cost of what it replaces, which is why it is on demand and current-photo
+    // only rather than part of the prefetch (§7.1).
+    //
+    // ## Three things that are easy to get wrong, and were
+    //
+    // **1. `CIRAWFilter(imageURL:)`, not `CIFilter(name: "CIRAWFilter")`.** The name-based route
+    // returns an object whose `inputKeys` is **empty**, and setting the obvious
+    // `inputImage` key throws `NSUnknownKeyException` — an Objective-C exception Swift cannot
+    // catch, so it terminates the process rather than failing a decode. `CIRAWFilter` is public
+    // API (`CoreImage/CIRAWFilter.h`, `NS_CLASS_AVAILABLE(12_0, 15_0)`); the class method taking a
+    // `URL` is the supported way in.
+    //
+    // **2. The filter applies the EXIF orientation itself, so this must not.** `CIRAWFilter
+    // .orientation` defaults to the file's EXIF tag and the output *geometry* follows it: on one
+    // CR3, `.up` yields a 6000×4000 extent and `.left` yields 4000×6000. Every other path in this
+    // file therefore rotates via `applying(orientation:to:)`, and doing that here as well would
+    // rotate an orientation-8 frame **twice** — the exact bug that function's comment documents
+    // ("a portrait frame with the jersey reading LLORRAC"). 26 of Game1JENKS's 708 frames are
+    // orientation 8. `RealRawDecodeTests.testExactRawKeepsTheExifOrientation` pins this.
+    //
+    // **3. Do not ask the filter to scale.** `scaleFactor` is documented as a drawing optimisation,
+    // and measured here it costs *more*: 0.50 took 0.622 s and 0.34 took 0.579 s, against 0.299 s
+    // at 1.0. `isDraftModeEnabled` is no help either at full size (0.291 s vs 0.299 s). So the
+    // develop is always full resolution and the layer resamples, which is also the only way the
+    /// picture keeps the detail the user turned the setting on for.
+    static func decodeExactRaw(url: URL) -> CGImage? {
+        guard let filter = CIRAWFilter(imageURL: url), let output = filter.outputImage else {
+            return nil
+        }
+        let context = sharedRawContext
+        guard let rendered = context.createCGImage(output, from: output.extent.integral) else {
+            return nil
+        }
+        // Measured layout of `rendered`: 8 bpc, 32 bpp, `deviceRGB`, but `byteOrder32Little` is
+        // **not** set (raw value 1, `premultipliedFirst` in the default byte order). So
+        // `isDisplayLayout` returns false and this redraw is real work, not a no-op — it is the
+        // step that keeps the conversion off the main thread and out of the layer commit (§7.5).
+        return inDisplayLayout(rendered)
+    }
+
+    /// One context for every T4 develop.
+    ///
+    /// `CIContext` is expensive to build and safe to share, and the engine already runs decodes
+    /// concurrently, so a per-decode context would be both a cost and a source of unbounded Metal
+    /// resource growth. Created on first use rather than at init so a session that never turns T4
+    /// on never pays for it.
+    private static let sharedRawContext: CIContext = CIContext(options: [.cacheIntermediates: false])
 
     /// Just the bytes of a range, or nil. A `FileHandle`-free, allocation-honest read: bounds-checked
     /// against the file's real length so a stale range from a truncated file cannot read past the

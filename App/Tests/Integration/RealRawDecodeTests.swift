@@ -19,8 +19,13 @@
 //      assumed, because the app's memory budget and its arrow-key row both depend on it.
 //   5. The whole pipeline, end to end: scan a real folder, prefetch the focus window, and answer
 //      every frame from the cache with `focusMisses == 0`.
+//   6. T4, the "Exact RAW" develop (`CIRAWFilter`): that it is a real demosaic rather than the
+//      embedded preview, that it costs what §7.1 budgets for it, that it applies the EXIF
+//      orientation **once** (the double-rotation trap), and that it reaches the layer in the layout
+//      a layer can take.
 
 import CoreGraphics
+import CoreImage
 import Foundation
 import XCTest
 
@@ -217,6 +222,284 @@ final class RealRawDecodeTests: XCTestCase {
         XCTAssertEqual(max(display.width, display.height), 2880)
         XCTAssertTrue(DecodeEngine.isDisplayLayout(display))
         XCTAssertEqual(images.byteRangeDecodes, 1, "the display decode came from the reported range")
+    }
+
+    // MARK: T4, the "Exact RAW" develop
+
+    /// The develop is a real RAW render, not the embedded preview again.
+    ///
+    /// This is the claim that `CIRAWFilter` is easy to get wrong, so it is checked the way that
+    /// survives being wrong: against the filter's **own** `previewImage`, inside one pipeline, so
+    /// colour management cannot explain a difference. Compared against the shipping decode it would
+    /// be weaker — the two differ in colour space as well as in pixels, and a colour cast alone can
+    /// produce a few units of difference (measured: 0.24/255 between two preview reads that a
+    /// plausible demosaic would put at several units).
+    ///
+    /// Measured on `IMG_3192.CR3`: **3.2/255**. On `IMG_3181.CR3`: 51.9/255 (that frame is EXIF 8,
+    /// so its preview and its develop are compared at different orientations unless each is
+    /// uprighted first — which is what `testExactRawKeepsTheExifOrientation` is for).
+    func testExactRawDevelopsTheSensorDataNotThePreview() throws {
+        let files = try realCR3s(count: 2)
+        for file in files {
+            let name = file.lastPathComponent
+            let filter = try XCTUnwrap(CIRAWFilter(imageURL: file), "no RAW filter for \(name)")
+            let output = try XCTUnwrap(filter.outputImage, "no output image for \(name)")
+            let context = CIContext(options: [.cacheIntermediates: false])
+            let developed = try XCTUnwrap(
+                context.createCGImage(output, from: output.extent.integral), "\(name) did not render")
+            let preview = try XCTUnwrap(filter.previewImage, "\(name) exposed no preview")
+            let previewCG = try XCTUnwrap(
+                context.createCGImage(preview, from: preview.extent.integral))
+
+            // Only compare frames where both are the same geometry: an orientation difference
+            // produces a large, meaningless number.
+            guard
+                developed.width == previewCG.width, developed.height == previewCG.height
+            else {
+                print(
+                    "\(name): develop \(developed.width)x\(developed.height) vs preview \(previewCG.width)x\(previewCG.height) — geometry differs, skipping the pixel comparison"
+                )
+                continue
+            }
+
+            let difference = try XCTUnwrap(meanAbsDifference(developed, previewCG))
+            print(
+                "\(name): RAW develop vs the filter's own preview, mean abs diff \(String(format: "%.2f", difference))/255"
+            )
+            XCTAssertGreaterThan(
+                difference, 1.5,
+                "\(name): the develop is the embedded preview again — CIRAWFilter did not demosaic")
+        }
+    }
+
+    /// The develop costs what the design says it costs, and the tier's reason for existing.
+    ///
+    /// §7.1 budgets T4 as "on demand" because it is the most expensive decode in the app. Printed
+    /// rather than asserted on absolute numbers (they depend on the machine and on what else is
+    /// running), but the *ratio* to the shipping preview decode is asserted, because that ratio is
+    /// the whole argument for making this opt-in and current-photo-only.
+    ///
+    /// Measured on this machine: develop 0.299 s, preview 0.089 s.
+    func testExactRawCostsMoreThanThePreviewItReplaces() throws {
+        let files = try realCR3s(count: 1)
+        let url = files[0]
+
+        func develop() -> TimeInterval {
+            let start = Date()
+            let filter = CIRAWFilter(imageURL: url)
+            let context = CIContext(options: [.cacheIntermediates: false])
+            if let filter, let output = filter.outputImage {
+                _ = context.createCGImage(output, from: output.extent.integral)
+            }
+            return Date().timeIntervalSince(start)
+        }
+
+        func previewDecode() -> TimeInterval {
+            let start = Date()
+            _ = DecodeEngine.decodeDisplay(url: url, maxPixel: 6000)
+            return Date().timeIntervalSince(start)
+        }
+
+        // Warm both once so the comparison is of steady-state cost, not first-read IO.
+        _ = develop()
+        _ = previewDecode()
+        let raw = develop()
+        let embedded = previewDecode()
+        print(
+            "CR3 RAW develop \(String(format: "%.0f", raw * 1000)) ms vs preview decode "
+                + "\(String(format: "%.0f", embedded * 1000)) ms "
+                + "(\(String(format: "%.1f", raw / max(embedded, 0.001)))×)")
+        XCTAssertGreaterThan(raw, embedded, "if the develop were free, T4 would belong in the prefetch")
+    }
+
+    /// EXIF orientation is applied **once**.
+    ///
+    /// This is the regression test for a wrong-picture bug rather than a slow one. Every other
+    /// decode path in the app rotates with `applying(orientation:to:)`, because ImageIO's
+    /// container read does not apply the tag. `CIRAWFilter` **does** apply it: `filter.orientation`
+    /// defaults to the file's EXIF tag and the output geometry follows it. So a T4 implementation
+    /// that also called `applying(orientation:to:)` would rotate an orientation-8 frame twice and
+    /// show it upside down — the exact failure `applying(orientation:to:)`'s comment documents
+    /// ("a portrait frame with the jersey reading LLORRAC"), and 26 of Game1JENKS's 708 frames are
+    /// orientation 8, so it is not a corner.
+    ///
+    /// The assertion is on geometry, which is what a rotation actually changes, and it holds
+    /// without needing a person to look at the picture: for orientation 8 the developed frame must
+    /// come out **portrait** (a quarter turn from the sensor's 6000×4000 landscape), and upright.
+    func testExactRawKeepsTheExifOrientation() throws {
+        // Sample as many frames as the folder offers, up to a cap: the point is to find a rotated
+        // one, and on a real shoot 24 is plenty, but the test must not depend on a folder size (and
+        // must not fail on a small one).
+        let files = try realCR3s(count: 24)
+        var sawRotated = false
+
+        // Only a couple of frames are actually rendered: each develop is 0.299 s and 92 MB, and the
+        // property being checked does not need 24 of them. Every frame in the sample is still
+        // checked for the cheap half of the claim (the filter picked up the tag), which needs no
+        // render at all.
+        let context = CIContext(options: [.cacheIntermediates: false])
+        var rendered = 0
+        for file in files {
+            let name = file.lastPathComponent
+            let orientation = try exifOrientation(of: file)
+            let filter = try XCTUnwrap(CIRAWFilter(imageURL: file), "no RAW filter for \(name)")
+
+            // The filter must have picked the tag up from the file by itself. If it did not, the
+            // develop would come out in the sensor's frame and the app would have to apply the tag
+            // itself — which is the decision this test pins.
+            XCTAssertEqual(
+                Int(filter.orientation.rawValue), Int(orientation),
+                "\(name): the filter read orientation \(filter.orientation.rawValue) but the "
+                    + "file says \(orientation)")
+
+            // Quarter turns only (5, 6, 7, 8); 1-4 do not change which way is longer.
+            guard [5, 6, 7, 8].contains(orientation), rendered < 2 else { continue }
+            sawRotated = true
+            rendered += 1
+
+            let output = try XCTUnwrap(filter.outputImage)
+            let developed = try XCTUnwrap(
+                context.createCGImage(output, from: output.extent.integral))
+            // A quarter turn from the sensor's 6000x4000 landscape frame comes out portrait. If the
+            // app also applied the tag, this would be landscape again — upside down.
+            XCTAssertGreaterThan(
+                developed.height, developed.width,
+                "\(name) is EXIF \(orientation), so the develop must come out upright (portrait); "
+                    + "it came out \(developed.width)x\(developed.height), which means the tag was "
+                    + "either dropped or applied twice")
+        }
+        // Guard against the test silently testing nothing: if none of the first 24 frames is
+        // rotated, this asserts nothing and would pass forever.
+        XCTAssertTrue(sawRotated, "no rotated frame in the first 24 photos; pick a larger sample")
+    }
+
+    /// The T4 decode path end to end on a real CR3, through the provider.
+    ///
+    /// The unit suite covers the plumbing with synthetic files; this is the same claim against a
+    /// real CR3 — the develop produces the photograph's own pixels, at the sensor's size, in the
+    /// layout a layer can take without a conversion.
+    @MainActor
+    func testExactRawThroughTheProviderOnRealCR3s() async throws {
+        let files = try realCR3s(count: 24)
+        // Prefer a rotated frame: the double-rotation bug only shows on one.
+        let url = try files.first { try exifOrientation(of: $0) == 8 } ?? files[0]
+        let provider = ImageProvider(memoryBudgetBytes: 1 << 30)
+        let id: PhotoID = 1
+        provider.open(
+            folder: url.deletingLastPathComponent(),
+            photos: [
+                PhotoMeta(
+                    id: id, relPath: url.lastPathComponent, companions: [], kind: .raw(.cr3),
+                    fileSize: (try XCTUnwrap(
+                        (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
+                            .uint64Value)),
+                    captureTime: nil, shutterCount: nil, fileNumber: nil, cameraMake: nil,
+                    cameraModel: nil, cameraSerial: nil, lensModel: nil, focalLengthMm: nil,
+                    exposureTimeS: nil, fNumber: nil, iso: nil, exposureCompEv: nil,
+                    meteringMode: nil, driveMode: nil, shutterMode: nil,
+                    orientation: try exifOrientation(of: url), width: 6000, height: 4000,
+                    af: nil, preview: nil, fullPreview: nil, warnings: [])
+            ])
+
+        let focus = FocusRequest(
+            windows: [FocusWindow(batchID: 1, photoIDs: [id])], currentPhoto: id,
+            viewportPixelSize: CGSize(width: 1440, height: 900), exactRaw: true)
+        provider.setFocus(focus)
+
+        // Wait for the *develop*, not merely for an image: while it is running, `displayImage`
+        // legitimately answers with the T2 preview (the same never-blank-the-viewer rule as a
+        // resize), so polling for "any image" would race and pick up 1440 px instead of 6000.
+        var landed = false
+        for _ in 0..<1_200 {
+            if provider.stats.exactRawDecodes > 0 {
+                landed = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(landed, "the RAW develop never landed within 60s")
+        let wentIdle = await provider.waitUntilIdle(timeout: 60)
+        XCTAssertTrue(wentIdle, "the engine never went idle")
+
+        let developed = try XCTUnwrap(provider.displayImage(for: id), "no image after the develop")
+        XCTAssertEqual(provider.stats.exactRawDecodes, 1, "exactly one develop for one photograph")
+        XCTAssertGreaterThan(provider.stats.exactRawBytes, 0, "the develop is real memory")
+        // The develop is the sensor's own frame, so the loupe's "100%" is 100% of the sensor rather
+        // than of the camera's preview. Asserted with the *orientation applied*, because a quarter
+        // turn is exactly what a double rotation would undo: for an EXIF 8 frame the sensor is
+        // 6000×4000 landscape and the upright develop is 4000×6000, so a develop that came back
+        // landscape would mean the tag was applied twice.
+        let orientation = try exifOrientation(of: url)
+        let sensorIsLandscape = orientation == 1 || orientation == 3
+        XCTAssertEqual(
+            sensorIsLandscape ? developed.width : developed.height, 6000,
+            "the develop is not the sensor's own frame at the file's orientation")
+        if !sensorIsLandscape {
+            XCTAssertGreaterThan(
+                developed.height, developed.width,
+                "an EXIF \(orientation) frame must come out upright (portrait); "
+                    + "\(developed.width)x\(developed.height) means the tag was applied twice")
+        }
+        // `CIRAWFilter`'s output lacks `byteOrder32Little`, so this is the assertion that
+        // `inDisplayLayout` really ran on the way in.
+        XCTAssertTrue(
+            DecodeEngine.isDisplayLayout(developed),
+            "the develop came back as \(developed.bitsPerComponent)bpc in "
+                + "\(developed.colorSpace?.name.map(String.init(describing:)) ?? "no space") "
+                + "with bitmapInfo \(developed.bitmapInfo.rawValue)")
+
+        // And with the setting off, the picture is the preview again.
+        provider.setFocus(
+            FocusRequest(
+                windows: [FocusWindow(batchID: 1, photoIDs: [id])], currentPhoto: id,
+                viewportPixelSize: CGSize(width: 1440, height: 900), exactRaw: false))
+        let settled = await provider.waitUntilIdle(timeout: 60)
+        XCTAssertTrue(settled)
+        XCTAssertEqual(provider.stats.exactRawBytes, 0)
+    }
+
+    /// The EXIF orientation ImageIO reports for a file, as an integer 1...8.
+    ///
+    /// Read from the **top level** of the properties, or from TIFF — *not* from the Exif
+    /// sub-dictionary. That was measured rather than guessed: for a CR3 the tag is at the top level
+    /// (and mirrored in `{TIFF}`), and `{Exif}` has no orientation key at all. Reading the Exif
+    /// dictionary returns nil, which a `?? 1` would silently turn into "every frame is upright" —
+    /// which is exactly the assertion this test exists to make, so it would have passed while
+    /// testing nothing. The app itself never reads the tag from ImageIO either: it comes from the
+    /// core's own parser (`PhotoMeta.orientation`).
+    private func exifOrientation(of url: URL) throws -> UInt8 {
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let properties = try XCTUnwrap(
+            CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        if let top = properties[kCGImagePropertyOrientation] as? UInt8 { return top }
+        let tiff = try XCTUnwrap(properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any])
+        return try XCTUnwrap(tiff[kCGImagePropertyTIFFOrientation] as? UInt8, "no orientation tag")
+    }
+
+    /// Mean absolute per-channel difference between two images of the same size, in 0...255 units.
+    private func meanAbsDifference(_ lhs: CGImage, _ rhs: CGImage) -> Double? {
+        guard lhs.width == rhs.width, lhs.height == rhs.height else { return nil }
+        func pixels(_ image: CGImage) -> [UInt8]? {
+            guard
+                let context = CGContext(
+                    data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                    bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return nil }
+            context.interpolationQuality = .none
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            guard let data = context.data else { return nil }
+            return Array(
+                UnsafeBufferPointer(
+                    start: data.bindMemory(to: UInt8.self, capacity: image.width * image.height * 4),
+                    count: image.width * image.height * 4))
+        }
+        guard let a = pixels(lhs), let b = pixels(rhs) else { return nil }
+        var total = 0
+        for index in stride(from: 0, to: a.count, by: 4) {
+            for channel in 0..<3 { total += abs(Int(a[index + channel]) - Int(b[index + channel])) }
+        }
+        return Double(total) / Double(a.count / 4 * 3)
     }
 
     @MainActor

@@ -758,6 +758,226 @@ struct ImageProviderTests {
     }
 }
 
+/// "Exact RAW" (T4, todo.md §7.1) without any RAW file.
+///
+/// A real CR3 is only in `RealRawDecodeTests`, which needs the photos. What can be pinned without
+/// them is everything about the tier that is a property of the *plumbing* rather than of the
+/// decoder: that it is a separate cache kind, that only RAW photographs qualify, and that turning
+/// it off gives the picture back. The decode itself is asserted in the integration target, where
+/// it is also compared against the camera's own embedded JPEG.
+///
+/// The JPEG here is deliberate. `CIRAWFilter(imageURL:)` returns a usable filter for a JPEG and
+/// even for a file of junk bytes named `.cr3` (both measured), so a "did the filter fail?" test
+/// would pass while showing the wrong picture. The gate is `PhotoMeta.kind`, and that is what these
+/// tests check.
+@Suite("Exact RAW (T4)")
+@MainActor
+struct ExactRawTests {
+    /// A folder of JPEGs declared as `.raw(.cr3)`, so the only thing being tested is the gate and
+    /// the plumbing: whether T4 touches a file at all is decided by `kind`, not by the extension.
+    private func rawDeclaredFolder(count: Int = 2) throws -> (folder: URL, photos: [PhotoMeta]) {
+        let shoot = ImageFixtures.shoot(count: count)
+        var photos = shoot.photos
+        for index in photos.indices {
+            photos[index].kind = .raw(.cr3)
+            photos[index].width = 6000
+            photos[index].height = 4000
+        }
+        return (shoot.folder, photos)
+    }
+
+    private func focus(_ ids: [PhotoID], current: PhotoID, exactRaw: Bool) -> FocusRequest {
+        FocusRequest(
+            windows: [FocusWindow(batchID: 1, photoIDs: ids)], currentPhoto: current,
+            exactRaw: exactRaw)
+    }
+
+    /// The trap the handoff warned about: a T4 entry must never answer a display request.
+    ///
+    /// `Kind` is part of the cache key, so the separation is structural rather than a check
+    /// somewhere. That is only worth anything if it holds, and the way it fails is a wrong picture
+    /// rather than a slow one, so it is asserted directly: with T4 off, the display image is the
+    /// JPEG the app has always shown, and the RAW counters stay at zero.
+    @Test("A RAW develop is its own cache kind and never answers a display request")
+    func exactRawIsASeparateCacheKind() async throws {
+        let (folder, photos) = try rawDeclaredFolder(count: 1)
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20)
+        provider.open(folder: folder, photos: photos)
+        let id = photos[0].id
+
+        provider.setFocus(focus([id], current: id, exactRaw: false))
+        #expect(await provider.waitUntilIdle())
+        let preview = try #require(provider.displayImage(for: id))
+        let previewHistogram = try #require(provider.histogram(for: id))
+        #expect(provider.stats.exactRawDecodes == 0, "T4 was off, so nothing should have developed")
+
+        provider.setFocus(focus([id], current: id, exactRaw: true))
+        #expect(await provider.waitUntilIdle())
+
+        // The develop ran, and only once.
+        #expect(provider.stats.exactRawDecodes == 1, "the setting is on and the file is RAW")
+        #expect(provider.stats.displayDecodes == 1, "and it did not disturb the display tier")
+
+        // The display tier still holds the *embedded preview*. This is the whole invariant: the
+        // histogram is computed from `displays` only, so if a RAW develop had been filed there — the
+        // wrong-picture bug a shared `Kind` would allow — this would have changed. It is checked
+        // through the histogram rather than `displayImage` because `displayImage` *should* return
+        // the RAW while the setting is on; that is the feature working, not the bug.
+        // Both asks are served from the cache the first ask filled, and nothing recomputed it — if
+        // the display tier had been overwritten, `histogramComputes` would have gone up instead.
+        let histogram = provider.histogram(for: id)
+        #expect(histogram == previewHistogram, "the histogram must be the one from the preview")
+        #expect(provider.stats.histogramComputes == 1, "the display tier's bitmap was replaced")
+
+        // And with the setting off again, the preview is exactly what comes back.
+        provider.setFocus(focus([id], current: id, exactRaw: false))
+        #expect(await provider.waitUntilIdle())
+        #expect(identical(preview, try #require(provider.displayImage(for: id))))
+    }
+
+    /// A JPEG folder must be untouched by T4, whatever `CIRAWFilter` would have done with it.
+    @Test("A non-RAW photograph never gets a RAW develop, even with the setting on")
+    func nonRawPhotographsAreSkipped() async throws {
+        let shoot = ImageFixtures.shoot(count: 1)  // `.jpeg`, as the fixture writes it
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20)
+        provider.open(folder: shoot.folder, photos: shoot.photos)
+        let id = shoot.photos[0].id
+
+        provider.setFocus(focus([id], current: id, exactRaw: true))
+        #expect(await provider.waitUntilIdle())
+
+        #expect(provider.stats.exactRawDecodes == 0, "a JPEG is not RAW, so nothing should develop")
+        #expect(provider.stats.displayDecodes == 1)
+        #expect(provider.displayImage(for: id) != nil)
+    }
+
+    /// Turning the setting off must hand the picture back, and release the memory.
+    @Test("Turning the setting off drops the develop and returns to the embedded preview")
+    func turningItOffReturnsToThePreview() async throws {
+        let (folder, photos) = try rawDeclaredFolder(count: 1)
+        let provider = ImageProvider(memoryBudgetBytes: 64 << 20)
+        provider.open(folder: folder, photos: photos)
+        let id = photos[0].id
+
+        provider.setFocus(focus([id], current: id, exactRaw: false))
+        #expect(await provider.waitUntilIdle())
+        let preview = try #require(provider.displayImage(for: id))
+
+        provider.setFocus(focus([id], current: id, exactRaw: true))
+        #expect(await provider.waitUntilIdle())
+        #expect(provider.stats.exactRawBytes > 0, "a develop is ~92 MB and must be budgeted")
+
+        provider.setFocus(focus([id], current: id, exactRaw: false))
+        #expect(await provider.waitUntilIdle())
+        #expect(provider.stats.exactRawBytes == 0, "the tier must not keep 92 MB after being turned off")
+        #expect(identical(preview, try #require(provider.displayImage(for: id))))
+    }
+
+    /// Moving to the next photograph must not leave the previous one's develop behind.
+    ///
+    /// 92 MB a picture is the whole reason T4 is one photograph deep, so this is the property that
+    /// keeps the tier affordable while the user holds the arrow key.
+    @Test("Only the photograph on screen has a RAW develop")
+    func movingOnDropsThePreviousDevelop() async throws {
+        let (folder, photos) = try rawDeclaredFolder(count: 3)
+        let provider = ImageProvider(memoryBudgetBytes: 256 << 20)
+        provider.open(folder: folder, photos: photos)
+        let ids = photos.map(\.id)
+
+        provider.setFocus(focus(ids, current: ids[0], exactRaw: true))
+        #expect(await provider.waitUntilIdle())
+        #expect(provider.stats.exactRawDecodes == 1)
+
+        provider.setFocus(focus(ids, current: ids[2], exactRaw: true))
+        #expect(await provider.waitUntilIdle())
+        #expect(provider.stats.exactRawDecodes == 2, "only the new photograph develops")
+        // Two pictures, not three: the one the user left is gone.
+        #expect(provider.stats.exactRawBytes <= 6000 * 4000 * 4, "one develop, not the whole window")
+    }
+
+    /// A develop that is *already running* when the setting is turned off must be thrown away.
+    ///
+    /// This is the awkward case, and it is separate from the one above because a running decode
+    /// cannot be interrupted: it completes, and then something has to refuse to keep the 92 MB. The
+    /// three states are distinct and each is handled differently — *queued* work is removed, *in
+    /// flight* work is marked cancelled and dropped by `store`, and *cached* work is evicted. A
+    /// test that only waits for the decode and then turns the setting off exercises the third.
+    ///
+    /// The fixture is deliberately larger than the others (1600 px, a ~26 ms develop, measured)
+    /// because at 400 px the decode finishes before the setting can be turned off and the race
+    /// never opens — which is exactly how a missing cancellation check passes CI unnoticed.
+    @Test("A RAW develop still running when the setting is turned off is discarded")
+    func anInFlightDevelopIsDiscarded() async throws {
+        let folder = ImageFixtures.folder()
+        // A JPEG named as a CR3: `CIRAWFilter` develops any image, so the develop really runs and
+        // really costs time, without needing a real RAW file in the repository.
+        ImageFixtures.jpeg(in: folder, named: "IMG_0000.jpg", width: 1600, height: 1600)
+        let id: PhotoID = 1
+        let provider = ImageProvider(memoryBudgetBytes: 256 << 20)
+        provider.open(
+            folder: folder,
+            photos: [
+                PhotoMeta(
+                    id: id, relPath: "IMG_0000.jpg", companions: [], kind: .raw(.cr3),
+                    fileSize: 772_000, captureTime: nil, shutterCount: nil, fileNumber: nil,
+                    cameraMake: nil, cameraModel: nil, cameraSerial: nil, lensModel: nil,
+                    focalLengthMm: nil, exposureTimeS: nil, fNumber: nil, iso: nil,
+                    exposureCompEv: nil, meteringMode: nil, driveMode: nil, shutterMode: nil,
+                    orientation: 1, width: 1600, height: 1600, af: nil, preview: nil,
+                    fullPreview: nil, warnings: [])
+            ])
+
+        provider.setFocus(focus([id], current: id, exactRaw: true))
+        // Turn the setting off while the develop is still running. `decodesInProgress` is polled
+        // rather than slept on, so the test does not depend on the decode being slow enough — it
+        // depends only on catching it in flight.
+        var caughtInFlight = false
+        for _ in 0..<20_000 where provider.stats.exactRawInFlight > 0 {
+            caughtInFlight = true
+            break
+        }
+        provider.setFocus(focus([id], current: id, exactRaw: false))
+        #expect(await provider.waitUntilIdle())
+
+        #expect(caughtInFlight, "the develop finished too fast to be cancelled; make it slower")
+        #expect(
+            provider.stats.exactRawBytes == 0,
+            "a develop that lands after the setting is off must not put 92 MB back in the cache")
+        // Cancelled is not failed: asking again must be allowed to develop.
+        provider.setFocus(focus([id], current: id, exactRaw: true))
+        #expect(await provider.waitUntilIdle())
+        // One decode, not two: the cancelled develop is *discarded*, not counted as having
+        // happened. So the counter is 1 — the retry — and it is positive, which is the part that
+        // matters: a cancellation must not land in `failed`, or the photograph could never be
+        // developed again for the rest of the session.
+        #expect(
+            provider.stats.exactRawDecodes == 1,
+            "a cancelled develop must be discarded, not counted as a decode")
+        #expect(provider.stats.decodeFailures == 0, "and it must not be remembered as a failure")
+        #expect(provider.stats.exactRawBytes > 0)
+    }
+
+    /// The tier's memory is real memory: it goes through the same budget as everything else.
+    @Test("A RAW develop is counted against the memory budget and shed under pressure")
+    func exactRawIsBudgetedAndShed() async throws {
+        let (folder, photos) = try rawDeclaredFolder(count: 1)
+        let provider = ImageProvider(memoryBudgetBytes: 512 << 20)
+        provider.open(folder: folder, photos: photos)
+        let id = photos[0].id
+
+        provider.setFocus(focus([id], current: id, exactRaw: true))
+        #expect(await provider.waitUntilIdle())
+        #expect(provider.stats.exactRawBytes > 0)
+
+        // Shed from a *different* focus, so the develop is outside the focus window — which is what
+        // makes it a candidate for being dropped at all.
+        let other: PhotoID = 999
+        provider.setFocus(focus([other], current: other, exactRaw: false))
+        provider.shedForMemoryPressure()
+        #expect(provider.stats.exactRawBytes == 0, "a shed must take the 92 MB with it")
+    }
+}
+
 /// Two images are identical when every pixel of every row matches.
 private func identical(_ lhs: CGImage, _ rhs: CGImage) -> Bool {
     guard lhs.width == rhs.width, lhs.height == rhs.height else { return false }
