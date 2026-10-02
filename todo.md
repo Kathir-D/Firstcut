@@ -147,6 +147,24 @@ below is struck through where finished, and what remains is either in [§0.2](#0
   measured.**
 - **Local checks before every push:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo test` (all from `core/`), then `scripts/generate-project.sh` and `xcodebuild … test`.
+- **A green local build is not evidence about CI.** They are different toolchains: CI builds with
+  **Xcode 16.4** (macOS 15 SDK) while the app is developed on **Xcode 27**. Three separate traps
+  have now cost a red push each, all of which compiled cleanly here:
+  - `bitmapInfo.byteOrder` — a newer-SDK *overlay* member, absent from the macOS 15 SDK. Compare
+    through `bitmapInfo.rawValue & CGBitmapInfo.byteOrderMask`.
+  - `openSettings()` — throws on one SDK and not the other.
+  - **A `static let` of a non-`Sendable` type is a Swift 6 concurrency error on CI only.** This is
+    the one to watch for, because it is not an SDK difference at all: it is a *compiler* difference,
+    so no amount of reading headers predicts it. `CIContext` is not `Sendable`, and a shared
+    `static let sharedRawContext` passed `xcodebuild test` locally and failed CI with
+    "not concurrency-safe ... may have shared mutable state". The fix is `nonisolated(unsafe)`,
+    which is legitimate for a `let` that is initialised once and never mutated (`CIContext` is
+    documented as safe to use from multiple threads for rendering) — the same idiom as
+    `PhotoViewerHost.storedFactory` and `SettingsView.settingBinding`.
+  - `GCC_TREAT_WARNINGS_AS_ERRORS` is deliberately **not** set, because it also covers the linker,
+    which warns about the locally built Rust library's SDK.
+  When something here is odd, prefer the spelling that is boring on both toolchains: compare raw
+  values, avoid `try` on SDK-dependent APIs, and mark shared non-`Sendable` constants explicitly.
 - **Seeing the app:** `scripts/build-app.sh --open`, then `screencapture` and read the PNG back; or run
   the `Screenshots` workflow. The launch flags `-FirstcutMockShoot 1`, `-FirstcutFolder <path>`,
   `-FirstcutViewMode grid|compare2|…`, `-FirstcutFinish 1`, `-FirstcutSettings 1` and
