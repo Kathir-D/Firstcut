@@ -44,18 +44,24 @@ public enum RatingRules {
         -> Tier
     {
         if rating.flag == .reject { return .rejected }
+        // A keep is a keep in **both** modes, whatever it displays as, and this has to be checked
+        // before the star count. It is not a cosmetic ordering: `tier` decides what Finish moves to
+        // the kept folder and what it trashes. A keep displays as `keepDisplayStars` — one star,
+        // which is below `keepThreshold` — so grading it by stars alone would call it a Maybe and
+        // send the user's keeps to the trash. Mirrors `Rating::mode_tier` in the core.
+        if rating.keep { return .keep }
         switch mode {
         case .keep:
             // A 4–5 star photo is a keep in *both* modes, so switching to keep mode must not make
             // the user's keeps vanish. That promotion is a **display** rule: the stored `keep` stays
             // false and the stored `stars` stay four. See `synchronized` for why the write-back is
             // the bug.
-            return rating.keep || Int(rating.stars) >= keepThreshold ? .keep : .unrated
+            return Int(rating.stars) >= keepThreshold ? .keep : .unrated
         case .stars:
             // §6.1: 5 or 4 is a full keep, and the boundary is the setting, not a constant, so a
             // photographer who wants only 5-star keeps can ask for it. The tier follows the stars
-            // *shown*: a keep made in keep mode (stored with 0 stars) is the 5 stars it displays as,
-            // and a Keep, as the core's `Rating::tier` counts it for Finish.
+            // *shown*, which for a keep is the one star it displays as — but that case returned
+            // above, so here the stars are real stars the user gave.
             let stars = Int(displayStars(rating, mode: mode, keepThreshold: keepThreshold))
             if stars >= keepThreshold { return .keep }
             if stars >= 3 { return .good }
@@ -114,13 +120,21 @@ public enum RatingRules {
         _ rating: Rating, mode: RatingMode, keepThreshold: Int = defaultKeepThreshold
     ) -> UInt8 {
         switch mode {
-        case .stars: rating.stars == 0 && rating.keep ? keepStars : rating.stars
+        case .stars: rating.stars == 0 && rating.keep ? keepDisplayStars : rating.stars
         case .keep: rating.stars
         }
     }
 
-    /// Star count for a keep, used when a keep is created from the flag key in keep mode.
-    public static let keepStars: UInt8 = 5
+    /// Star count a keep **displays** as in stars mode, and is written to XMP as.
+    ///
+    /// **One star, not five** (owner decision, 2026-10-02). Five is indistinguishable from a
+    /// stars-mode 5-star rating, so a keep and a rating would collapse into one value in Lightroom.
+    /// One star is below `defaultKeepThreshold` (4), so the modes stay separable — which is why the
+    /// invariant is a compile-time assertion in the core (`Rating::KEEP_DISPLAY_STARS`).
+    ///
+    /// Not to be confused with `defaultKeepThreshold`, which answers a different question: how many
+    /// stars make a photo a keep. That is unchanged at 4 (or 5 under the setting).
+    public static let keepDisplayStars: UInt8 = 1
 
     /// Tiers in the order the summary sheet lists them.
     public static let summaryOrder: [Tier] = [.keep, .good, .maybe, .unrated, .rejected]

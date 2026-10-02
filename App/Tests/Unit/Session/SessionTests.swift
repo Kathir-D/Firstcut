@@ -38,7 +38,24 @@ struct RatingRulesTests {
         let kept = Rating(keep: true)
         #expect(RatingRules.tier(of: kept, mode: .stars) == .keep)
         #expect(RatingRules.isKeep(kept, mode: .stars))
-        #expect(RatingRules.displayStars(kept, mode: .stars) == 5)
+        // One star, not five (owner decision, 2026-10-02): five would be indistinguishable from a
+        // stars-mode 5-star rating. The tier above still has to be Keep, which is why the keep flag
+        // is checked before the stars -- see `RatingRules.tier`.
+        #expect(RatingRules.displayStars(kept, mode: .stars) == RatingRules.keepDisplayStars)
+        #expect(RatingRules.displayStars(kept, mode: .stars) == 1)
+    }
+
+    @Test("A keep is not a stars-mode rating, in either direction")
+    func aKeepDoesNotCollideWithAStarsRating() {
+        // The reason a keep is one star: one star is below the 4-star keep threshold, so a photo
+        // written as 1 star by another tool is never silently promoted to a keep.
+        let oneStar = Rating(stars: 1)
+        #expect(RatingRules.tier(of: oneStar, mode: .stars) == .maybe)
+        #expect(RatingRules.isKeep(oneStar, mode: .stars) == false)
+        #expect(RatingRules.isKeep(oneStar, mode: .keep) == false)
+        // And the reverse: a keep and a 5-star rating are different values, so switching modes
+        // cannot tell them apart.
+        #expect(RatingRules.displayStars(Rating(keep: true), mode: .stars) != 5)
     }
 
     @Test("A rejected photo is never a keep, whatever its stars")
@@ -69,15 +86,16 @@ struct RatingRulesTests {
         #expect(RatingRules.tier(of: rated, mode: .keep, keepThreshold: 4) == .keep)
     }
 
-    @Test("A keep in keep mode is stored as `keep`, not as 5 stars")
+    @Test("A keep in keep mode is stored as `keep`, not as stars")
     func keepIsStoredAsKeep() {
         // Also the reverse of the old rule. `stars` is the stars-mode field; writing 5 into it from a
         // keep-mode keystroke made a keep-mode photo show 5 stars when the user switched back.
         let kept = RatingRules.applying(to: Rating(), mode: .keep) { $0.keep = true }
         #expect(kept.keep)
         #expect(kept.stars == 0, "the stars field belongs to stars mode only")
-        // Displayed in stars mode, a keep is the 5 stars it means (todo.md §6).
-        #expect(RatingRules.displayStars(kept, mode: .stars) == 5)
+        // Displayed in stars mode, a keep is the one star it means. One, not five: five would be
+        // indistinguishable from a stars-mode 5-star rating (owner decision, 2026-10-02).
+        #expect(RatingRules.displayStars(kept, mode: .stars) == RatingRules.keepDisplayStars)
     }
 
     @Test("Toggling keep leaves existing stars alone")
@@ -485,11 +503,13 @@ struct AppModelRatingTests {
         model.perform(.toggleKeep)
         #expect(model.currentPhoto?.rating.keep == true)
         #expect(model.currentPhoto?.tier == .keep)
-        // The §6 "keep ↔ 5 stars" mapping is a *display* rule. It used to be asserted against
+        // The "keep ↔ 1 star" mapping is a *display* rule. It used to be asserted against
         // `rating.stars`, i.e. the stored value — and storing it is what made `Session::set_rating`
         // write a keep-mode photo as 5 stars into XMP and a stars-mode photo as 0. Assert the
         // display, which is what the user sees, and assert the stored stars are untouched.
-        #expect(RatingRules.displayStars(model.currentPhoto!.rating, mode: .stars) == 5)
+        #expect(
+            RatingRules.displayStars(model.currentPhoto!.rating, mode: .stars)
+                == RatingRules.keepDisplayStars)
         #expect(model.currentPhoto?.rating.stars == 0)
         model.perform(.toggleKeep)
         #expect(model.currentPhoto?.rating.keep == false)

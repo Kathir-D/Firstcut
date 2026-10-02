@@ -91,6 +91,17 @@ public enum KeepMapping: Equatable, Sendable {
     case rating(Int)  // 1...5
     case colorLabel(ColorLabel)
 
+    /// The default: a keep is written as **one** star (owner decision, 2026-10-02).
+    ///
+    /// Was 5, which is indistinguishable from a stars-mode 5-star rating: import the shoot into
+    /// Lightroom, switch modes, and a keep reads as "rated 5". One star is below the 4-star keep
+    /// threshold, so the two can never be confused in either direction, and it is the conventional
+    /// XMP "pick". Mirrors `Rating::KEEP_DISPLAY_STARS` in the core — the app draws one star and the
+    /// sidecar says one star, so what Lightroom shows on import is what the user saw.
+    public static let stars1 = KeepMapping.rating(1)
+
+    /// The old default, kept only so an existing settings file written under the old rule still
+    /// reads. `Codable` would otherwise fail to decode it and reset every metadata setting.
     public static let stars5 = KeepMapping.rating(5)
 
     public var title: String {
@@ -143,7 +154,7 @@ public enum XmpWriteMode: String, Codable, Equatable, Sendable, CaseIterable {
 
 public struct MetadataSettings: Codable, Equatable, Sendable {
     public var writeXmp: Bool = true
-    public var keepMapping: KeepMapping = .stars5
+    public var keepMapping: KeepMapping = .stars1
     public var xmpWriteMode: XmpWriteMode = .merge
     /// Writing into DNG is off by default: it modifies the original file (todo.md §11).
     public var writeRatingsIntoDng: Bool = false

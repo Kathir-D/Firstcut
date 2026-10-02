@@ -167,7 +167,10 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
     }
 
     public func applyMetadataSettings(_ settings: MetadataSettings) {
-        var stars: UInt8 = 5
+        // Only read when the setting names a colour label, but the core still wants a threshold for
+        // reading keeps back out of sidecars. It follows the default mapping so the number lives in
+        // one place (`KeepMapping.stars1`) instead of being restated here.
+        var stars: UInt8 = RatingRules.keepDisplayStars
         var label: ColorLabel?
         switch settings.keepMapping {
         case .rating(let value): stars = UInt8(min(5, max(1, value)))
