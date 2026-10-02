@@ -23,8 +23,10 @@ pub const REJECTED: i64 = -1;
 /// the ones todo.md §6.2 describes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XmpMapping {
-    /// What a keep becomes in keep mode. 5 by default. Also the threshold on import: a sidecar
-    /// rating at or above this counts as a keep.
+    /// What a keep becomes in keep mode. **1 by default**, which is
+    /// [`Rating::KEEP_DISPLAY_STARS`](crate::store::rating::Rating::KEEP_DISPLAY_STARS) — the same
+    /// number the app draws, so what Lightroom shows on import is what the user saw. Also the
+    /// threshold on import: a sidecar rating at or above this counts as a keep.
     pub keep_rating: i64,
     /// When set, a keep is written as this colour label instead of a rating.
     pub keep_label: Option<ColorLabel>,
@@ -38,7 +40,9 @@ pub struct XmpMapping {
 impl Default for XmpMapping {
     fn default() -> XmpMapping {
         XmpMapping {
-            keep_rating: 5,
+            // One star, not five: five is indistinguishable from a stars-mode 5-star rating, so a
+            // keep and a rating would collapse into the same value in any other tool.
+            keep_rating: i64::from(crate::store::rating::Rating::KEEP_DISPLAY_STARS),
             keep_label: None,
             not_keep_rating: None,
             not_keep_label: None,
@@ -202,10 +206,14 @@ mod tests {
     }
 
     #[test]
-    fn keep_mode_writes_five_stars_by_default() {
+    fn keep_mode_writes_one_star_by_default() {
         let mapping = XmpMapping::default();
         let values = mapping.values_for(Rating::keep(), RatingMode::KeepNotKeep);
-        assert_eq!(values.rating, Some(5));
+        assert_eq!(
+            values.rating,
+            Some(i64::from(Rating::KEEP_DISPLAY_STARS)),
+            "a keep is written as one star, the same number the app draws"
+        );
         assert_eq!(values.label, None);
     }
 
@@ -244,7 +252,7 @@ mod tests {
     fn a_keep_survives_a_round_trip_through_the_sidecar() {
         let mapping = XmpMapping::default();
         let values = mapping.values_for(Rating::keep(), RatingMode::KeepNotKeep);
-        assert_eq!(values.rating, Some(5));
+        assert_eq!(values.rating, Some(i64::from(Rating::KEEP_DISPLAY_STARS)));
         let back = mapping
             .rating_from(&SidecarValues::from(&values), RatingMode::KeepNotKeep)
             .expect("a written keep must be readable");

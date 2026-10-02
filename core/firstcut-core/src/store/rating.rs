@@ -181,6 +181,15 @@ pub struct Rating {
 /// showing a red "not keep" ring on a photo the Finish step is about to move into the kept folder.
 pub const KEEP_STARS: u8 = 4;
 
+/// The invariant that makes [`Rating::KEEP_DISPLAY_STARS`] safe, checked by the compiler rather
+/// than by a test: a keep must never round-trip as a stars-mode value that also counts as a keep,
+/// or the two modes stop being distinguishable in either direction. A test would only notice on the
+/// day somebody changed the constant, which is the day it matters.
+const _: () = assert!(
+    Rating::KEEP_DISPLAY_STARS > 0 && Rating::KEEP_DISPLAY_STARS < KEEP_STARS,
+    "a keep must not round-trip as a stars-mode rating that also counts as a keep"
+);
+
 /// The rating **shown** for a photo in a given mode.
 ///
 /// This is the whole mode-mapping rule (todo.md §6: "Switching mode mid-session is allowed; existing
@@ -190,7 +199,7 @@ pub const KEEP_STARS: u8 = 4;
 ///
 /// | state in the source mode | shown in **Stars** | shown in **Keep / Not keep** |
 /// | --- | --- | --- |
-/// | keep, no stars | **5 stars** (todo.md §6: "a keep ↔ 5 stars") | Keep |
+/// | keep, no stars | **1 star** (`KEEP_DISPLAY_STARS`) | Keep |
 /// | stars 4–5, `keep` unset | those stars | **Keep** |
 /// | stars 1–3, `keep` unset | those stars | Not keep (they are Good/Maybe, not kept at Finish) |
 /// | no stars, not kept | Unrated | Not keep |
@@ -213,10 +222,12 @@ pub fn display_rating(rating: &Rating, mode: RatingMode) -> Rating {
 pub fn display_rating_at(rating: &Rating, mode: RatingMode, keep_stars: u8) -> Rating {
     let keep_stars = clamp_keep_stars(keep_stars);
     match mode {
-        // A keep with no stars would read as Unrated, so it shows as the 5 stars it means.
+        // A keep with no stars would read as Unrated in stars mode, so it shows as the
+        // `KEEP_DISPLAY_STARS` stars it means — **one**, not five, so a keep made in keep mode does
+        // not arrive looking like a 5-star rating (see `KEEP_DISPLAY_STARS`).
         RatingMode::Stars => Rating {
             stars: if rating.stars == 0 && rating.keep {
-                Rating::MAX_STARS
+                Rating::KEEP_DISPLAY_STARS
             } else {
                 rating.stars
             },
@@ -262,6 +273,28 @@ pub fn display_tier(rating: &Rating, mode: RatingMode) -> Tier {
 
 impl Rating {
     pub const MAX_STARS: u8 = 5;
+
+    /// What a **keep** is displayed and written as, in keep mode: **one star**.
+    ///
+    /// Changed from 5 (2026-10-02, owner decision). Two reasons, and the first is the reason it
+    /// replaces rather than supplements the old rule:
+    ///
+    /// * **It cannot collide with the stars mode.** A keep written as 5 stars is indistinguishable
+    ///   from a 5-star rating: importing the shoot into Lightroom and switching modes turns every
+    ///   keep into "rated 5" and every 5-star rating into "kept", so the two modes stop being two
+    ///   ways of looking at one rating. One star is below the 4-star keep threshold
+    ///   ([`KEEP_STARS`]), so a keep and a stars-mode rating can never be confused for one another
+    ///   in either direction.
+    /// * **1 star is the conventional "pick" in XMP.** It is what other tools write for a one-word
+    ///   judgement, so a keep survives a round trip through Lightroom as a keep rather than as a
+    ///   top-of-scale rating.
+    ///
+    /// Note this is *not* the keep **threshold** — that is [`KEEP_STARS`] (4, or 5 under the
+    /// "only 5 stars" setting) and is unchanged. Two different numbers, in one file, on purpose:
+    /// `KEEP_STARS` answers "how many stars make this a keep?" and this answers "what does a keep
+    /// look like when there is only one button?"
+    pub const KEEP_DISPLAY_STARS: u8 = 1;
+
     /// The rating every photo starts with in either mode.
     pub fn neutral() -> Rating {
         Rating::default()
@@ -321,6 +354,15 @@ impl Rating {
     fn mode_tier(&self, mode: RatingMode, keep_stars: u8) -> Tier {
         if self.flag == Flag::Reject {
             return Tier::Rejected;
+        }
+        // A keep is a keep in **both** modes, whatever it displays as. This has to be checked
+        // before the star count, and it is not a cosmetic rule: `tier` decides what Finish moves to
+        // the kept folder and what it trashes. A keep displays as one star
+        // (`Rating::KEEP_DISPLAY_STARS`), so grading it by `self.stars` alone would call it a Maybe
+        // and send the user's keeps to the trash — the exact failure the "reads the display view"
+        // note above was written to prevent, reintroduced by lowering the displayed stars.
+        if self.keep {
+            return Tier::Keep;
         }
         match mode {
             RatingMode::Stars => match self.stars {
@@ -517,18 +559,37 @@ mod tests {
     }
 
     #[test]
-    fn a_keep_shows_as_five_stars_in_stars_mode() {
-        // todo.md §6: "a keep ↔ 5 stars by default". Without this the user's keeps look Unrated.
+    fn a_keep_shows_as_one_star_in_stars_mode() {
+        // Without this the user's keeps look Unrated. One star rather than five: five would be
+        // indistinguishable from a stars-mode 5-star rating, which is the collision
+        // `KEEP_DISPLAY_STARS` exists to avoid.
         let keep = Rating::keep();
         assert_eq!(
             keep.stars, 0,
             "stored as-is: nothing is written into the stars field"
         );
         let shown = display_rating(&keep, RatingMode::Stars);
-        assert_eq!(shown.stars, 5);
+        assert_eq!(shown.stars, Rating::KEEP_DISPLAY_STARS);
+        assert_eq!(
+            shown.stars, 1,
+            "the owner's decision: a keep is one star, not five"
+        );
+        // Still a keep, which is the point: one star is below the 4-star threshold, so the *tier*
+        // has to come from the keep flag rather than the star count.
         assert_eq!(display_tier(&keep, RatingMode::Stars), Tier::Keep);
         // Still a keep in keep mode, unchanged.
         assert_eq!(display_rating(&keep, RatingMode::KeepNotKeep), keep);
+    }
+
+    #[test]
+    fn a_one_star_keep_does_not_read_as_a_stars_mode_rating() {
+        // The reason a keep is one star and not five: a keep and a stars-mode rating must never be
+        // the same value, in either direction. One star is below `KEEP_STARS` (4), so a photo
+        // written as 1 star by an external tool is *not* silently promoted to a keep.
+        // The constant relationship itself is asserted at compile time by the `const _: () = ...`
+        // in the impl block, so this test only has to check the behaviour it implies.
+        assert!(!Rating::stars(Rating::KEEP_DISPLAY_STARS).is_kept(RatingMode::Stars));
+        assert!(!Rating::stars(Rating::KEEP_DISPLAY_STARS).is_kept(RatingMode::KeepNotKeep));
     }
 
     #[test]
@@ -653,18 +714,30 @@ mod tests {
             keep
         );
 
+        // Converting a keep into the stars mode writes `KEEP_DISPLAY_STARS` (one), not five: five
+        // would be indistinguishable from a stars-mode rating, which is what the conversion is for.
         let as_stars = map_rating(&keep, RatingMode::KeepNotKeep, RatingMode::Stars);
-        assert_eq!(as_stars, Rating::stars(5));
+        assert_eq!(as_stars, Rating::stars(Rating::KEEP_DISPLAY_STARS));
         assert!(!as_stars.keep, "the keep field belongs to keep mode only");
 
         let four = Rating::stars(4);
         let as_keep = map_rating(&four, RatingMode::Stars, RatingMode::KeepNotKeep);
         assert!(as_keep.keep);
         assert_eq!(as_keep.stars, 0, "the stars belong to stars mode only");
-        // And back again: the 4 stars are still what the user meant.
+        // And back again. **This is lossy, and was before this change too**: keep mode stores the
+        // keep flag with `stars = 0` (`synchronized` is deliberately the identity), so a 4-star
+        // photo converted to keep mode and back comes out as `KEEP_DISPLAY_STARS` — one star, where
+        // the old rule made it five. Nothing about the 4 survives the conversion, because keep mode
+        // has nowhere to put it. What the round trip does preserve is that it is still a **keep**,
+        // which is the part that decides Finish.
         assert_eq!(
             map_rating(&as_keep, RatingMode::KeepNotKeep, RatingMode::Stars),
-            Rating::stars(5)
+            Rating::stars(Rating::KEEP_DISPLAY_STARS)
+        );
+        assert!(
+            Rating::stars(Rating::KEEP_DISPLAY_STARS).tier(RatingMode::Stars) != Tier::Keep,
+            "a one-star photo must not be graded as a stars-mode keep, or every converted 4 becomes \
+             indistinguishable from a real 5"
         );
     }
 

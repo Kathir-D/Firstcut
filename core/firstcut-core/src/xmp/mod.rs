@@ -303,7 +303,10 @@ mod tests {
         assert_eq!(read_sidecar(&sidecar).unwrap().unwrap().rating, Some(4));
 
         write_rating(&sidecar, Rating::keep(), RatingMode::KeepNotKeep, &mapping).unwrap();
-        assert_eq!(read_sidecar(&sidecar).unwrap().unwrap().rating, Some(5));
+        assert_eq!(
+            read_sidecar(&sidecar).unwrap().unwrap().rating,
+            Some(i64::from(crate::store::rating::Rating::KEEP_DISPLAY_STARS))
+        );
 
         write_rating(
             &sidecar,

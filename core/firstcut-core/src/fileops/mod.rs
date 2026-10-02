@@ -1957,8 +1957,9 @@ mod tests {
     }
 
     #[test]
-    fn a_keep_made_in_keep_mode_splits_into_the_five_star_folder() {
-        // Stored as keep with 0 stars; it shows as 5 stars, so "0" would be the wrong folder.
+    fn a_keep_made_in_keep_mode_splits_into_the_one_star_folder() {
+        // Stored as keep with 0 stars; it displays as `KEEP_DISPLAY_STARS` (one), so "0" — the
+        // stored value — would be the wrong folder and "5" would be the old rule's answer.
         let shoot = Shoot::new();
         let ratings = HashMap::from([(1, Rating::keep())]);
         let plan = plan_finish(
@@ -1971,7 +1972,11 @@ mod tests {
             ),
             0,
         );
-        assert_eq!(destination_folders(&plan), vec!["5"]);
+        assert_eq!(
+            destination_folders(&plan),
+            vec!["1"],
+            "a keep splits into the one-star folder, matching what it displays as"
+        );
     }
 
     #[test]

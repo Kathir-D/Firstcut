@@ -2030,8 +2030,9 @@ mod tests {
     }
 
     #[test]
-    fn a_keep_writes_five_stars_in_stars_mode() {
-        // todo.md §6: "a keep ↔ 5 stars by default", so Lightroom shows the same decision.
+    fn a_keep_writes_one_star_in_stars_mode() {
+        // todo.md §6: a keep is one star, so Lightroom shows the same decision — and so a keep
+        // arriving from Lightroom is not confused with a 5-star rating made in stars mode.
         let (_s, folder, session) = empty_session();
         let meta = session.snapshot().photos[0].clone();
         session.set_rating(meta.id, Rating::keep()).unwrap();
@@ -2039,7 +2040,14 @@ mod tests {
         let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
         assert_eq!(
             crate::xmp::read_sidecar(&sidecar).unwrap().unwrap().rating,
-            Some(5)
+            Some(i64::from(crate::store::rating::Rating::KEEP_DISPLAY_STARS))
+        );
+        // Explicit, because "1" and "5" are the two values this rule has had and the test above is
+        // what stops it drifting back.
+        assert_eq!(
+            crate::xmp::read_sidecar(&sidecar).unwrap().unwrap().rating,
+            Some(1),
+            "a keep is one star, not five"
         );
     }
 
