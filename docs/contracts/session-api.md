@@ -57,12 +57,20 @@ pub enum MatchKind { Created, Exact, Moved { from: String } }
 
 /// Settings that change what lands in the sidecars (§6.2). Persisted with the session.
 pub struct XmpMapping {
-    pub keep_rating: i64,                  // default 5
+    pub keep_rating: i64,                  // WRITTEN as; default 1 (Rating::KEEP_DISPLAY_STARS)
+    pub keep_import_rating: i64,           // READ threshold; default 5. Not the same knob.
     pub keep_label: Option<ColorLabel>,    // keep as a colour label instead of a number
     pub not_keep_rating: Option<i64>,      // None = remove the rating; Some(-1) = rejected
     pub not_keep_label: Option<ColorLabel>,
 }
 ```
+
+`keep_rating` and `keep_import_rating` are separate on purpose. A keep is **written** as one star, and
+a foreign one-star rating is overwhelmingly a real star rating: one shared `>= keep_rating` threshold
+would turn every rated photo in an imported folder into a keep. Keeps themselves are never recovered
+from sidecars — a re-opened shoot restores them from the `keep` column of the session database,
+and `import_new_ratings_from_sidecars` only fills photographs Firstcut has no rating for, always
+reading them as stars.
 
 ## Session object
 

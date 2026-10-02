@@ -42,6 +42,14 @@ public enum Command: Hashable, Sendable {
     /// so it cannot shadow a photographer's keys.
     case setRatingMode(RatingMode)
 
+    /// Jump a whole batch from a double-click in the loupe, `direction` +1 or -1 (owner request,
+    /// 2026-10-02).
+    ///
+    /// Separate from `batchNext` / `batchPrevious` because those use `enteringBatchBehavior` — where
+    /// you land in the batch you arrive at — while this *leaves* a batch, and leaving forward means
+    /// the next batch's first frame however you entered the last one.
+    case jumpBatch(Int)
+
     case toggleKeep  // keep mode only
     /// The two halves of `toggleKeep`, as separate commands, so keep mode can offer a **Keep**
     /// button and a **Not keep** button rather than one key that flips (owner request, 2026-10-02).
@@ -94,6 +102,7 @@ extension Command {
         case .setStarsAndAdvance: "rate.starsAndAdvance"
         case .togglePickFlag: "flag.pick"
         case .setRatingMode: "mode.rating"
+        case .jumpBatch: "batch.jump"
         case .toggleKeep: "keep.toggle"
         case .setKeep: "keep.set"
         case .setNotKeep: "keep.clear"
@@ -127,6 +136,7 @@ extension Command {
         case .setLabel(let label): label.flatMap(\.ordinal)
         // 0 = stars, 1 = keep: a keymap entry can only carry an integer, and the mode is an enum.
         case .setRatingMode(let mode): mode == .stars ? 0 : 1
+        case .jumpBatch(let delta): delta < 0 ? -1 : 1
         case .showCompare(let count): count
         default: nil
         }
@@ -143,6 +153,8 @@ extension Command {
         case "rate.stars": self = .setStars(min(max(argument ?? 0, 0), 5))
         case "rate.starsAndAdvance": self = .setStarsAndAdvance(min(max(argument ?? 1, 1), 5))
         case "flag.pick": self = .togglePickFlag
+        case "batch.jump":
+            self = .jumpBatch(argument.map { $0 < 0 ? -1 : 1 } ?? 1)
         case "mode.rating":
             // Two spellings so a hand-written keymap entry can be either.
             switch argument {
@@ -184,6 +196,7 @@ extension Command {
         switch self {
         case .photoPrevious, .photoNext, .batchPrevious, .batchNext,
             .setStars, .setStarsAndAdvance, .togglePickFlag, .toggleKeep, .setKeep, .setNotKeep,
+            .jumpBatch,
             .rejectFlag, .unflag, .toggleFlag, .setLabel:
             true
         case .openFolder, .finishCull, .undo, .redo, .toggleFullScreen,

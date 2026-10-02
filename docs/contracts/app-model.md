@@ -67,7 +67,9 @@ enum Tier { keep, good, maybe, unrated, rejected }   // the generated `FfiTier` 
 `RatingRules.tier` (`App/Sources/Session/RatingRules.swift:43-65`), not a literal: the reject flag
 wins in both modes; stars mode gives keep at or above `keepThreshold` (default 4, Settings → General),
 good at 3, maybe at 1, unrated at 0; keep mode gives keep or unrated, promoting 4–5 stars to a keep on
-**display** only, so switching modes cannot make the user's keeps vanish.
+**display** only, so switching modes cannot make the user's keeps vanish. The keep flag is checked
+**before** star grading, so a Keep that is 1 star stays a Keep (owner decision 2026-10-02: a keep is
+1 star everywhere, so the old "promote 4–5" rule would have un-rated every keep).
 
 **`Phase`** also answers `isLoading` (`App/Sources/Session/SessionTypes.swift:130`), which is what
 tells the first-photo fast path "the open I belong to is still running" from "a different folder is

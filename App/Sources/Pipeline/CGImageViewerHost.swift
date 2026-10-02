@@ -57,6 +57,14 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     /// what the pipeline has to decode T2 at.
     var onViewportPixelSize: ((CGSize) -> Void)?
 
+    /// A double-click in the loupe. `direction` is +1 for the right button of the pair, -1 for the
+    /// left, so the app can move a whole batch in the direction the photographer is pointing.
+    ///
+    /// Set by whoever builds the host; nil in previews. This exists because the loupe's own
+    /// `mouseUp` is already spent: a single click zooms to 100% and a second one zooms back, so a
+    /// double-click cannot be handled there without breaking both.
+    var onDoubleClick: ((Int) -> Void)?
+
     /// The last size reported, so a resize is not re-reported on every `layout()` and the debug HUD can
     /// show what the decode is being sized from.
     private(set) var reportedViewportPixels: CGSize = .zero
@@ -246,6 +254,13 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     private var maxZoom: CGFloat { max(oneToOne * 3, 4) }
 
     /// Where the photograph is drawn, in this view's coordinates (AppKit: bottom-left origin).
+    /// Test hooks, because the double-click's whole job is deciding *which half* of the photograph
+    /// was clicked, and there is no way to assert that without a real image and its real rect.
+    /// Narrow on purpose: a hook that set the image from the outside would let a test pass without
+    /// the geometry being right.
+    func setTestImage(_ image: CGImage) { self.image = image }
+    var testImageRect: CGRect { imageRect(zoom: zoom, center: center) }
+
     private func imageRect(zoom: CGFloat, center: CGPoint) -> CGRect {
         let fit = fitSize
         guard fit != .zero else { return .zero }
@@ -374,7 +389,19 @@ final class CGImageViewerHost: NSView, PhotoViewerHost {
     }
 
     override func mouseUp(with event: NSEvent) {
-        defer { mouseDownPoint = nil }
+        defer {
+            mouseDownPoint = nil
+            // A double-click is reported from here rather than from a gesture recogniser, because
+            // AppKit delivers both clicks to the same view and the second one is the only one that
+            // carries `clickCount == 2`.
+            if event.clickCount == 2, !didDrag, image != nil {
+                let point = convert(event.locationInWindow, from: nil)
+                if imageRect(zoom: zoom, center: center).contains(point) {
+                    let forward = convert(point, to: nil).x >= bounds.midX
+                    onDoubleClick?(forward ? 1 : -1)
+                }
+            }
+        }
         // A click that turned into a drag must not toggle zoom (todo.md §9.2).
         guard !didDrag, image != nil else { return }
         let point = convert(event.locationInWindow, from: nil)

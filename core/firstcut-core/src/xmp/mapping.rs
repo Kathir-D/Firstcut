@@ -23,11 +23,25 @@ pub const REJECTED: i64 = -1;
 /// the ones todo.md §6.2 describes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XmpMapping {
-    /// What a keep becomes in keep mode. **1 by default**, which is
+    /// What a keep is **written** as in keep mode. **1 by default**, which is
     /// [`Rating::KEEP_DISPLAY_STARS`](crate::store::rating::Rating::KEEP_DISPLAY_STARS) — the same
-    /// number the app draws, so what Lightroom shows on import is what the user saw. Also the
-    /// threshold on import: a sidecar rating at or above this counts as a keep.
+    /// number the app draws, so what Lightroom shows is what the user saw (owner decision,
+    /// 2026-10-02).
+    ///
+    /// This is the *output* side only. Reading is [`keep_import_rating`](Self::keep_import_rating),
+    /// and the two are separate fields because collapsing them is a silent data-loss bug: with
+    /// `keep_rating == 1`, a single-threshold `>= keep_rating` check would turn **every** rated
+    /// photo in the folder into a keep on open.
     pub keep_rating: i64,
+    /// The threshold a sidecar rating must reach to be **read** as a keep in keep mode.
+    /// **5 by default**, unchanged from before keeps became one star.
+    ///
+    /// Deliberately 5 and not 1. A 1-star rating is what Firstcut now *writes* for a keep, but a
+    /// 1-star rating in a foreign sidecar is overwhelmingly a real star rating, and importing a
+    /// whole folder as keeps because every frame happens to carry one star is unrecoverable. 5 is
+    /// also the pre-existing behaviour, so folders imported before this change keep meaning the
+    /// same thing.
+    pub keep_import_rating: i64,
     /// When set, a keep is written as this colour label instead of a rating.
     pub keep_label: Option<ColorLabel>,
     /// What a not-keep becomes. `None` (the default) removes `xmp:Rating`; `Some(-1)` writes the
@@ -43,6 +57,7 @@ impl Default for XmpMapping {
             // One star, not five: five is indistinguishable from a stars-mode 5-star rating, so a
             // keep and a rating would collapse into the same value in any other tool.
             keep_rating: i64::from(crate::store::rating::Rating::KEEP_DISPLAY_STARS),
+            keep_import_rating: 5,
             keep_label: None,
             not_keep_rating: None,
             not_keep_label: None,
@@ -126,7 +141,9 @@ impl XmpMapping {
                 } else if self.keep_label.is_some() {
                     label == self.keep_label
                 } else {
-                    values.rating.is_some_and(|value| value >= self.keep_rating)
+                    values
+                        .rating
+                        .is_some_and(|value| value >= self.keep_import_rating)
                 };
                 Some(Rating::new(
                     stars,
@@ -248,15 +265,42 @@ mod tests {
         assert_eq!(values.rating, Some(REJECTED));
     }
 
+    /// What a keep written by Firstcut actually reads back as.
+    ///
+    /// The keep flag is **not** recovered from the sidecar in keep mode, and it should not be: a
+    /// keep is written as one star, and one star is exactly what a foreign 1-star rating looks like.
+    /// Reading it back as a keep would mean a whole Lightroom shoot of ordinary 1-star frames comes
+    /// in as a folder of keeps.
+    ///
+    /// Nothing is lost by this. A re-opened shoot restores keeps from the `keep` column of the
+    /// session database (`records.rs`), which is the source of truth for what Firstcut decided;
+    /// sidecar import only fills in photographs Firstcut has no rating for at all
+    /// (`import_new_ratings_from_sidecars`) and always reads them as stars.
     #[test]
-    fn a_keep_survives_a_round_trip_through_the_sidecar() {
+    fn a_keep_is_written_as_one_star_and_reads_back_as_that_one_star() {
         let mapping = XmpMapping::default();
         let values = mapping.values_for(Rating::keep(), RatingMode::KeepNotKeep);
         assert_eq!(values.rating, Some(i64::from(Rating::KEEP_DISPLAY_STARS)));
+
         let back = mapping
-            .rating_from(&SidecarValues::from(&values), RatingMode::KeepNotKeep)
+            .rating_from(&SidecarValues::from(&values), RatingMode::Stars)
             .expect("a written keep must be readable");
-        assert!(back.keep);
+        assert_eq!(
+            back.stars,
+            Rating::KEEP_DISPLAY_STARS,
+            "in stars mode the keep's one star is just a one-star rating, which is what it is"
+        );
+        assert!(!back.keep, "stars mode has no keep flag to recover");
+
+        // In keep mode the same sidecar reads as a rating, not as a keep, for the same reason.
+        let in_keep_mode = mapping
+            .rating_from(&SidecarValues::from(&values), RatingMode::KeepNotKeep)
+            .expect("the rating itself must still import");
+        assert_eq!(in_keep_mode.stars, Rating::KEEP_DISPLAY_STARS);
+        assert!(
+            !in_keep_mode.keep,
+            "a 1-star sidecar is a rating; the database is what says 'keep'"
+        );
     }
 
     #[test]
@@ -321,7 +365,7 @@ mod tests {
     #[test]
     fn keep_mode_reads_back_its_own_keeps() {
         let mapping = XmpMapping {
-            keep_rating: 4,
+            keep_import_rating: 4,
             ..XmpMapping::default()
         };
         let four = mapping
@@ -332,6 +376,68 @@ mod tests {
             .rating_from(&sidecar(Some(3), None, None), RatingMode::KeepNotKeep)
             .unwrap();
         assert!(!three.keep);
+    }
+
+    /// The bug that forced `keep_import_rating` to be its own field.
+    ///
+    /// A keep is *written* as one star, so `keep_rating` is 1 in every default mapping. If the
+    /// import check used that number, every rated photo in the folder would come back as a keep the
+    /// moment it was opened — 300 keeps out of 300 photos, with no way for the user to tell that is
+    /// what happened. Each rating below must import as **not** a keep.
+    #[test]
+    fn a_one_star_written_keep_does_not_make_every_rating_a_keep_on_read() {
+        let mapping = XmpMapping::default();
+        assert_eq!(
+            mapping.keep_rating, 1,
+            "keeps are written as one star; that is the premise of this test"
+        );
+        for rating in 1..=4 {
+            let imported = mapping
+                .rating_from(&sidecar(Some(rating), None, None), RatingMode::KeepNotKeep)
+                .unwrap_or_else(|| panic!("a {rating}-star sidecar should still import a rating"));
+            assert!(
+                !imported.keep,
+                "{rating} stars must not import as a keep: a keep is one star on the way out, \
+                 and a foreign {rating}-star rating is a rating, not a keep"
+            );
+        }
+        // 5 still is a keep, which is what a folder tagged by an older Firstcut means.
+        let five = mapping
+            .rating_from(&sidecar(Some(5), None, None), RatingMode::KeepNotKeep)
+            .unwrap();
+        assert!(five.keep, "5 stars is the documented import threshold");
+    }
+
+    /// The two numbers are independent, so lowering the import threshold does not also change what
+    /// gets written. This is the property the FFI relies on: it sets `keep_rating` from the app's
+    /// keep-stars setting and must leave the import threshold alone.
+    #[test]
+    fn the_import_threshold_is_independent_of_the_written_value() {
+        let mapping = XmpMapping {
+            keep_rating: 1,
+            keep_import_rating: 2,
+            ..XmpMapping::default()
+        };
+        // Written: a keep is still one star.
+        let keep = Rating::new(5, Flag::None, None, true);
+        assert_eq!(
+            mapping.values_for(keep, RatingMode::KeepNotKeep).rating,
+            Some(1),
+            "moving the import threshold must not move the written value"
+        );
+        // Read: two stars now qualifies.
+        assert!(
+            mapping
+                .rating_from(&sidecar(Some(2), None, None), RatingMode::KeepNotKeep)
+                .unwrap()
+                .keep
+        );
+        assert!(
+            !mapping
+                .rating_from(&sidecar(Some(1), None, None), RatingMode::KeepNotKeep)
+                .unwrap()
+                .keep
+        );
     }
 
     #[test]

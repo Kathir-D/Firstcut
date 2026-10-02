@@ -181,6 +181,42 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
+> **As of 2026-10-02 (agent session, third pass).** Two owner requests landed since the previous
+> handoff, and one of them turned up a data-loss bug worth knowing about before anything else.
+>
+> - **A keep is 1 star everywhere** (display, stored mode conversion, XMP), not 5. Stars mode is
+>   unchanged. The Keep mode HUD now has two idempotent buttons — Keep and Not keep — with `P`
+>   still toggling. `RatingRules.tier` checks the keep flag **before** star grading; without that
+>   reordering, a 1-star Keep would have graded as "maybe" and lost its ring.
+> - **The one-star change nearly destroyed imports.** `XmpMapping` used `keep_rating` for *both*
+>   writing a keep and deciding whether a sidecar rating is a keep, and §6.2 had lowered its
+>   default from 5 to 1 — so `rating >= keep_rating` would have made **every** rated photo in an
+>   imported folder a Keep. Split into `keep_rating` (written, 1) and `keep_import_rating`
+>   (threshold, 5, unchanged). This is the §0.4 checklist paying off again: the change that looked
+>   like a one-constant edit was the one with teeth. Two tests now kill the single-threshold bug
+>   (`a_one_star_written_keep_does_not_make_every_rating_a_keep_on_read`,
+>   `the_import_threshold_is_independent_of_the_written_value`).
+> - **Keeps are not recovered from sidecars, and should not be.** A 1-star sidecar is
+>   indistinguishable from a foreign 1-star rating. A re-opened shoot restores keeps from the
+>   `keep` column of the session database, and `import_new_ratings_from_sidecars` only fills
+>   photographs Firstcut has no rating for, always as stars. An old test asserted a
+>   sidecar round-trip that the DB actually owns; it now asserts the real property.
+> - **Arrows now cross batch edges by default** (owner decision): most boundaries are burst
+>   boundaries, so rolling over is the common case. `Stop` is still one click away in
+>   Settings → General. **A double-click in the loupe jumps a whole batch**, in the direction of the
+>   half clicked — `Command.jumpBatch` / `batch.jump`, forward to the next batch's first photo and
+>   back to the previous batch's last. It deliberately ignores `enteringBatchBehavior`, because it
+>   *leaves* a batch rather than entering one. Pinned by 5 new `ViewerDoubleClickTests` (the
+>   direction, plus single-click and drag staying out of the way) and 2 in `SessionTests`; both
+>   directions were mutation-checked.
+> - **The `AppEnvironment` → `onDoubleClick` wiring has no test.** `AppEnvironment` is a live
+>   singleton, so the closure cannot be driven in a test; the tests deliberately stop one layer
+>   down, at the host. If that closure is ever deleted the suite still passes, so it is the one
+>   thing in this change to eyeball by hand.
+> - **Still open:** the broad "make the controls the right size" audit. The Keep buttons have fixed
+>   heights, padding and corner radius, and were checked visually, but the rest of the UI has not
+>   been through a sizing pass.
+
 > **As of 2026-10-01 (agent session on Kathir's Mac, second pass).** Every agent-side item in §0.3
 > is now done, including the T4 "Exact RAW" decode that the previous handoff stopped short of.
 > `main` is green on CI: Rust fmt/clippy/tests, the Swift build and tests on **Xcode 16.4 with
@@ -653,7 +689,9 @@ Batches are computed once when a folder is opened (and cached in the session DB)
 ## 6. Rating modes
 
 Selected in **Settings → General → Rating mode**. Switching mode mid-session is allowed; existing
-data is preserved and mapped (a keep ↔ 5 stars by default).
+data is preserved and mapped. **A keep is 1 star everywhere** — display, stored mode conversion and
+XMP (`Rating::KEEP_DISPLAY_STARS = 1`, owner decision 2026-10-02) — so in Keep mode the ring you see is
+"this is 1 star", not "this is 5 stars". Stars mode is unchanged.
 
 ### 6.1 Stars mode
 
@@ -1052,8 +1090,13 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
 
 ### 9.4 Batch navigation
 
-- [x] ← / → move between photos **within** the batch. At the ends: stop (default) or continue into
-      the next/previous batch (setting).
+- [x] ← / → move between photos **within** the batch. At the ends: continue into the next/previous
+      batch (**default**, owner decision 2026-10-02 — most batch boundaries are burst boundaries, so
+      rolling over is the common case) or stop (setting: Settings → General → Arrows).
+- [x] Double-click in the loupe jumps a whole batch, in the direction of the half clicked
+      (`Command.jumpBatch`, `batch.jump`). Forward lands on the next batch's first photo, back on the
+      previous batch's last. It ignores `enteringBatchBehavior` because it *leaves* a batch rather
+      than entering one. Does nothing on the first/last batch.
 - [x] Previous/next batch: toolbar ‹ › buttons + remappable shortcuts (defaults in §10). Arrow keys
       stay reserved for photos.
 - [x] Entering a batch selects its first photo (setting: or the last photo you viewed in it).
@@ -1308,7 +1351,7 @@ Decisions the owner has made are in §2. Work only the owner can do is in §0.2.
   the reconciliation carries the rating across.
 - **Ratings must reach the sidecar.** A 4-star photo was once exported as `xmp:Rating="0"` (fixed in
   `5c98cf8`); keep an end-to-end test on it. Likewise keep/trash must be decided from the *mapped* tier,
-  and unkeeping must clear the 5 stars it invented.
+  and unkeeping must clear the star it invented.
 - **Rebuilding kills a running app.** Concurrent builds replace the binary under a running process and
   macOS reports "Firstcut quit unexpectedly". Close the app before building; §0.4 has the
   `NSQuitAlwaysKeepsWindows` fix for the phantom relaunch.

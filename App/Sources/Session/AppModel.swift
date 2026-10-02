@@ -682,6 +682,12 @@ public final class AppModel: SessionListener, KeyRouterSource {
             advance()  // ⇧1…⇧5 always advances, auto-advance or not (Lightroom)
         case .togglePickFlag: rateCurrent { $0.flag = $0.flag == .pick ? .none : .pick }
         case .setRatingMode(let mode): updateSettings { $0.general.ratingMode = mode }
+        case .jumpBatch(let delta):
+            // Leaving a batch, so `enteringBatchBehavior` does not apply: forward goes to the next
+            // batch's first frame and back to the previous batch's last, whichever way the user
+            // entered the batch they are leaving.
+            guard delta != 0 else { return }
+            moveBatch(by: delta > 0 ? 1 : -1, selecting: delta > 0 ? .first : .last)
         case .toggleKeep: rateCurrent { $0.keep = !$0.keep }
         // The two buttons, and the point of them being separate: idempotent. A "Keep" button that
         // toggled would make a second click mean "not keep", which is not what the button says.

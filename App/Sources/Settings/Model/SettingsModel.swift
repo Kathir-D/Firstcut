@@ -13,9 +13,11 @@ import Foundation
 // MARK: - General
 
 public enum ArrowBehavior: String, Codable, Equatable, Sendable, CaseIterable {
-    /// Stop at the first and last photo of the batch. The default, and what a burst wants.
+    /// Stop at the first and last photo of the batch, which is what a burst wants: the batch *is*
+    /// the unit you are deciding about, and rolling past its end hides that.
     case stop
-    /// Roll into the next/previous batch, which is handy for a run of single-photo batches.
+    /// Roll into the next/previous batch. **The default** (owner decision, 2026-10-02): holding →
+    /// through a shoot should not stall at every burst boundary, which is where most boundaries are.
     case continueIntoNextBatch
 
     public var title: String {
@@ -43,7 +45,7 @@ public struct GeneralSettings: Codable, Equatable, Sendable {
     public var ratingMode: RatingMode = .stars
     /// Off by default (todo.md §6.3); Caps Lock toggles it for a session.
     public var autoAdvance: Bool = false
-    public var arrowBehaviorAtBatchEnd: ArrowBehavior = .stop
+    public var arrowBehaviorAtBatchEnd: ArrowBehavior = .continueIntoNextBatch
     public var enteringBatchBehavior: EnteringBatchBehavior = .firstPhoto
     public var finishUnkept: UnkeptAction = .default
     public var finishKept: KeptAction = .default

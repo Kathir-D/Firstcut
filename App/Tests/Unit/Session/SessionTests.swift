@@ -160,9 +160,10 @@ struct AppModelNavigationTests {
         #expect(model.currentPhotoIndex == 1)
     }
 
-    @Test("→ walks the batch and stops at the end by default (todo.md §9.4)")
+    @Test("→ stops at the end of the batch when the setting says Stop (todo.md §9.4)")
     func arrowStopsAtBatchEnd() throws {
         let (model, _) = Self.makeModel()
+        model.updateSettings { $0.general.arrowBehaviorAtBatchEnd = .stop }
         model.perform(.photoNext)
         #expect(model.currentPhotoIndex == 1)
         model.perform(.photoNext)
@@ -172,6 +173,8 @@ struct AppModelNavigationTests {
         #expect(model.currentPhotoIndex == 2)
     }
 
+    /// The default flipped to continuing (owner decision, 2026-10-02), so this test now has to ask
+    /// for `Stop` explicitly rather than relying on the default to be `.stop`.
     @Test("At the last photo, → crosses into the next batch when the setting says so")
     func arrowContinues() throws {
         let (model, _) = Self.makeModel()
@@ -527,6 +530,75 @@ struct AppModelRatingTests {
     /// Asserted through `state.send`, because that is the funnel the environment uses: reaching for
     /// `activeModel` instead looks equivalent and is not, since `-FirstcutMockShoot` replaces the
     /// whole cull state and the environment's own model is then not the one on screen.
+    /// The double-click jump (owner request, 2026-10-02) and the arrow default that goes with it.
+    ///
+    /// Two separate rules, so two separate assertions: an arrow at an edge **rolls over** (the new
+    /// default), and a double-click **jumps a whole batch**, which is a different thing because it
+    /// does not care where in the batch you are.
+    @Test("A double-click jumps a whole batch, forward from the first frame and back from the last")
+    func doubleClickJumpsABatch() throws {
+        let (model, _) = Self.makeModel()
+        let batchCount = model.batches.count
+        #expect(batchCount > 2, "the fixture needs at least three batches for a jump to mean anything")
+        #expect(model.currentBatchIndex == 0)
+
+        // Forward: the first frame of the next batch, wherever in the batch the click happened.
+        model.perform(.jumpBatch(1))
+        #expect(model.currentBatchIndex == 1)
+        #expect(model.currentPhotoIndex == 0)
+
+        // Back: the last frame of the previous batch.
+        model.perform(.jumpBatch(-1))
+        #expect(model.currentBatchIndex == 0)
+        #expect(model.currentPhotoIndex == model.batches[0].count - 1)
+
+        // Off the front is a no-op, not a wrap and not a crash.
+        model.perform(.jumpBatch(-1))
+        #expect(model.currentBatchIndex == 0)
+
+        // A jump is one batch, so walking to the last batch is a loop of jumps — which is also the
+        // proof that each one moves exactly one batch rather than to an end.
+        for expected in 1..<batchCount { model.perform(.jumpBatch(1)) }
+        #expect(model.currentBatchIndex == batchCount - 1)
+        model.perform(.jumpBatch(1))
+        #expect(model.currentBatchIndex == batchCount - 1, "past the last batch there is nowhere to go")
+
+        // The direction is normalised, so a zero argument cannot do something surprising.
+        model.perform(.jumpBatch(0))
+        #expect(model.currentBatchIndex == batchCount - 1)
+
+        // And it round trips through the keymap, since a user can bind it.
+        #expect(Command.jumpBatch(1).id == "batch.jump")
+        #expect(Command(id: "batch.jump", argument: -1) == .jumpBatch(-1))
+        #expect(Command(id: "batch.jump", argument: 1) == .jumpBatch(1))
+    }
+
+    @Test("An arrow rolls into the next batch by default, and Stop is still available")
+    func arrowsCrossBatchesByDefault() throws {
+        #expect(
+            AppSettings().general.arrowBehaviorAtBatchEnd == .continueIntoNextBatch,
+            "the owner changed the default to continue; Stop stays in Settings")
+        let (model, _) = Self.makeModel()
+        let batchCount = model.batches[0].count
+
+        // Walk to the last photo of the first batch and press → once more.
+        for _ in 0..<(batchCount - 1) { model.perform(.photoNext) }
+        #expect(model.currentBatchIndex == 0)
+        #expect(model.currentPhotoIndex == batchCount - 1)
+        model.perform(.photoNext)
+        #expect(model.currentBatchIndex == 1, "→ at a batch end crosses into the next batch")
+        #expect(model.currentPhotoIndex == 0, "and lands on its first frame")
+
+        // With Stop put back, the arrow stops and nothing else moves.
+        let (stopping, _) = Self.makeModel()
+        stopping.updateSettings { $0.general.arrowBehaviorAtBatchEnd = .stop }
+        let first = stopping.batches[0].count
+        for _ in 0..<first { stopping.perform(.photoNext) }
+        stopping.perform(.photoNext)
+        #expect(stopping.currentBatchIndex == 0, "Stop leaves the arrow at the end of the batch")
+        #expect(stopping.currentPhotoIndex == first - 1)
+    }
+
     @Test("setRatingMode reaches the model through the same funnel as any other command")
     func ratingModeCommandReachesTheModel() throws {
         let (model, _) = Self.makeModel()

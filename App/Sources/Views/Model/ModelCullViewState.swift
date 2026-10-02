@@ -181,6 +181,7 @@ extension CullAction {
         case .setFlag(.reject): .rejectFlag
         case .setLabel(let label): .setLabel(label)
         case .setRatingMode(let mode): .setRatingMode(mode)
+        case .jumpBatch(let delta): .jumpBatch(delta)
         case .toggleKeep: .toggleKeep
         case .setKeep: .setKeep
         case .setNotKeep: .setNotKeep

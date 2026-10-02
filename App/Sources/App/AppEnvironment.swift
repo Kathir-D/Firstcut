@@ -110,6 +110,13 @@ final class AppEnvironment {
                 // The opening end of the same story: the viewer is the only thing that knows how many pixels
                 // it covers, and T2 is decoded at exactly that many (todo.md §7.1/§7.2).
                 host.onViewportPixelSize = { [weak model] size in model?.setViewportPixelSize(size) }
+                // A double-click in the loupe hops a whole batch, in the direction the click was
+                // in. The arrow keys keep their own behaviour (todo.md §9.4), so the two never
+                // disagree about what an edge means.
+                host.onDoubleClick = { [weak self] direction in
+                    guard let self else { return }
+                    self.send(.jumpBatch(direction))
+                }
             }
             return host
         }

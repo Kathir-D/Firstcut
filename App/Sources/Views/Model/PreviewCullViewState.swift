@@ -113,6 +113,13 @@ final class PreviewCullViewState: CullViewState {
             rateCurrent { $0.label = label }
         case .setRatingMode(let mode):
             ratingMode = mode
+        case .jumpBatch(let delta):
+            let forward = delta > 0
+            if forward, currentBatchIndex + 1 < batches.count {
+                go(toBatch: currentBatchIndex + 1, atEnd: false)
+            } else if !forward, currentBatchIndex > 0 {
+                go(toBatch: currentBatchIndex - 1, atEnd: true)
+            }
         case .toggleKeep:
             rateCurrent { $0.keep.toggle() }
         case .setKeep:
