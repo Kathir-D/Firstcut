@@ -1574,11 +1574,19 @@ final class DecodeEngine: @unchecked Sendable {
 
     /// One context for every T4 develop.
     ///
-    /// `CIContext` is expensive to build and safe to share, and the engine already runs decodes
-    /// concurrently, so a per-decode context would be both a cost and a source of unbounded Metal
-    /// resource growth. Created on first use rather than at init so a session that never turns T4
-    /// on never pays for it.
-    private static let sharedRawContext: CIContext = CIContext(options: [.cacheIntermediates: false])
+    /// `CIContext` is expensive to build and documented as safe to use from multiple threads for
+    /// rendering, so sharing one is both cheaper and bounded — a per-decode context would hand every
+    /// concurrent job its own Metal resources, and the engine runs up to four at once. Created on
+    /// first use rather than at init so a session that never turns T4 on never pays for it.
+    ///
+    /// `nonisolated(unsafe)` because `CIContext` is not marked `Sendable` in the SDK, and under
+    /// Swift 6 a `static let` of a non-`Sendable` type is a concurrency error. The property is
+    /// `let`, so it is initialised exactly once, and nothing here mutates it — which is the
+    /// invariant `nonisolated(unsafe)` asserts. This is the same idiom as
+    /// `PhotoViewerHost.storedFactory`. Note this is also one of the §0.4 traps: a `static let` of a
+    /// non-`Sendable` type **compiles under Xcode 27 and fails CI**, which builds with Xcode 16.4.
+    nonisolated(unsafe) private static let sharedRawContext: CIContext = CIContext(
+        options: [.cacheIntermediates: false])
 
     /// Just the bytes of a range, or nil. A `FileHandle`-free, allocation-honest read: bounds-checked
     /// against the file's real length so a stale range from a truncated file cannot read past the
