@@ -100,13 +100,29 @@ public struct Dependencies {
             keymapStore: keymapStore)
     }
 
+    /// A scratch directory for stores, so a test that builds `Dependencies` **itself** — rather
+    /// than through `.testing` — still cannot read or write the real settings, keymap or recents.
+    ///
+    /// `SettingsStore()` and `KeymapStore()` both default to `~/Library/Application Support/
+    /// Firstcut`, so a test that omits them shares state with the installed app: it loads whatever
+    /// the last run left, and `AppModel.recordRecent` **saves back into it**. That happened — a unit
+    /// test left three `Game1JENKS` entries in the real `recents.json`, and a later run failed
+    /// because of them. Nothing in CI showed it because the runner's Application Support starts
+    /// empty every time, so the leak is invisible until it is not.
+    ///
+    /// Every test that builds `Dependencies` should pass `settingsStore:` and `keymapStore:` from
+    /// here. `.testing` and `.preview` already do.
+    public static func scratchStore() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("FirstcutTest-\(UUID().uuidString)", isDirectory: true)
+    }
+
     /// A test-friendly variant: everything in memory except the directories.
     public static func testing(
         backend: any SessionBackend, images: any ImageProviding = MockImageProvider(),
         settings: AppSettings = AppSettings(), keymap: Keymap? = nil
     ) -> Dependencies {
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FirstcutTest-\(UUID().uuidString)", isDirectory: true)
+        let scratch = scratchStore()
         var keymapStore = KeymapStore(directory: scratch)
         _ = try? keymapStore.load()
         return Dependencies(

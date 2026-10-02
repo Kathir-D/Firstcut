@@ -53,8 +53,14 @@ struct FirstPhotoFastPathTests {
         gate: OpenGate?, fails: Bool = false,
         first: (@Sendable (URL) -> PhotoMeta?)? = { _ in photos[0] }
     ) -> AppModel {
+        // A scratch directory for the stores. Without it these tests share
+        // `~/Library/Application Support/Firstcut` with the installed app, and `recordRecent`
+        // writes into the user's real `recents.json` — which it did, until this was fixed.
+        let scratch = Dependencies.scratchStore()
         let dependencies = Dependencies(
             backend: MockSession(photos: photos),
+            settingsStore: SettingsStore(directory: scratch),
+            keymapStore: KeymapStore(directory: scratch),
             asyncSessionFactory: { _ in
                 guard let gate else {
                     throw CocoaError(.fileReadNoSuchFile)
@@ -121,8 +127,11 @@ struct FirstPhotoFastPathTests {
         let gate = OpenGate()
         // A shoot already open, which is what a rating here would otherwise land in.
         let previous = MockSession(photos: Self.photos)
+        let scratch = Dependencies.scratchStore()
         var dependencies = Dependencies(
             backend: previous,
+            settingsStore: SettingsStore(directory: scratch),
+            keymapStore: KeymapStore(directory: scratch),
             asyncSessionFactory: { _ in
                 await gate.wait()
                 return MockSession(photos: Self.photos)

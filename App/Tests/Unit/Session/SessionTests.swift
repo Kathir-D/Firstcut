@@ -299,6 +299,29 @@ struct AppModelNavigationTests {
         #expect(images.lastFocus?.viewportPixelSize == CGSize(width: 2880, height: 1800))
     }
 
+    /// The last link in the chain the T4 toggle travels: Settings → `FocusRequest` → the pipeline.
+    ///
+    /// Without this, a Settings switch that stopped reaching the model would still leave every
+    /// pipeline test green — they all construct `FocusRequest` themselves, so they assert the
+    /// pipeline honours the flag, not that anything ever sets it. That is the whole class of bug
+    /// §0.3 was written about ("a switch that does nothing"), so the seam is pinned here.
+    @Test("Turning on 'Exact RAW' in Settings reaches the pipeline (T4)")
+    func exactRawSettingReachesThePipeline() throws {
+        let images = MockImageProvider()
+        let session = MockSession(photos: FixturePhotos.syntheticPhotos(count: 6, burstSize: 3))
+        let model = AppModel(.testing(backend: session, images: images))
+        model.open(session)
+
+        #expect(images.lastFocus?.exactRaw == false, "off by default")
+
+        model.updateSettings { $0.viewer.exactRaw = true }
+        #expect(images.lastFocus?.exactRaw == true, "the setting did not reach the FocusRequest")
+
+        // And back, because a setting that can be turned on but not off is half a feature.
+        model.updateSettings { $0.viewer.exactRaw = false }
+        #expect(images.lastFocus?.exactRaw == false, "the setting did not turn back off")
+    }
+
     @Test("Progress counts batches, photos and tiers")
     func progress() throws {
         let (model, _) = Self.makeModel()
