@@ -213,9 +213,18 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   singleton, so the closure cannot be driven in a test; the tests deliberately stop one layer
 >   down, at the host. If that closure is ever deleted the suite still passes, so it is the one
 >   thing in this change to eyeball by hand.
-> - **Still open:** the broad "make the controls the right size" audit. The Keep buttons have fixed
->   heights, padding and corner radius, and were checked visually, but the rest of the UI has not
->   been through a sizing pass.
+> - **Still open, and it needs a person: the sizing audit.** The owner asked to "make sure oval
+>   around many buttons and everything in ui correct size" and then said **"open the app on the
+>   computer, I'll screenshot what I mean"** — so the meaning is not yet established. Do not guess
+>   it. The three readings are (a) the Keep / Not keep buttons should be pills rather than
+>   near-square rounded rectangles, (b) the buttons and the HUD should share one height and
+>   baseline, or (c) it is the coloured ring drawn around each *photo* that is mis-sized. A Release
+>   build is staged and current at `dist/Firstcut.app`; launch it with
+>   `open -n dist/Firstcut.app --args -FirstcutMockShoot 1 -FirstcutRatingMode keep` and ask for the
+>   screenshot before changing anything.
+> - **CI caught a local-green commit once already today** (`9257d65`): an unused loop variable that
+>   only fails under `GCC_TREAT_WARNINGS_AS_ERRORS` on Xcode 16.4. Run the local test command with
+>   that flag before pushing, not after.
 
 > **As of 2026-10-01 (agent session on Kathir's Mac, second pass).** Every agent-side item in §0.3
 > is now done, including the T4 "Exact RAW" decode that the previous handoff stopped short of.
