@@ -61,11 +61,18 @@ struct RootView: View {
                     VStack {
                         Spacer(minLength: 0)
                         ProgressHUD(
-                            progress: state.progress, photo: state.currentPhoto, mode: state.ratingMode
+                            progress: state.progress, photo: state.currentPhoto, mode: state.ratingMode,
+                            // The keep buttons are the only interactive part of the HUD, so this is
+                            // the one place that stops being click-through. The rest of the capsule
+                            // is a readout and nothing was ever meant to catch a click there.
+                            onSetKeep: { state.send(.setKeep) },
+                            onSetNotKeep: { state.send(.setNotKeep) }
                         )
                         .padding(.bottom, Appearance.filmstripHeight + 16)
                     }
-                    .allowsHitTesting(false)
+                    // Not `.allowsHitTesting(false)`: that would make the Keep / Not keep buttons
+                    // inert. The HUD sits over the loupe, so the capsule background is made
+                    // click-through in `ProgressHUD` itself and only the buttons take clicks.
                 }
 
                 // Top-left, over the viewer: the counters that decide todo.md §7.1, and the reason a

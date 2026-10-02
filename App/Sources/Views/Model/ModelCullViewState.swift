@@ -180,7 +180,10 @@ extension CullAction {
         case .setFlag(.none): .unflag
         case .setFlag(.reject): .rejectFlag
         case .setLabel(let label): .setLabel(label)
+        case .setRatingMode(let mode): .setRatingMode(mode)
         case .toggleKeep: .toggleKeep
+        case .setKeep: .setKeep
+        case .setNotKeep: .setNotKeep
         case .undo: .undo
         case .redo: .redo
         case .openFolder: .openFolder

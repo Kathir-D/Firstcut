@@ -157,11 +157,19 @@ final class AppEnvironment {
         let mode = LaunchOptions.viewMode
         let finish = LaunchOptions.opensFinish
         let snapshot = LaunchOptions.snapshotPath
-        guard mode != nil || finish || snapshot != nil else { return }
+        let ratingMode = LaunchOptions.ratingMode
+        guard mode != nil || finish || snapshot != nil || ratingMode != nil else { return }
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(4))
             guard let self else { return }
             if let mode { self.send(.setViewMode(mode)) }
+            // Through `send`, not the environment's own `model`: with `-FirstcutMockShoot` the whole
+            // cull state is replaced, so the model the environment holds is not the one on screen.
+            // `state.send` is the one funnel every keystroke and menu item already uses.
+            //
+            // The flag used to be listed and never read, so `-FirstcutRatingMode keep` produced a
+            // stars-mode screenshot -- which is how the keep-mode UI could go unlooked-at.
+            if let ratingMode { self.send(.setRatingMode(ratingMode)) }
             if finish { self.send(.finishCull) }
             guard let snapshot else { return }
             try? await Task.sleep(for: .seconds(2))

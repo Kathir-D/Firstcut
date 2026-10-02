@@ -86,9 +86,24 @@ struct FirstcutCommands: Commands {
             }
             .disabled(!isCulling)
 
-            Button(pickOrKeepTitle) { environment.send(pickOrKeepAction) }
-                .keyboardShortcut(shortcut(pickOrKeepCommand))
-                .disabled(!isCulling)
+            // In keep mode the rating control is two buttons, so the menu says the same thing:
+            // "Toggle Keep" cannot be pressed twice to keep, which is exactly what a button must
+            // not do. P stays bound to the toggle — one chord is still the fastest thing a
+            // photographer does — and these two are what the on-screen buttons send.
+            Group {
+                if environment.state.ratingMode == .keep {
+                    Button("Keep") { environment.send(.setKeep) }
+                        .keyboardShortcut(shortcut(.setKeep))
+                    Button("Not Keep") { environment.send(.setNotKeep) }
+                        .keyboardShortcut(shortcut(.setNotKeep))
+                    Button("Toggle Keep") { environment.send(.toggleKeep) }
+                        .keyboardShortcut(shortcut(.toggleKeep))
+                } else {
+                    Button(pickOrKeepTitle) { environment.send(pickOrKeepAction) }
+                        .keyboardShortcut(shortcut(pickOrKeepCommand))
+                }
+            }
+            .disabled(!isCulling)
 
             Menu("Color Label") {
                 Button("Red") { environment.send(.setLabel(.red)) }

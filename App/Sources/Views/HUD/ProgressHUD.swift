@@ -9,12 +9,27 @@ struct ProgressHUD: View {
     let progress: CullProgress
     var photo: CullPhoto?
     var mode: RatingMode = .stars
+    /// Sends `.setKeep` / `.setNotKeep`. Nil in a read-only context, which is why the control has
+    /// a no-action form rather than the HUD being the only place it appears.
+    var onSetKeep: (() -> Void)?
+    var onSetNotKeep: (() -> Void)?
 
     var body: some View {
-        GlassCapsule {
+        GlassCapsule(isInteractive: false) {
+            // `isInteractive: false` so the capsule *background* does not swallow clicks meant for
+            // the viewer behind it; the Keep / Not keep buttons below still take their own, because
+            // hit testing is per-view, not inherited from the background.
             HStack(spacing: 14) {
                 if let photo {
-                    CurrentRating(rating: photo.rating, mode: mode)
+                    // Keep mode gets the two-button control, which is the control for that mode;
+                    // stars mode keeps the stars, which are the whole rating there.
+                    if mode == .keep {
+                        KeepRatingControl(
+                            isKeep: RatingVisuals.isKeep(photo.rating, mode: mode),
+                            onSetKeep: onSetKeep, onSetNotKeep: onSetNotKeep, compact: true)
+                    } else {
+                        CurrentRating(rating: photo.rating, mode: mode)
+                    }
                     divider
                 }
                 metric("\(progress.batchIndex + 1)", "of \(max(progress.batchCount, 1)) batches")

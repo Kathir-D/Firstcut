@@ -111,8 +111,14 @@ final class PreviewCullViewState: CullViewState {
             rateCurrent { $0.flag = flag }
         case .setLabel(let label):
             rateCurrent { $0.label = label }
+        case .setRatingMode(let mode):
+            ratingMode = mode
         case .toggleKeep:
             rateCurrent { $0.keep.toggle() }
+        case .setKeep:
+            rateCurrent { $0.keep = true }
+        case .setNotKeep:
+            rateCurrent { $0.keep = false }
         case .undo, .redo:
             break
         case .openFolder, .finishCull:

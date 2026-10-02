@@ -32,7 +32,26 @@ public enum Command: Hashable, Sendable {
     case setStars(Int)  // 0...5; 0 clears
     case setStarsAndAdvance(Int)  // 1...5, ⇧1…⇧5 in Lightroom
     case togglePickFlag
+    /// Switch rating mode from anywhere — the Settings picker, or `-FirstcutRatingMode` at launch.
+    ///
+    /// It is a command rather than a direct `model.updateSettings` call so that the flag path goes
+    /// through the *same* funnel every keystroke and menu item uses (`state.send` → `perform`). That
+    /// matters: reaching for `activeModel` from the environment looked equivalent and was not,
+    /// because with `-FirstcutMockShoot` the cull state is replaced wholesale and the model the
+    /// environment holds is not the one on screen. It has no default chord — nothing is bound to it —
+    /// so it cannot shadow a photographer's keys.
+    case setRatingMode(RatingMode)
+
     case toggleKeep  // keep mode only
+    /// The two halves of `toggleKeep`, as separate commands, so keep mode can offer a **Keep**
+    /// button and a **Not keep** button rather than one key that flips (owner request, 2026-10-02).
+    ///
+    /// The toggle stays, and stays bound to P: it is the fastest thing a photographer does and one
+    /// chord is still right for it. What changes is that the *on-screen* controls can now say what
+    /// they do instead of "toggle" — which a button label cannot honestly say, and which is the
+    /// whole reason a toggle is the wrong shape for a button. A custom keymap can bind these too.
+    case setKeep  // keep mode only; idempotent, unlike the toggle
+    case setNotKeep  // keep mode only; idempotent
     case rejectFlag
     case unflag
     case toggleFlag
@@ -74,7 +93,10 @@ extension Command {
         case .setStars: "rate.stars"
         case .setStarsAndAdvance: "rate.starsAndAdvance"
         case .togglePickFlag: "flag.pick"
+        case .setRatingMode: "mode.rating"
         case .toggleKeep: "keep.toggle"
+        case .setKeep: "keep.set"
+        case .setNotKeep: "keep.clear"
         case .rejectFlag: "flag.reject"
         case .unflag: "flag.unflag"
         case .toggleFlag: "flag.toggle"
@@ -103,6 +125,8 @@ extension Command {
         switch self {
         case .setStars(let stars), .setStarsAndAdvance(let stars): stars
         case .setLabel(let label): label.flatMap(\.ordinal)
+        // 0 = stars, 1 = keep: a keymap entry can only carry an integer, and the mode is an enum.
+        case .setRatingMode(let mode): mode == .stars ? 0 : 1
         case .showCompare(let count): count
         default: nil
         }
@@ -119,7 +143,15 @@ extension Command {
         case "rate.stars": self = .setStars(min(max(argument ?? 0, 0), 5))
         case "rate.starsAndAdvance": self = .setStarsAndAdvance(min(max(argument ?? 1, 1), 5))
         case "flag.pick": self = .togglePickFlag
+        case "mode.rating":
+            // Two spellings so a hand-written keymap entry can be either.
+            switch argument {
+            case 0: self = .setRatingMode(.stars)
+            default: self = .setRatingMode(.keep)
+            }
         case "keep.toggle": self = .toggleKeep
+        case "keep.set": self = .setKeep
+        case "keep.clear": self = .setNotKeep
         case "flag.reject": self = .rejectFlag
         case "flag.unflag": self = .unflag
         case "flag.toggle": self = .toggleFlag
@@ -151,14 +183,16 @@ extension Command {
     public var isRepeatable: Bool {
         switch self {
         case .photoPrevious, .photoNext, .batchPrevious, .batchNext,
-            .setStars, .setStarsAndAdvance, .togglePickFlag, .toggleKeep,
+            .setStars, .setStarsAndAdvance, .togglePickFlag, .toggleKeep, .setKeep, .setNotKeep,
             .rejectFlag, .unflag, .toggleFlag, .setLabel:
             true
         case .openFolder, .finishCull, .undo, .redo, .toggleFullScreen,
             .toggleAutoAdvance, .showLoupe, .showGrid, .showCompare:
             false
         case .toggleInfoPanel, .toggleClippingOverlay, .toggleAFOverlay, .toggleHUD,
-            .toggleZoomLock, .toggleZoom, .magnify:
+            .toggleZoomLock, .toggleZoom, .magnify, .setRatingMode:
+            // Switching mode is not something to repeat while a key is held: it recomputes every
+            // photo's tier, so holding the chord would do the whole shoot's work several times.
             false
         }
     }

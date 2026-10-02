@@ -516,6 +516,91 @@ struct AppModelRatingTests {
         #expect(model.currentPhoto?.tier == .unrated)
     }
 
+    /// The two keep buttons, which is why they are separate commands at all (owner request,
+    /// 2026-10-02). The property is idempotence: pressing "Keep" twice must still be a keep, where
+    /// the old single toggle would have made the second press mean "not keep" — a button that lies
+    /// about what it does.
+    /// The `-FirstcutRatingMode` launch flag's whole path, which is how the screenshot workflow asks
+    /// for keep mode. It was listed in `LaunchOptions` and never read, so every keep-mode screenshot
+    /// was silently a stars-mode one — which is how the keep UI could go unlooked-at for a release.
+    ///
+    /// Asserted through `state.send`, because that is the funnel the environment uses: reaching for
+    /// `activeModel` instead looks equivalent and is not, since `-FirstcutMockShoot` replaces the
+    /// whole cull state and the environment's own model is then not the one on screen.
+    @Test("setRatingMode reaches the model through the same funnel as any other command")
+    func ratingModeCommandReachesTheModel() throws {
+        let (model, _) = Self.makeModel()
+        #expect(model.ratingMode == .stars)
+        model.perform(.setRatingMode(.keep))
+        #expect(model.ratingMode == .keep)
+        // And the tiers were recomputed for the new mode, which is the observable consequence.
+        #expect(model.currentPhoto?.tier == .unrated)
+        model.perform(.setRatingMode(.stars))
+        #expect(model.ratingMode == .stars)
+
+        // Through a real view state, the way the environment sends it.
+        let (viaModel, _) = Self.makeModel()
+        let state = ModelCullViewState(
+            model: viaModel, images: PreviewImageSource(seed: 1))
+        state.send(.setRatingMode(.keep))
+        #expect(state.ratingMode == .keep, "the environment sends the flag through state.send")
+        #expect(viaModel.ratingMode == .keep)
+
+        // And the command survives the keymap round trip, with 0/1 for the two modes.
+        #expect(Command.setRatingMode(.keep).id == "mode.rating")
+        #expect(Command(id: "mode.rating", argument: 0) == .setRatingMode(.stars))
+        #expect(Command(id: "mode.rating", argument: 1) == .setRatingMode(.keep))
+        #expect(Command.setRatingMode(.keep).argument == 1)
+        #expect(Command.setRatingMode(.stars).argument == 0)
+        // Not repeatable: it recomputes every photo's tier, so holding the chord would redo the
+        // whole shoot several times.
+        #expect(Command.setRatingMode(.keep).isRepeatable == false)
+    }
+
+    @Test("Keep and Not keep are separate buttons, and pressing either twice does not flip it")
+    func keepButtonsAreIdempotent() throws {
+        let (model, _) = Self.makeModel()
+        model.updateSettings { $0.general.ratingMode = .keep }
+
+        model.perform(.setKeep)
+        #expect(model.currentPhoto?.rating.keep == true)
+        #expect(model.currentPhoto?.isKeep == true)
+        // Again: still a keep.
+        model.perform(.setKeep)
+        #expect(model.currentPhoto?.rating.keep == true, "a Keep button must not toggle")
+        #expect(model.currentPhoto?.isKeep == true)
+
+        model.perform(.setNotKeep)
+        #expect(model.currentPhoto?.rating.keep == false)
+        #expect(model.currentPhoto?.isKeep == false)
+        model.perform(.setNotKeep)
+        #expect(model.currentPhoto?.rating.keep == false, "a Not keep button must not toggle")
+
+        // And they round trip to the same state the toggle reaches, so P and the buttons cannot
+        // disagree about what a photo's rating is.
+        model.perform(.toggleKeep)
+        #expect(model.currentPhoto?.rating.keep == true)
+        model.perform(.setNotKeep)
+        #expect(model.currentPhoto?.rating.keep == false)
+    }
+
+    /// The commands have to survive the round trip through the keymap's string names, because that
+    /// is how a user keymap addresses them — a command with no name, or a name that does not parse
+    /// back, is unreachable by anyone who rebinds keys.
+    @Test("The keep commands round trip through their keymap names")
+    func keepCommandNames() {
+        #expect(Command.setKeep.id == "keep.set")
+        #expect(Command.setNotKeep.id == "keep.clear")
+        #expect(Command.toggleKeep.id == "keep.toggle")
+        // Each name parses back to the command it names, and the three do not collide.
+        #expect(Command(id: "keep.set") == .setKeep)
+        #expect(Command(id: "keep.clear") == .setNotKeep)
+        #expect(Command(id: "keep.toggle") == .toggleKeep)
+        #expect(
+            Set(["keep.set", "keep.clear", "keep.toggle"]).count == 3,
+            "the three keep commands must have three distinct names")
+    }
+
     @Test("X rejects, U clears the flag, ` toggles it")
     func flags() throws {
         let (model, _) = Self.makeModel()

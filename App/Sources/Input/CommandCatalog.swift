@@ -62,7 +62,9 @@ public enum CommandCatalog {
         }
         list += [
             CommandCatalogEntry(command: .togglePickFlag, menu: .photo, title: "Pick Flag"),
-            CommandCatalogEntry(command: .toggleKeep, menu: .photo, title: "Keep"),
+            CommandCatalogEntry(command: .toggleKeep, menu: .photo, title: "Toggle Keep"),
+            CommandCatalogEntry(command: .setKeep, menu: .photo, title: "Keep"),
+            CommandCatalogEntry(command: .setNotKeep, menu: .photo, title: "Not Keep"),
             CommandCatalogEntry(command: .rejectFlag, menu: .photo, title: "Reject Flag"),
             CommandCatalogEntry(command: .unflag, menu: .photo, title: "Clear Flag"),
             CommandCatalogEntry(command: .toggleFlag, menu: .photo, title: "Toggle Flag"),

@@ -681,7 +681,12 @@ public final class AppModel: SessionListener, KeyRouterSource {
             rateCurrent { $0.stars = UInt8(min(max(stars, 1), 5)) }
             advance()  // ⇧1…⇧5 always advances, auto-advance or not (Lightroom)
         case .togglePickFlag: rateCurrent { $0.flag = $0.flag == .pick ? .none : .pick }
+        case .setRatingMode(let mode): updateSettings { $0.general.ratingMode = mode }
         case .toggleKeep: rateCurrent { $0.keep = !$0.keep }
+        // The two buttons, and the point of them being separate: idempotent. A "Keep" button that
+        // toggled would make a second click mean "not keep", which is not what the button says.
+        case .setKeep: rateCurrent { $0.keep = true }
+        case .setNotKeep: rateCurrent { $0.keep = false }
         case .rejectFlag: rateCurrent { $0.flag = .reject }
         case .unflag: rateCurrent { $0.flag = .none }
         case .toggleFlag: rateCurrent { $0.flag = $0.flag == .none ? .pick : .none }

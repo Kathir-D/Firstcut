@@ -175,7 +175,10 @@ enum CullAction {
     case setRating(stars: UInt8)
     case setFlag(Flag)
     case setLabel(ColorLabel?)
+    case setRatingMode(RatingMode)
     case toggleKeep
+    case setKeep  // keep mode only; idempotent, unlike the toggle
+    case setNotKeep  // keep mode only; idempotent
     case undo
     case redo
 }
