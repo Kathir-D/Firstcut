@@ -558,7 +558,7 @@ struct AppModelRatingTests {
 
         // A jump is one batch, so walking to the last batch is a loop of jumps — which is also the
         // proof that each one moves exactly one batch rather than to an end.
-        for expected in 1..<batchCount { model.perform(.jumpBatch(1)) }
+        for _ in 1..<batchCount { model.perform(.jumpBatch(1)) }
         #expect(model.currentBatchIndex == batchCount - 1)
         model.perform(.jumpBatch(1))
         #expect(model.currentBatchIndex == batchCount - 1, "past the last batch there is nowhere to go")

@@ -28,7 +28,7 @@ struct ProgressHUD: View {
                             isKeep: RatingVisuals.isKeep(photo.rating, mode: mode),
                             onSetKeep: onSetKeep, onSetNotKeep: onSetNotKeep, compact: true)
                     } else {
-                        CurrentRating(rating: photo.rating, mode: mode)
+                        CurrentRating(rating: photo.rating)
                     }
                     divider
                 }
@@ -75,28 +75,26 @@ struct ProgressHUD: View {
 
 /// The photo on screen, as it is rated right now: five stars (or Keep / Not keep), its flag and its
 /// colour label, so a rating key visibly lands without looking down at the filmstrip.
+/// The stars-mode readout: the five stars, plus the pick flag, reject flag and colour label.
+///
+/// **Stars mode only.** Keep mode is `KeepRatingControl`, which has its own two buttons, so this used
+/// to carry a `.keep` branch that rendered a single "Keep" / "Not keep" label. Nothing could reach
+/// it — the HUD routes keep mode to the two-button control above — and keeping it meant two
+/// different renderings of the same answer, one of which nobody ever saw. A reviewer looking for
+/// how a keep is drawn would have found this one first, so it went.
 private struct CurrentRating: View {
     let rating: Rating
-    let mode: RatingMode
 
     var body: some View {
         HStack(spacing: 8) {
-            switch mode {
-            case .stars:
-                let stars = RatingVisuals.starCount(for: rating, mode: mode)
-                HStack(spacing: 1) {
-                    ForEach(1...5, id: \.self) { index in
-                        Image(systemName: index <= stars ? "star.fill" : "star")
-                            .foregroundStyle(index <= stars ? Color.yellow : Appearance.tertiaryLabel)
-                    }
+            let stars = rating.stars
+            HStack(spacing: 1) {
+                ForEach(1...5, id: \.self) { index in
+                    Image(systemName: index <= stars ? "star.fill" : "star")
+                        .foregroundStyle(index <= stars ? Color.yellow : Appearance.tertiaryLabel)
                 }
-                .font(.system(size: 10))
-            case .keep:
-                let keep = RatingVisuals.isKeep(rating, mode: mode)
-                Label(keep ? "Keep" : "Not keep", systemImage: keep ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(keep ? Appearance.keepGreen : Appearance.secondaryLabel)
             }
+            .font(.system(size: 10))
             switch rating.flag {
             case .pick:
                 Image(systemName: "flag.fill").font(.system(size: 10)).foregroundStyle(
