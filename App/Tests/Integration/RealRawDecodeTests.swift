@@ -381,23 +381,32 @@ final class RealRawDecodeTests: XCTestCase {
     @MainActor
     func testExactRawThroughTheProviderOnRealCR3s() async throws {
         let files = try realCR3s(count: 24)
-        // Prefer a rotated frame: the double-rotation bug only shows on one.
-        let url = try files.first { try exifOrientation(of: $0) == 8 } ?? files[0]
+        // Prefer a rotated frame: the double-rotation bug only shows on one, and a landscape frame
+        // comes out the same size either way. Written as a loop rather than `first(where:)` because
+        // the predicate throws, which a non-throwing closure cannot carry.
+        var url: URL?
+        for file in files {
+            if try exifOrientation(of: file) == 8 {
+                url = file
+                break
+            }
+        }
+        let chosen = try XCTUnwrap(url ?? files.first, "no photograph in the sample")
         let provider = ImageProvider(memoryBudgetBytes: 1 << 30)
         let id: PhotoID = 1
         provider.open(
-            folder: url.deletingLastPathComponent(),
+            folder: chosen.deletingLastPathComponent(),
             photos: [
                 PhotoMeta(
-                    id: id, relPath: url.lastPathComponent, companions: [], kind: .raw(.cr3),
+                    id: id, relPath: chosen.lastPathComponent, companions: [], kind: .raw(.cr3),
                     fileSize: (try XCTUnwrap(
-                        (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
+                        (try FileManager.default.attributesOfItem(atPath: chosen.path)[.size] as? NSNumber)?
                             .uint64Value)),
                     captureTime: nil, shutterCount: nil, fileNumber: nil, cameraMake: nil,
                     cameraModel: nil, cameraSerial: nil, lensModel: nil, focalLengthMm: nil,
                     exposureTimeS: nil, fNumber: nil, iso: nil, exposureCompEv: nil,
                     meteringMode: nil, driveMode: nil, shutterMode: nil,
-                    orientation: try exifOrientation(of: url), width: 6000, height: 4000,
+                    orientation: try exifOrientation(of: chosen), width: 6000, height: 4000,
                     af: nil, preview: nil, fullPreview: nil, warnings: [])
             ])
 
@@ -429,7 +438,7 @@ final class RealRawDecodeTests: XCTestCase {
         // turn is exactly what a double rotation would undo: for an EXIF 8 frame the sensor is
         // 6000×4000 landscape and the upright develop is 4000×6000, so a develop that came back
         // landscape would mean the tag was applied twice.
-        let orientation = try exifOrientation(of: url)
+        let orientation = try exifOrientation(of: chosen)
         let sensorIsLandscape = orientation == 1 || orientation == 3
         XCTAssertEqual(
             sensorIsLandscape ? developed.width : developed.height, 6000,
