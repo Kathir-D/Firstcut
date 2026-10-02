@@ -194,9 +194,11 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   unhonoured settings, and **T4**. Two of the settings found real bugs — the clipping overlay
 >   painted every pixel red and never saw black, and `Codable` on three core types was vacuous.
 > - **§0.4's checklist is now the thing that would have saved this session:** every claim about T4
->   had to be measured because the plausible-looking ones were wrong. `CIRAWFilter` was recorded as
->   unusable when it is public API; the EXIF orientation was recorded as something to apply in the
->   app when the filter applies it. Both are documented where the code lives now.
+>   had to be measured because the plausible-looking ones were wrong, twice over. `CIRAWFilter` was
+>   recorded as unusable when it is public API; the EXIF orientation was recorded as something to
+>   apply in the app when the filter applies it; and **the develop was recorded as 3.4× slower than
+>   the preview when it is slightly faster** (see the cold-cache trap below). All three are
+>   documented where the code lives now.
 > - **CI was red for three pushes before this session's first fix.** `bitmapInfo.byteOrder` is a
 >   newer-SDK overlay member; CI builds with Xcode 16.4 against the macOS 15 SDK. The lesson is in
 >   §0.4's checklist: **anything that compiles locally under Xcode 27 is not evidence about CI.**
@@ -223,9 +225,22 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   orientation test assert nothing. And **a RAW develop must not re-apply the orientation**,
 >   because the filter has already applied it (see item 1).
 >
+>   **The measurement trap, which is the one most likely to be repeated:** the first cost figure
+>   for T4 was **0.299 s against the preview's 0.089 s**, and it was wrong — a **cold file cache**,
+>   paid by whichever call happened to go first (reading a 12 MB CR3 off the SSD). Measured
+>   properly, alternating the two calls over five rounds with the order reversed each round, the
+>   develop is **~0.079–0.096 s against ~0.090–0.113 s for the preview: the same cost, or slightly
+>   faster.** This is the general form of the lesson, so it is worth stating plainly: **when timing
+>   two things against each other, whichever runs first pays for the file read.** Warm both, or
+>   alternate, before believing a ratio. It matters here because "a demosaic is slow" is the natural
+>   assumption, it is false on this hardware, and acting on it would have put T4 in the prefetch for
+>   the wrong reason — the real constraint is **92 MB of memory**, not time.
+>
 > **Next, in order:**
 >
-> 1. ~~**"Exact RAW" (T4) decode.**~~ **Done**, in `087c22c`. T4 is a separate `DecodeEngine.Kind`
+> 1. ~~**"Exact RAW" (T4) decode.**~~ **Done**, in `087c22c` + three follow-ups (`d46113d` for the
+>    CI concurrency error, `8cd60a3` for a test that would not compile on CI, `a1c57df` for the cost
+>    correction above). T4 is a separate `DecodeEngine.Kind`
 >    (`case exactRaw`), so the cache separation the design called for is free from `Key`'s
 >    `id + kind`; `exactRaws` holds the current photograph only; `setExactRaw` replaces whatever the
 >    tier was doing on every focus report, so moving on drops the develop; and work already running
@@ -233,14 +248,15 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >    again still develops) rather than re-inserting 92 MB. The toggle is now in Settings → Viewer,
 >    the debug HUD has a row for it, and `docs/contracts/pipeline-api.md` is v0.4.
 >    Verified: 6 unit tests (no photos) + 4 integration tests on real CR3s, Swift 284 green, Rust
->    338 + 3 CLI, lint clean. Four mutations were each checked to fail a test — filing the develop
->    into the display store, dropping the develop, removing the `kind` gate, and ignoring the
->    cancellation.
+>    338 + 3 CLI, lint clean, `main` green on CI. Five mutations were each checked to fail a test —
+>    filing the develop into the display store, dropping the develop, removing the `kind` gate,
+>    ignoring the cancellation, and re-applying the EXIF orientation.
 > 2. **Pipeline:** the embedded-preview vs `CIRAWFilter` comparison (§7.2) still needs a person to
->    judge the pictures. Note the timings that make it a real question rather than a formality: the
->    shipped preview and T4 cost about the same for the same 6000×4000 (~0.09 s against ~0.079 s,
->    measured over five alternating rounds) and they differ by 3–52/255 per pixel. Both are now reachable from the app (the toggle is in Settings → Viewer),
->    so this is a matter of looking at the same frame both ways.
+>    judge the pictures. **It is now a free decision:** both paths cost the same (~0.09 s against
+>    ~0.079 s for the same 6000×4000, measured over five alternating rounds) and differ by 3–52/255
+>    per pixel, so nothing is being traded for speed. Both are reachable from the app (the toggle is
+>    in Settings → Viewer), so this is a matter of looking at the same frame both ways and saying
+>    which you would rather cull on.
 > 3. **Speculative T3 after a dwell** (§7.5) — deliberately deferred until the arrow-key measurement
 >    exists, because the measurement is what decides whether it is worth a decode.
 > 4. **The owner's items** in §0.2, unchanged and still first in line for a human: the boundary-F1
