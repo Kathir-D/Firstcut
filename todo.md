@@ -4,11 +4,11 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
-**Status (2026-09-30): feature complete for v0.1.0 and green on CI.** The work logged in §0.5 was
-done on the Mac itself rather than in the cloud container, so the app builds here, the tests run
-against the real photos, and the metadata-scan and batching timings in §7.3 are measured rather than
-estimated. What is left is in [§0.2](#02-left-for-the-owner) (only a person can do it) and
-[§0.3](#03-other-open-work).
+**Status (2026-10-01): feature complete for v0.1.0, green on CI, and every agent-side item in
+[§0.3](#03-other-open-work) is now done** — the last of them, the T4 "Exact RAW" decode, landed in
+`087c22c`. The work was done on the Mac itself rather than in the cloud container, so the app builds
+here, the tests run against the real photos, and the timings in §7.3 are measured rather than
+estimated. **What is left is [§0.2](#02-left-for-the-owner)**: it needs a person, not a machine.
 
 ---
 
@@ -23,7 +23,7 @@ estimated. What is left is in [§0.2](#02-left-for-the-owner) (only a person can
 | --- | --- |
 | Rust core (`core/`) | CR3 reader (verified against exiftool on all 2,880 files), other formats from their specs, ordering, batching (metadata then visual signature), session DB, XMP read/write, Finish plan/execute/undo, rename reconciliation. 300+ tests, fmt and clippy clean |
 | App | Welcome with recents and resume; loupe with pinch/click zoom, pan, zoom lock, AF and clipping overlays; filmstrip; grid; 2/3/4-up compare with synced zoom; info panel with histogram; progress HUD with the current rating; both rating modes; undo/redo; Finish Cull sheet (summary → options → dry run → typed confirmation for delete → report → undo); Settings (General, Keyboard with recorder/import/export, Viewer, Metadata, Performance); menus; error alerts; live folder watching; flush on quit |
-| Pipeline | Concurrent decode engine with a priority queue (current photo, its batch, next, previous), cancellation when the user moves on, memory budget with LRU eviction, memory-pressure shedding, visual signatures in the background |
+| Pipeline | Concurrent decode engine with a priority queue (current photo, its batch, next, previous), cancellation when the user moves on, memory budget with LRU eviction, memory-pressure shedding, visual signatures in the background, and an on-demand **Exact RAW** (T4) develop of the sensor data as its own cache tier |
 | CI | `ci.yml` (Xcode 16.4: Rust + Swift build and tests) green; `xcode26.yml` (shipping toolchain) green; `release.yml` rehearsed (ad-hoc signed zip + SHA-256 + cask stamping); `screenshots.yml` renders every screen on macOS 26 |
 | Distribution | Homebrew cask template, curl and build-from-source paths in the README, GPL-3.0, third-party notices, issue templates |
 
@@ -40,9 +40,18 @@ Only a person with the Mac, the test photos, the apps or the repo settings can d
 2. **Ground truth for batching.** `firstcut contact-sheet --game <g>`, look at each ambiguous boundary
    (~210 across the four games), write `tests/fixtures/ground-truth/<g>.json` (file names only). This
    is what makes the ≥ 98% boundary-F1 claim measurable; an agent must not synthesise it.
+2b. **Preview or RAW?** (§7.2's benchmark task.) Settings → Viewer → "Develop the sensor data, not
+   the embedded preview" now toggles between them, so this is a matter of looking at the same
+   high-ISO frame at 100% both ways and saying which you would cull on. The numbers are already
+   measured (0.089 s preview vs 0.299 s RAW for the same 6000×4000, differing by 3–52/255 per
+   pixel); only the judgement is missing. Whatever you decide should become the **default**, and
+   §7.2's checkbox should be updated to say which.
 3. **Game1JENKS re-press pauses** (`IMG_6117`–`IMG_6164`): one play or several? Decide by eye.
 4. **Timings (§7.3)** on the M1 Pro with the photos: folder open → first photo, metadata scan,
-   thumbnails, arrow → sharp photo, 100% zoom. `scripts/test-with-photos.sh` runs the opt-in tests.
+   thumbnails, arrow → sharp photo, 100% zoom. `scripts/test-with-photos.sh` runs the opt-in tests —
+   but note it **hangs** rather than fails when the host reads `~/Documents` (the TCC prompt has
+   nobody to answer it), so point `FIRSTCUT_TEST_PHOTOS` at a copy outside a protected folder:
+   `FIRSTCUT_TEST_PHOTOS=/tmp/fcphotos scripts/test-with-photos.sh`.
 5. **Lightroom / Capture One** read the sidecars (ratings and keep labels survive an import) on a copy
    of a few photos.
 6. **Tap secret** on `Kathir-D/Firstcut`: `HOMEBREW_TAP_DEPLOY_KEY` (deploy key with write access on
@@ -53,7 +62,9 @@ Only a person with the Mac, the test photos, the apps or the repo settings can d
 
 ### 0.3 Other open work
 
-Not blocking v0.1.0; an agent can do these.
+Not blocking v0.1.0; an agent can do these. **Every item an agent can do is now done** — the list
+below is struck through where finished, and what remains is either in [§0.2](#02-left-for-the-owner)
+(needs a person) or explicitly deferred for a stated reason.
 
 - ~~**Keep threshold → core:**~~ **Done.** `AppModel` sends `session.setKeepThreshold(...)` after a
   folder opens and whenever `settings.keepThreshold` changes, so "Only 5 stars" now reaches Finish
@@ -84,10 +95,12 @@ Not blocking v0.1.0; an agent can do these.
 - **Pipeline refinements (§7.1, §7.2):** ~~a display-sized (T2) decode per window size~~ done,
   ~~thumbnails at `.utility`~~ done (thumbnails decode on their own `.utility` queue now; the
   ranking and the shared cap are unchanged, and the comment says why the cap stays shared),
-  ~~`os_signpost` and a debug HUD~~ done. **Left:** the "Exact RAW" (T4) decode — the setting is
-  plumbed to `FocusRequest.exactRaw` and read nowhere; the design and its one trap (T4 must be a
-  distinct cache *kind*, or RAW pixels get served for a T2 entry) are in §0.5's "Next, in order" —
-  and the embedded-preview vs `CIRAWFilter` comparison, which needs a person to judge the pictures.
+  ~~`os_signpost` and a debug HUD~~ done, and ~~the "Exact RAW" (T4) decode~~ **done** (`087c22c`).
+  T4 develops the sensor data through `CIRAWFilter` as a **separate cache kind** (`case exactRaw`),
+  for the current photograph only, and is now a real toggle in Settings → Viewer. Measured:
+  **0.299 s and 92 MB** per develop against **0.089 s** for the embedded preview it replaces, which
+  is why it is on demand rather than in the prefetch. **Left:** the embedded-preview vs
+  `CIRAWFilter` comparison, which needs a person to judge the pictures.
 - ~~**Settings in the model but not shown**~~ **Done, all three, and one of them found two bugs.**
   - *Clipping thresholds* reach `ClippingMask` through the viewer's presentation, and the model
     defaults were **wrong for the code that would read them** (1.0/0.0 means every pixel clips), so
@@ -147,22 +160,28 @@ Not blocking v0.1.0; an agent can do these.
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-01 (agent session on Kathir's Mac).** Everything the previous handoff listed as
-> next is done, plus four §0.3 items. `main` is green on CI: Rust fmt/clippy/tests, the Swift build
-> and tests on **Xcode 16.4 with warnings as errors**, and the now-enforced `swift-format` lint.
+> **As of 2026-10-01 (agent session on Kathir's Mac, second pass).** Every agent-side item in §0.3
+> is now done, including the T4 "Exact RAW" decode that the previous handoff stopped short of.
+> `main` is green on CI: Rust fmt/clippy/tests, the Swift build and tests on **Xcode 16.4 with
+> warnings as errors**, and the enforced `swift-format` lint. **What is left is §0.2, which needs a
+> person** — and one §0.2-shaped judgement call (§7.2's preview-vs-RAW comparison).
 >
 > - **The §0.5 list from 2026-09-30 is complete:** the first-photo fast path, the bench db phase
 >   (measured: 0.235–0.300 s cold, scan+db 0.87–1.10 s scaled, against a 3.5 s target), the sidecar
 >   import and same-name-swap fixes, and the screenshot pass.
-> - **§0.3 items done:** one definition per type (17 mirrors aliased), strict CI, and all three
->   unhonoured settings. Two of them found real bugs — the clipping overlay painted every pixel red
->   and never saw black, and `Codable` on three core types was vacuous.
+> - **§0.3 items done:** one definition per type (17 mirrors aliased), strict CI, all three
+>   unhonoured settings, and **T4**. Two of the settings found real bugs — the clipping overlay
+>   painted every pixel red and never saw black, and `Codable` on three core types was vacuous.
+> - **§0.4's checklist is now the thing that would have saved this session:** every claim about T4
+>   had to be measured because the plausible-looking ones were wrong. `CIRAWFilter` was recorded as
+>   unusable when it is public API; the EXIF orientation was recorded as something to apply in the
+>   app when the filter applies it. Both are documented where the code lives now.
 > - **CI was red for three pushes before this session's first fix.** `bitmapInfo.byteOrder` is a
 >   newer-SDK overlay member; CI builds with Xcode 16.4 against the macOS 15 SDK. The lesson is in
 >   §0.4's checklist: **anything that compiles locally under Xcode 27 is not evidence about CI.**
 >   Two more traps followed: `openSettings()` throws on one SDK and not the other, and
 >   `GCC_TREAT_WARNINGS_AS_ERRORS` turns a deployment-target linker warning into a failure.
-> - **A warning for whoever picks up item 1: measuring beats assuming, and it cost two wrong
+> - **A warning for whoever picks up item 2: measuring beats assuming, and it cost two wrong
 >   conclusions before the right one.** The previous handoff recorded `CIRAWFilter` as unusable;
 >   it is public API and works, and the reason it looked broken is that the *documented-looking*
 >   `CIFilter(name:)` route returns an object with no input keys and **throws an uncatchable
@@ -176,72 +195,54 @@ Not blocking v0.1.0; an agent can do these.
 >   control before believing it — one of mine scored *identically* to its own control (3.827 vs
 >   3.827), which is only possible if the control was broken.
 >
+>   Two more traps from the same session, both of which cost time and are now in the code as
+>   comments: the EXIF orientation tag on a CR3 is at the **top level** of the properties (and
+>   mirrored in `{TIFF}`), *not* in the `{Exif}` sub-dictionary — reading the Exif dictionary
+>   returns nil, so a `?? 1` would report "every frame is upright" and silently make the
+>   orientation test assert nothing. And **a RAW develop must not re-apply the orientation**,
+>   because the filter has already applied it (see item 1).
+>
 > **Next, in order:**
 >
-> 1. **"Exact RAW" (T4) decode** — the last agent-side §0.3 pipeline item. `settings.viewer.exactRaw`
->    reaches `FocusRequest.exactRaw` and the pipeline **reads it nowhere**, so the toggle does
->    nothing. T4 is a *different cache kind*, not a different size: `DecodeEngine.Key` is
->    `id + kind` (`ImageProvider.swift`), so add `case exactRaw` to the `Kind` enum and the cache
->    separation is free — **without** it, RAW pixels could be served for a T2 entry, which is a
->    wrong-picture bug rather than a slow one. `setFocus` marks the *current photo* as exact-raw
->    when the setting is on (T4 is "on demand", §7.1 — not the whole window, it is 92 MB a
->    picture), and the result goes through **`DecodeEngine.inDisplayLayout`**.
->
->    **Two corrections to the previous handoff's design, both measured on this machine against
->    `~/Documents/testing/Game1JENKS/IMG_3192.CR3` (a Canon R8 CR3):**
->
->    - **`CIRAWFilter` is public API, and the previous note said it was unusable. It was not —
->      it was being called wrongly.** `CIFilter(name: "CIRAWFilter")` returns an object with an
->      **empty `inputKeys`**, and `setValue(_:forKey:"inputImage")` throws `NSUnknownKeyException`,
->      which is uncatchable from Swift and takes the process down. The real entry point is the
->      class method **`CIRAWFilter(imageURL:)`** (`CoreImage/CIRAWFilter.h`, `NS_CLASS_AVAILABLE
->      (12_0, 15_0)`), which returns `nil` for a file it cannot read. Everything measured below
->      uses it.
->    - **The previous design said to apply the EXIF orientation in the app. Do not — the filter
->      already does.** `CIRAWFilter.orientation` defaults to the file's EXIF tag and the *geometry
->      changes with it*: setting `.up` gives a 6000×4000 extent and `.left` gives 4000×6000 for
->      the same file. So a frame with EXIF 8 comes out of `outputImage` already upright, and
->      calling `applying(orientation:to:)` on top of it would rotate it twice — upside down. This
->      is exactly the bug the comment in `applying(orientation:to:)` records ("a portrait frame
->      with the jersey reading LLORRAC"), so T4 must **not** re-apply the tag. 26 of Game1JENKS's
->      708 frames are orientation 8, so it is not a corner case.
->
->    **What was measured, so the next step is not a re-investigation:**
->
->    | question | answer |
->    | --- | --- |
->    | Is it really a demosaic, or the embedded preview again? | **A real demosaic.** `outputImage` differs from the filter's *own* `previewImage` by 3.2/255 on IMG_3192 and 51.9/255 on IMG_3181 — compared inside one pipeline, so colour management cannot explain it. |
->    | What does it cost? | **0.299 s** for a full-resolution 6000×4000 render (92 MB). The preview decode the app ships today is 0.089 s, so T4 is ~3.4× the cost of what it replaces. |
->    | Does `isDraftModeEnabled` help? | **No, at full size**: 0.291 s versus 0.299 s. |
->    | Does `scaleFactor` help? | **It costs more, not less**: scale 0.50 took 0.622 s and scale 0.34 took 0.579 s, against 0.299 s at 1.0. Do not scale down through the filter — decode full and let the layer resample, or fall back to T2. |
->    | What layout comes out? | 8 bpc, 32 bpp, `deviceRGB`, but **`byteOrder32Little` is not set** (raw value 1, i.e. `premultipliedFirst` in the default byte order). So `isDisplayLayout` returns **false** and `inDisplayLayout` genuinely has to run. |
->    | Which decoder version? | Version 8 by default, with 9 also supported; `CIRAWDecoderVersion9DNG` etc. exist. The default is fine for CR3. |
->
->    **The fallback cannot be "the filter returned nil".** `CIRAWFilter(imageURL:)` returns a
->    usable filter for a **JPEG** and for a **file of pure junk with a `.cr3` extension** — both
->    were checked. So the gate must be **`PhotoMeta.kind`** (the core already reports `.raw(.cr3)`
->    versus `.jpeg`, and `open(folder:photos:)` has it in hand), and any non-RAW file keeps the
->    existing embedded-preview path untouched. That also makes the JPEG fallback a test CI can run
->    with no photos at all.
->
->    Test: with the setting on, the current photo's display entry is the RAW's own pixels (different
->    from the preview, same dimensions), a JPEG folder falls back, turning it off returns to T2, and
->    **an orientation-8 frame comes out upright** — the last one is the regression test for the
->    double-rotation above, and it needs a real CR3, so it goes in `RealRawDecodeTests` behind
->    `FIRSTCUT_ALLOW_PHOTO_TESTS=1` with a synthetic stand-in for CI.
+> 1. ~~**"Exact RAW" (T4) decode.**~~ **Done**, in `087c22c`. T4 is a separate `DecodeEngine.Kind`
+>    (`case exactRaw`), so the cache separation the design called for is free from `Key`'s
+>    `id + kind`; `exactRaws` holds the current photograph only; `setExactRaw` replaces whatever the
+>    tier was doing on every focus report, so moving on drops the develop; and work already running
+>    when the setting is turned off is marked `cancelled` (deliberately not `failed`, so asking
+>    again still develops) rather than re-inserting 92 MB. The toggle is now in Settings → Viewer,
+>    the debug HUD has a row for it, and `docs/contracts/pipeline-api.md` is v0.4.
+>    Verified: 6 unit tests (no photos) + 4 integration tests on real CR3s, Swift 284 green, Rust
+>    338 + 3 CLI, lint clean. Four mutations were each checked to fail a test — filing the develop
+>    into the display store, dropping the develop, removing the `kind` gate, and ignoring the
+>    cancellation.
 > 2. **Pipeline:** the embedded-preview vs `CIRAWFilter` comparison (§7.2) still needs a person to
 >    judge the pictures. Note the timings that make it a real question rather than a formality: the
->    shipped preview is 0.089 s and T4 is 0.299 s for the same 6000×4000.
+>    shipped preview is 0.089 s and T4 is 0.299 s for the same 6000×4000, and they differ by
+>    3–52/255 per pixel. Both are now reachable from the app (the toggle is in Settings → Viewer),
+>    so this is a matter of looking at the same frame both ways.
 > 3. **Speculative T3 after a dwell** (§7.5) — deliberately deferred until the arrow-key measurement
 >    exists, because the measurement is what decides whether it is worth a decode.
 > 4. **The owner's items** in §0.2, unchanged and still first in line for a human: the boundary-F1
 >    ground truth, the Game1JENKS re-press decision, the perf numbers on the running app, the
 >    visual sign-off against Finder, and the tap secret / `v0.1.0` tag.
 >
+> **One thing worth knowing before running the photo tests on this machine:** they **hang**, rather
+> than fail, when the app reads `~/Documents`, because the test host is a GUI app with a fresh
+> ad-hoc identity on every rebuild and nobody is present to answer the TCC prompt
+> (`docs/contracts/build.md`). The escape is the one build.md records — point
+> `FIRSTCUT_TEST_PHOTOS` at a copy outside a protected folder:
+> `FIRSTCUT_TEST_PHOTOS=/tmp/fcphotos scripts/test-with-photos.sh FirstcutIntegrationTests/<Suite>`.
+> Note that `testAFolderOfCR3sScansBatchesPrefetchesAndAnswersFromCache` asserts `photos.count ==
+> 708` for Game1JENKS, so a small copy will fail that test; the T4 tests take their own sample and
+> pass on a small folder.
+>
 > **How to run things quickly** (the full suite is ~15 min of builds; these are seconds):
 > - Rust, one area: `cargo test -p firstcut-core --lib session::` (or `meta::`, `batch::`).
 > - Swift, one area: `xcodebuild … test -only-testing:FirstcutUnitTests` (the whole unit target is
 >   ~1.2 s once built; add a suite name to narrow it, e.g. `-only-testing:FirstcutUnitTests/ImageProviderTests`).
+> - One test against real photos: `FIRSTCUT_TEST_PHOTOS=/tmp/fcphotos scripts/test-with-photos.sh
+>   FirstcutIntegrationTests/RealRawDecodeTests/testExactRawThroughTheProviderOnRealCR3s` (~2 min,
+>   mostly the build).
 > - Nothing in a test run may touch `~/Documents` (build.md); real-photo tests are opt-in behind
 >   `FIRSTCUT_ALLOW_PHOTO_TESTS=1`.
 
@@ -669,7 +670,7 @@ The single most important property of the app: **navigation never waits for deco
 | T1 | Compressed embedded preview bytes (JPEG, as stored in the RAW) | As many batches as the RAM budget allows, nearest first | ~3–6 MB each |
 | T2 | **Decoded display-resolution bitmaps** (fit to the viewer's pixel size, IOSurface/Metal textures) | **Previous + current + next batch, always**; extends further ahead/behind while under budget | ~10–25 MB each |
 | T3 | Decoded full-resolution (6000×4000, 8-bit) bitmaps for 100% zoom | The photo on screen while zoomed, plus the next one in the batch when zoom is locked | 92 MB each |
-| T4 | True RAW decode (`CIRAWFilter`) | Only when "Exact RAW" is toggled | on demand + neighbours |
+| T4 | True RAW decode (`CIRAWFilter`) — **built** | Only when "Exact RAW" is toggled, and only the current photograph: 92 MB and 0.299 s a picture, measured, against 0.089 s for the preview it replaces | one picture at a time |
 
 - [x] **Memory budget**: default = 40% of physical RAM (≈6.4 GB on 16 GB), configurable in Settings
       → Performance. Respond to `DispatchSource` memory-pressure warnings by shedding T3 → T1 far
@@ -684,8 +685,13 @@ The single most important property of the app: **navigation never waits for deco
       for batches that fell out of range. *Built:* pending work is re-ranked or dropped on every
       move, and decodes that land after the folder changed are discarded.
 - [ ] Decode concurrency = performance-core count; decode work runs at `.userInitiated`, thumbnail
-      generation at `.utility` so it never competes with the current batch. *Partly:* 4 concurrent
-      decodes at `.userInitiated`, thumbnails ranked below the current batch but on the same QoS.
+      generation at `.utility` so it never competes with the current batch. **Done:** 4 concurrent
+      decodes at `.userInitiated` — the **measured knee** on this machine (7.0 photos/s on four
+      threads and on eight, over 24 real CR3s), not `activeProcessorCount`, which includes the
+      efficiency cores; thumbnails decode on their own `.utility` queue, ranked below the current
+      batch but sharing the same 4-slot cap so a filmstrip pass cannot starve the frame the user is
+      waiting for. T4 shares `.userInitiated` with display decodes: at 0.299 s it is the longest
+      single decode in the app.
 - [ ] Pre-upload decoded bitmaps to the GPU (IOSurface-backed) so display = pointer swap, < 1 frame.
 - [x] Re-decode T2 when the window/screen size changes, keeping old bitmaps visible until new ones
       are ready. **Done**: a display entry carries the size it was decoded at; a request for more
@@ -718,7 +724,12 @@ The single most important property of the app: **navigation never waits for deco
       (Display P3), 8-bit is fine for previews; consider 10-bit for T3.
 - [ ] **Benchmark task**: compare embedded preview vs `CIRAWFilter` decode on the high-ISO night
       shots in the test set at 100% and fit-to-screen; pick defaults from the result and document it
-      here (grain structure, sharpness, noise reduction differences).
+      here (grain structure, sharpness, noise reduction differences). **Both halves of this are now
+      in place:** the numbers are measured (preview **0.089 s**, T4 **0.299 s** for the same
+      6000×4000, and the two differ by 3–52/255 per pixel), and both paths are reachable from the
+      app — Settings → Viewer → "Develop the sensor data, not the embedded preview". What is left is
+      the only part no measurement can do: **a person looking at the same frame both ways** and
+      saying which is better, which is §0.2's judgement call, not an agent's.
 
 ### 7.3 Performance targets (M1 Pro, 1,500-file shoot on internal SSD)
 
@@ -1220,7 +1231,7 @@ Same setup as [Sonar](https://github.com/Kathir-D/Sonar#install): three install 
 | --- | --- | --- |
 | M0 Repo & toolchain | Done | |
 | M1 Core scan + order + batch | Built | Ground truth and the boundary-F1 number (§0.2) |
-| M2 Pipeline | Built | The §7.3 timings on the photos; embedded-preview vs RAW comparison (§7.2) |
+| M2 Pipeline | Built | The §7.3 timings on the photos; the embedded-preview vs RAW judgement (§7.2, §0.2 item 2b — both paths now ship) |
 | M3 Core UX | Done | |
 | M4 Inspection tools | Done | |
 | M5 Finish flow, settings, keymap | Done | |
