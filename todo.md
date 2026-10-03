@@ -181,6 +181,44 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
+> **As of 2026-10-02 (agent session, fourth pass).** The hand check §0.5 asked for found a real
+> dead-wire bug, and the sizing audit is now settled rather than guessed at.
+>
+> - **The `activeModel` bug: three closures were dead, not one.** §0.5 flagged the `AppEnvironment`
+>   → `onDoubleClick` closure as the one thing in the batch-navigation change with no test. It had
+>   no test because it was **never running**. `activeModel` was declared only in a protocol
+>   *extension* on `CullViewState`, never in the requirement list, so `any CullViewState` dispatched
+>   it statically to the extension's `nil`. The factory's `if let model = state.activeModel`
+>   therefore never ran, and everything inside it was unwired: `onDoubleClick`, **and also**
+>   `onFramePresented` (§7.3's frame intervals) and `onViewportPixelSize` (T2 decoded at exactly the
+>   pixels the viewer covers). Fixed by declaring it a requirement (`8ab50ac`). The regression test
+>   holds an `any CullViewState`; the pre-existing one held the concrete type, which is precisely why
+>   it could not see the bug, and it still passes with the fix removed. Verified by hand in the built
+>   app both ways: right half Batch 1 → 2 (IMG_0001 → IMG_0013), left half back to Batch 1's last
+>   frame (IMG_0012).
+> - **The lesson is the general one, and it cost real time to learn: an existential cannot dispatch a
+>   member that is not a requirement.** Anything else reached through `any CullViewState` and
+>   declared only in an extension is silently the extension's value. Worth grepping for before the
+>   next seam is added.
+> - **Driving the mouse in this app: `cliclick` posts real events, System Events does not.**
+>   `System Events`' `click at` does an accessibility press, which fires SwiftUI buttons (the Finish
+>   button opened its sheet) and reaches `CGImageViewerHost` not at all — so it looked exactly like
+>   a broken double-click. Use `cliclick` verbs: `c:` single, **`dc:`** double. `dd:` is *not* a
+>   double-click and fails silently, which is what made the first round of testing meaningless.
+>   Also: launching the binary directly gives a process with **no window**; `open -n` is required.
+>   And `log stream` does not capture this app's `NSLog` — write to a file to see anything.
+> - **The sizing audit is answered, and it was reading (a), generalized.** The owner's screenshot
+>   plus words — "the ovals around everything are way too small they don't fit / follow the Apple
+>   way of ui especially with liquid glass" — are about **corner radii on pill-sized controls**, not
+>   the photo ring. `Keep` / `Not keep` were `RoundedRectangle(cornerRadius: 5)` around a 20pt-tall
+>   button, so the curve stopped a third of the way down and it read as a tight box inside the HUD's
+>   own glass capsule; the Welcome screen's recent-folder rows had the same defect at radius 8. Both
+>   are `Capsule` now, sized by `Appearance.pillCornerRadius(height:)` = height/2, so the radius
+>   cannot drift when the label or type size changes (`2f07475`, `4ff5bfb`). Deliberately **not**
+>   changed: filmstrip thumbnails, grid cells and compare panes keep their tight radii — those are
+>   photos, not pills.
+> - **CI was green on all three commits.** `9257d65` failed and `9d84bf3` fixed it, as §0.5 said.
+
 > **As of 2026-10-02 (agent session, third pass).** Two owner requests landed since the previous
 > handoff, and one of them turned up a data-loss bug worth knowing about before anything else.
 >
