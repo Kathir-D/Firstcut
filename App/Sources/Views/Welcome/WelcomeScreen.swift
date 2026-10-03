@@ -134,7 +134,10 @@ private struct RecentFoldersList: View {
                     // A capsule, like every other pill-sized clickable thing in the app
                     // (todo.md §0.5). A row this shape wants the curve to run its whole height;
                     // a fixed 8 left it reading as a small box around a wide label.
-                    in: Capsule(style: .continuous)
+                    // `Capsule()`, not `Capsule(style: .continuous)`: the style initialiser is
+                    // newer than the macOS 15 SDK CI builds against (todo.md §2), so it compiles
+                    // under Xcode 27 and fails on the runner. The default is already continuous.
+                    in: Capsule()
                 )
                 .contextMenu {
                     Button("Remove from Recent") { state.forgetRecent(folder) }

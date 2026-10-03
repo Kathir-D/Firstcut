@@ -63,7 +63,9 @@ struct KeepRatingControl: View {
         // height — the same continuous shape as the HUD capsule these buttons sit inside, rather
         // than a 5pt box that stopped short of the control it was drawn around (todo.md §0.5).
         let radius = Appearance.pillCornerRadius(height: height)
-        let shape = Capsule(style: .continuous)
+        // `Capsule()`, not `Capsule(style: .continuous)`: the style initialiser postdates the
+        // macOS 15 SDK CI builds against, so it is green locally and red on the runner.
+        let shape = Capsule()
         let label =
             HStack(spacing: 4) {
                 Image(systemName: systemImage)
