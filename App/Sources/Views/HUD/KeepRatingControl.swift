@@ -59,12 +59,12 @@ struct KeepRatingControl: View {
         title: String, systemImage: String, tint: Color, active: Bool, action: (() -> Void)?
     ) -> some View {
         let height: CGFloat = compact ? 18 : 20
-        // Half the height, so the pill's ends are real semicircles and the curve runs the full
-        // height — the same continuous shape as the HUD capsule these buttons sit inside, rather
-        // than a 5pt box that stopped short of the control it was drawn around (todo.md §0.5).
-        let radius = Appearance.pillCornerRadius(height: height)
-        // `Capsule()`, not `Capsule(style: .continuous)`: the style initialiser postdates the
-        // macOS 15 SDK CI builds against, so it is green locally and red on the runner.
+        // A `Capsule` is this rule expressed as a shape: radius = half the height, so the ends are
+        // real semicircles and the curve runs the full height -- the same continuous shape as the
+        // HUD capsule these buttons sit inside, rather than a 5pt box that stopped a third of the
+        // way down and read as a tight little rectangle (todo.md §0.5). Saying it this way also
+        // means the radius cannot drift when the label or the type size changes, which is the
+        // whole failure: a hard-coded number is right until something else moves.
         let shape = Capsule()
         let label =
             HStack(spacing: 4) {
