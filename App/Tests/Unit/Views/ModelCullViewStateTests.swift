@@ -56,6 +56,38 @@ struct ModelCullViewStateTests {
         #expect(swapped.images === source)
     }
 
+    @Test("`activeModel` survives the trip through `any CullViewState`")
+    func activeModelIsDispatchedDynamically() {
+        // The test above cannot catch this, and neither could any other test at the time: it holds
+        // the *concrete* `ModelCullViewState`, so `activeModel` binds statically to the
+        // implementation. `AppEnvironment` does not hold the concrete type — it holds
+        // `any CullViewState`, and the host factory asks that existential for the model.
+        //
+        // While `activeModel` was declared only in the protocol *extension*, an existential
+        // dispatched it statically to the extension's body, so every call returned nil. The factory's
+        // `if let model = state.activeModel` therefore never ran in the app, and the three closures
+        // inside it — `onFramePresented` (§7.3's frame-latency intervals), `onViewportPixelSize`
+        // (T2 decoded at exactly the pixels the viewer covers) and `onDoubleClick` (a double-click
+        // jumps a batch) — were all silently dead. Deleting the double-click closure, or the other
+        // two, left the suite green.
+        let (concrete, model, _) = Self.makeState()
+
+        // The existential is the whole point: this is the type the environment and every view hold.
+        let existential: any CullViewState = concrete
+        #expect(
+            existential.activeModel === model,
+            "an `any CullViewState` must dispatch `activeModel` to the concrete state, or every viewer pane built from it goes unwired"
+        )
+
+        // Same seam through a generic function, which is how the views consume it.
+        func activeModel<S: CullViewState>(_ s: S) -> AppModel? { s.activeModel }
+        #expect(activeModel(existential) === model)
+
+        // And the stand-in still says nil, through the existential this time.
+        let preview: any CullViewState = PreviewCullViewState(batchCount: 0)
+        #expect(preview.activeModel == nil)
+    }
+
     @Test("Every `Phase` case maps to a `CullPhase`, exhaustively")
     func phaseMappingIsExhaustive() {
         let (state, model, _) = Self.makeState()

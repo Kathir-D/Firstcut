@@ -11,6 +11,17 @@ import Foundation
 
 @MainActor
 protocol CullViewState: AnyObject {
+    /// The model behind the state, when there is one, so a viewer pane can report the frames it
+    /// presented and the pixels it covers back to the model that is actually on screen.
+    ///
+    /// **This has to be a requirement, not just a member of the extension below.** An existential
+    /// (`any CullViewState`) dispatches a *requirement* through its witness table and an
+    /// extension-only member statically, straight to the extension's body. With it declared only in
+    /// the extension, every call through `any CullViewState` returned the extension's `nil` — so the
+    /// wiring in `AppEnvironment` that is guarded by `state.activeModel` silently never ran, and the
+    /// frame-latency closures, the T2 viewport sizing and the double-click batch jump were all dead
+    /// in the app while every test stayed green, because the tests drove the concrete type.
+    var activeModel: AppModel? { get }
     var phase: CullPhase { get }
     var folderName: String { get }
     var batches: [CullBatch] { get }
