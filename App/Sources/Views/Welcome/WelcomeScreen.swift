@@ -131,7 +131,10 @@ private struct RecentFoldersList: View {
                 .buttonStyle(.plain)
                 .background(
                     Appearance.plateFill.opacity(0.5),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    // A capsule, like every other pill-sized clickable thing in the app
+                    // (todo.md §0.5). A row this shape wants the curve to run its whole height;
+                    // a fixed 8 left it reading as a small box around a wide label.
+                    in: Capsule(style: .continuous)
                 )
                 .contextMenu {
                     Button("Remove from Recent") { state.forgetRecent(folder) }
