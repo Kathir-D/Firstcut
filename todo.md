@@ -207,6 +207,21 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   double-click and fails silently, which is what made the first round of testing meaningless.
 >   Also: launching the binary directly gives a process with **no window**; `open -n` is required.
 >   And `log stream` does not capture this app's `NSLog` — write to a file to see anything.
+> - **CI caught the same class of bug a second time, and it is now a standing trap.** Both capsule
+>   commits (`2f07475`, `4ff5bfb`) were green locally and red on the runner, twice over:
+>   `Capsule(style:)` does not exist in the macOS 15 SDK, and then — the real one — a `let radius`
+>   computed and never read, which is a *warning*, and CI builds with
+>   `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES`. **The local build cannot be run with that flag** (it trips
+>   a pre-existing Xcode-27-only diagnostic in `ImageProvider.swift:1600`, the reverse of the usual
+>   trap), so the substitute is to build normally and **read every `warning:` in the output** rather
+>   than trust the exit code. Grep the log for `warning:`; that is what finds these.
+> - **Two more things about verifying this app by hand, both of which cost a wrong conclusion:**
+>   `screencapture` between two clicks can leave the window not processing the next one (assert
+>   frontmost before every click, and screenshot only *after* the click), and a dbg sink that opens
+>   the file per line drops and reorders entries fast enough to invent bugs that are not there —
+>   `mouseUp` lines went missing that way. The `activeModel` finding itself was real: the closure
+>   demonstrably fired with `dir=-1` and moved the batch. Confirmed clean: forward, back, forward
+>   from a fresh launch gives Batch 1 → 2 → 1 → 3.
 > - **The sizing audit is answered, and it was reading (a), generalized.** The owner's screenshot
 >   plus words — "the ovals around everything are way too small they don't fit / follow the Apple
 >   way of ui especially with liquid glass" — are about **corner radii on pill-sized controls**, not
