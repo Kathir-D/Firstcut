@@ -16,6 +16,17 @@ enum Appearance {
     static let glassCornerRadius: CGFloat = 10
     static let capsuleCornerRadius: CGFloat = 18
 
+    /// Apple's corner treatment for a control, as one rule rather than a number per call site.
+    ///
+    /// A pill-sized control — a button whose label is one line and whose height is small next to
+    /// its width — is a **capsule**: radius = half the height, so the ends are true semicircles and
+    /// the curve runs the whole height. A radius smaller than that is the failure the sizing audit
+    /// was about (todo.md §0.5): the shape stops following the control it wraps, so it reads as a
+    /// tight little box rather than as part of the same Liquid Glass language as the capsule around
+    /// it. Deriving it from the height is also what keeps it from drifting: a hard-coded radius
+    /// goes wrong the moment the label or the type size changes, and nothing fails.
+    static func pillCornerRadius(height: CGFloat) -> CGFloat { height / 2 }
+
     static var windowBackground: Color { Color(nsColor: .windowBackgroundColor) }
     static var barBackground: Color { Color(nsColor: .controlBackgroundColor) }
     static var separator: Color { Color(nsColor: .separatorColor) }

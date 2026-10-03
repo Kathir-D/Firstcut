@@ -58,6 +58,12 @@ struct KeepRatingControl: View {
     private func button(
         title: String, systemImage: String, tint: Color, active: Bool, action: (() -> Void)?
     ) -> some View {
+        let height: CGFloat = compact ? 18 : 20
+        // Half the height, so the pill's ends are real semicircles and the curve runs the full
+        // height — the same continuous shape as the HUD capsule these buttons sit inside, rather
+        // than a 5pt box that stopped short of the control it was drawn around (todo.md §0.5).
+        let radius = Appearance.pillCornerRadius(height: height)
+        let shape = Capsule(style: .continuous)
         let label =
             HStack(spacing: 4) {
                 Image(systemName: systemImage)
@@ -66,19 +72,13 @@ struct KeepRatingControl: View {
             }
             .font(.system(size: compact ? 10 : 11, weight: .semibold))
             .foregroundStyle(active ? tint : Appearance.secondaryLabel)
-            .padding(.horizontal, compact ? 6 : 8)
+            .padding(.horizontal, compact ? 8 : 10)
             // A fixed height, so the lit button cannot make the control jump when the symbol changes
             // between the two SF Symbols, which have different vertical extents.
-            .frame(height: compact ? 18 : 20)
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(active ? tint.opacity(0.22) : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(active ? tint : Color.clear, lineWidth: 1)
-            )
-            .contentShape(Rectangle())  // the whole pill is clickable, not just the glyphs
+            .frame(height: height)
+            .background(shape.fill(active ? tint.opacity(0.22) : Color.clear))
+            .overlay(shape.strokeBorder(active ? tint : Color.clear, lineWidth: 1))
+            .contentShape(shape)  // the whole pill is clickable, not just the glyphs
 
         guard let action else { return AnyView(label) }
         return AnyView(Button(action: action) { label }.buttonStyle(.plain))
