@@ -204,12 +204,40 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   `tags-ignore: ["v*"]`, so a tag push published an artefact whose tests had never been run. Both
 >   now run before the app is built, and `ci.yml` and `release.yml` have `timeout-minutes` — the
 >   documented failure mode here is a hang, not a failure, and GitHub's default is six hours.
-> - **Known not done, deliberately.** `theThreadCountReachesTheEngine` samples `decodesInProgress` in
->   a tight loop and flaked once under full-suite load; it passes in isolation. Separating "queued"
->   from "executing" in the decode engine would fix a real double-counting of the concurrency bound on
->   a folder switch, but the first attempt stalled `waitUntilIdle` because nothing re-pumps the queue
->   when the gate reopens, so it was reverted rather than shipped unproven. Both are in the open work
->   below.
+> - **Known not done, deliberately.** Every change to `App/Sources/Pipeline/ImageProvider.swift` from
+>   this audit was reverted, and this is the most important thing in the handoff. Four defects there
+>   are confirmed and worth doing, and all four were written and passed locally on Xcode 27:
+>
+>   1. **`store(_:_:)` leaks an in-flight slot** (`ImageProvider.swift`, the discard branch of
+>      `store`). It returns before `inFlight.remove(key)`, and `inFlight` is both the concurrency
+>      bound and the "do not enqueue twice" set — so each discard costs a slot for the session. After
+>      `maxConcurrent` of them `takeNext` returns nil forever and `waitUntilIdle` never returns. The
+>      fix is `defer { inFlight.remove(key) }` immediately after `key` is computed.
+>   2. **`Entry.pixels` records the request, not the result** (`store`, with the comment above it
+>      claiming the opposite), so a photograph smaller than the viewer claims to be larger than it is
+>      and is re-decoded on every window growth. Recording `image.longestEdge` needs a second field to
+>      tell "too small" from "gave back everything it has" — and that second rule must **not** go into
+>      the thumbnail `satisfies` path, only the display `bigEnough` path. Putting it in both is what
+>      broke `outsideTheWindowIsNotAFocusMiss` on CI.
+>   3. **`evictLocked` evicts across tiers** — candidates are collected per dict but the victim id is
+>      removed from all three plus the histogram, so a stale thumbnail takes the display bitmap and the
+>      92 MB RAW develop with it.
+>   4. **The histogram path drops the EXIF orientation** (`DecodeEngine.histogram` and
+>      `ImageProvider.histogram`), caching an upright bitmap for an orientation-8 photograph —
+>      26 frames of Game1JENKS — until something evicted it. And `readBytes` promises a short read is
+>      a failure and does not check, so a half-copied card yields a cached half-grey frame with
+>      `decodeFailures == 0`.
+>
+>   **Why reverted rather than shipped.** Xcode 16.4 rejected all of it and Xcode 27 accepted it:
+>   `outsideTheWindowIsNotAFocusMiss` failed on CI, then `reopeningResets` and
+>   `movingOnCancelsStaleWork` failed on CI after the first was addressed. Green here was not evidence,
+>   which is this repo's own §0.4 rule. Re-landing them needs a CI loop per change — one commit each,
+>   not four together — and the pipeline test file has no seam for forcing an eviction or a
+>   mid-flight re-open, which is why two of the four were hard to write at all.
+>
+> - Also reverted, same reason, and separately worth doing: separating "queued" from "executing" in the
+>   decode engine, which double-counts the concurrency bound across a folder switch. The first attempt
+>   stalled `waitUntilIdle` because nothing re-pumps the queue when the gate reopens.
 >
 > **As of 2026-10-05 (setup session).** GitNexus code intelligence is set up
 > for this repo and for the machine, and nothing else changed.

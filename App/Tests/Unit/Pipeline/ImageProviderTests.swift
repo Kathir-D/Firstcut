@@ -101,12 +101,7 @@ enum ImageFixtures {
 
     /// N photos in one folder, ids 1...n, which is what `ImageProvider.open` wants.
     static func shoot(count: Int) -> (folder: URL, photos: [PhotoMeta]) {
-        shoot(count: count, folder: folder())
-    }
-
-    /// The same, into a folder the caller names — so a test that wants to clean up after itself, or
-    /// wants two shoots side by side, does not have to reach for `folder()` and rebuild the list.
-    static func shoot(count: Int, folder: URL) -> (folder: URL, photos: [PhotoMeta]) {
+        let folder = folder()
         var photos: [PhotoMeta] = []
         for index in 0..<count {
             let name = "IMG_\(String(format: "%04d", index)).jpg"
@@ -121,22 +116,6 @@ enum ImageFixtures {
                     width: 400, height: 300, af: nil, preview: nil, fullPreview: nil, warnings: []))
         }
         return (folder, photos)
-    }
-
-    /// One `PhotoMeta` for a file already written into `folder`, with the file's real size — so a
-    /// test that cares about the byte count does not have to invent one and get a stale-cache miss
-    /// for the wrong reason.
-    static func photo(named name: String, in folder: URL, orientation: UInt8 = 1) -> PhotoMeta {
-        let url = folder.appendingPathComponent(name)
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let size = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
-        return PhotoMeta(
-            id: PhotoID(abs(name.hashValue % 100_000) + 1), relPath: name, companions: [],
-            kind: .jpeg, fileSize: size, captureTime: nil, shutterCount: nil, fileNumber: nil,
-            cameraMake: nil, cameraModel: nil, cameraSerial: nil, lensModel: nil,
-            focalLengthMm: nil, exposureTimeS: nil, fNumber: nil, iso: nil, exposureCompEv: nil,
-            meteringMode: nil, driveMode: nil, shutterMode: nil, orientation: orientation,
-            width: 400, height: 300, af: nil, preview: nil, fullPreview: nil, warnings: [])
     }
 }
 

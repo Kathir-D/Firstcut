@@ -433,9 +433,6 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
 
     // MARK: - CullImageSource (ui)
 
-    /// [`DecodeEngine.setMemoryBudgetForTesting`], for the same reason and with the same caveat.
-    func setMemoryBudgetForTesting(_ bytes: Int) { engine.setMemoryBudgetForTesting(bytes) }
-
     func thumbnail(for id: PhotoID, size: CGSize) -> CGImage? {
         _ = generation  // read so a SwiftUI body re-runs when a decode lands
         return engine.thumbnail(
@@ -468,9 +465,7 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
 
     func histogram(for id: PhotoID) -> CullHistogram? {
         _ = generation  // the info panel redraws when the display image it bins arrives
-        return engine.histogram(
-            id, url: files[id], orientation: orientations[id] ?? 1,
-            fullPreview: fullPreviewRanges[id]?.range)
+        return engine.histogram(id, url: files[id], fullPreview: fullPreviewRanges[id]?.range)
     }
 
     /// The edge an on-demand ask is answered at when the caller does not say: the viewer's backing
@@ -577,16 +572,9 @@ final class DecodeEngine: @unchecked Sendable {
     private struct Entry {
         let image: CGImage
         let bytes: Int
-        /// The longest edge the pixels actually have. A file smaller than the request comes back at
-        /// its own size, so this is `image.longestEdge` and not the ask — a 1200 px JPEG in a 2880 px
-        /// viewer is a 1200 px entry, and pretending otherwise makes every window growth re-decode a
-        /// file that cannot get any bigger.
+        /// The longest edge the decode was asked for. A display entry is only good for a viewer
+        /// smaller than this; anything larger is a resize, not a hit (todo.md §7.1).
         let pixels: Int
-        /// The longest edge the decode was *asked* for, kept so `satisfies` can tell "too small" from
-        /// "there is nothing more to have": when a decode comes back under its request, it returned
-        /// the whole file, and asking again for more cannot improve it. That is the case the request
-        /// and the result disagree about, and it is why both are recorded.
-        let requested: Int
         var stamp: UInt64
     }
 
@@ -597,7 +585,7 @@ final class DecodeEngine: @unchecked Sendable {
         label: "com.kathird.firstcut.decode", qos: .userInitiated, attributes: .concurrent)
     private var pressureSource: DispatchSourceMemoryPressure?
     private let maxConcurrent: Int
-    private var budgetBytes: Int
+    private let budgetBytes: Int
     let prefetchPixels: Int
     /// The size a display decode is queued at when the caller does not say. Set by the provider from
     /// the viewer's backing size, so the engine and the provider cannot disagree about what T2 is.
@@ -869,7 +857,7 @@ final class DecodeEngine: @unchecked Sendable {
         clock &+= 1
         if var entry = thumbnails[id],
             Self.satisfies(
-                entry, needed: needed, slack: slack,
+                entry.image, needed: needed, slack: slack,
                 prefetch: Double(prefetchPixels))
         {
             entry.stamp = clock
@@ -916,13 +904,7 @@ final class DecodeEngine: @unchecked Sendable {
         let wanted = max(needed > 0 ? needed : defaultDisplayEdge, 1)
         clock &+= 1
         if var entry = displays[id] {
-            // Same rule as `satisfies`, and for the same reason: a decode that came back under what
-            // it was asked for gave back the whole file, so a bigger ask cannot improve it. Without
-            // it every photograph smaller than the viewer is re-decoded on each window growth, each
-            // time producing identical pixels.
-            let bigEnough =
-                entry.pixels >= wanted || entry.image.longestEdge >= Double(wanted)
-                || entry.image.longestEdge < Double(entry.requested)
+            let bigEnough = entry.pixels >= wanted || entry.image.longestEdge >= Double(wanted)
             entry.stamp = clock
             displays[id] = entry
             let queued =
@@ -1037,7 +1019,7 @@ final class DecodeEngine: @unchecked Sendable {
 
     @MainActor
     func histogram(
-        _ id: PhotoID, url: URL?, orientation: UInt8 = 1, fullPreview: ByteRange? = nil
+        _ id: PhotoID, url: URL?, fullPreview: ByteRange? = nil
     ) -> CullHistogram? {
         lock.lock()
         if let existing = histograms[id] {
@@ -1051,14 +1033,7 @@ final class DecodeEngine: @unchecked Sendable {
         guard let cached else {
             // A histogram is computed from pixels, so it needs the display image. Ask for that;
             // the view asks again once `generation` moves.
-            //
-            // The orientation has to travel with it. `display` rotates on the way into the cache,
-            // so a decode scheduled without one caches an upright full-size bitmap under this id
-            // and `displayImage` then hands the viewer a sideways photograph — 26 of Game1JENKS's
-            // 708 frames are orientation 8, and the entry survives until something evicts it.
-            if let url {
-                _ = display(id, url: url, orientation: orientation, fullPreview: fullPreview)
-            }
+            if let url { _ = display(id, url: url, fullPreview: fullPreview) }
             return nil
         }
         // 256×256 is 65 k pixels, so this is sub-millisecond and does not need the decode queue.
@@ -1082,13 +1057,9 @@ final class DecodeEngine: @unchecked Sendable {
     ///    would be a focus miss and the guarantee would be false by construction.
     /// Anything beyond that is a genuine miss and is re-decoded.
     private static func satisfies(
-        _ entry: Entry, needed: Double, slack: Double, prefetch: Double
+        _ image: CGImage, needed: Double, slack: Double, prefetch: Double
     ) -> Bool {
-        // Prefetch entries only. The display tier has its own `bigEnough`, which also knows that a
-        // decode that came back under its request gave the whole file; this one deliberately does
-        // not, because a thumbnail that is smaller than the prefetch size is a filmstrip cell that
-        // asked for less than the prefetch, and widening it here turned a genuine miss into a hit.
-        let longest = entry.image.longestEdge
+        let longest = image.longestEdge
         if longest >= needed { return true }
         return longest + 0.5 >= prefetch && needed <= prefetch * slack
     }
@@ -1237,11 +1208,6 @@ final class DecodeEngine: @unchecked Sendable {
         // Both must still hold for the pixels to belong anywhere: a decode of a photo that was
         // deleted or replaced while it was running must not be filed under the id it had then.
         let key = Key(id: job.id, kind: job.kind)
-        // Every exit from here has to give the slot back. `inFlight` is what bounds concurrency
-        // (`takeNext`) and what stops the same job being enqueued twice, so a key left behind on
-        // the early return below cost the engine a slot permanently — after `maxConcurrent` such
-        // events it would refuse every job and `waitUntilIdle` would never return.
-        defer { inFlight.remove(key) }
         guard job.epoch == epoch, live.contains(job.id), job.fileSize == knownSizes[job.id] else {
             // Queued for a folder that is no longer open, or for a file that is no longer there;
             // `reset`/`beginShoot` already forgot it was in flight.
@@ -1252,19 +1218,19 @@ final class DecodeEngine: @unchecked Sendable {
         // entry either. Dropping it here is what stops a RAW develop from re-inserting 92 MB after
         // the user turned the setting off.
         if cancelled.remove(key) != nil {
+            inFlight.remove(key)
             lock.unlock()
             onLand?(job.id)
             return
         }
+        inFlight.remove(key)
         if let image {
-            // The size the *pixels* have, not the size that was asked for: `maxPixel` is a maximum
-            // the decoder may come back under, so a 1200 px JPEG in a 2880 px viewport is a
-            // 1200 px entry. Recording the request instead made `bigEnough` true for every photo
-            // smaller than the viewer, so each window growth re-decoded a file that cannot get
-            // any bigger.
+            // The size the *pixels* have, not the size that was asked for: a file smaller than the
+            // request comes back at its own size, and recording the request would make a 1200 px JPEG
+            // look like a 3456 px T2 to every later reader.
             let entry = Entry(
                 image: image, bytes: image.pixelBytes,
-                pixels: Int(image.longestEdge), requested: job.maxPixel, stamp: clock)
+                pixels: max(job.maxPixel, Int(image.longestEdge)), stamp: clock)
             switch job.kind {
             case .thumbnail:
                 counters.thumbnailDecodes += 1
@@ -1303,49 +1269,28 @@ final class DecodeEngine: @unchecked Sendable {
     }
 
     /// Least-recently-used eviction down to the budget, never touching the focus window.
-    /// Re-points the budget at a live cache and sheds down to it immediately.
-    ///
-    /// The app sets the budget once, from the fraction of physical memory in Settings → Performance,
-    /// and never changes it — which is right, and leaves a test no way to reach an eviction from a
-    /// *known* starting state. Every other way in depends on how many bytes a decode happened to
-    /// produce, which is not a number to assert against.
-    func setMemoryBudgetForTesting(_ bytes: Int) {
-        lock.lock()
-        budgetBytes = bytes
-        evictLocked()
-        lock.unlock()
-    }
-
     private func evictLocked() {
         guard bytes > budgetBytes else { return }
         let interval = SignpostInterval.begin(Signposts.evictions)
         defer { interval.end() }
-        // Candidates carry the KIND, and eviction removes only the matching tier. Without it, a
-        // photograph's stale thumbnail could be picked as the victim and take its display bitmap
-        // and its 92 MB RAW develop down with it — the viewer would drop the picture it is
-        // showing and the next move on would re-develop from the sensor, which is the exact cost
-        // T4 is kept one photograph deep to avoid.
-        var candidates: [(id: PhotoID, kind: Kind, stamp: UInt64, bytes: Int)] = []
+        var candidates: [(id: PhotoID, stamp: UInt64, bytes: Int)] = []
         for (id, entry) in thumbnails where !focus.contains(id) {
-            candidates.append((id, .thumbnail, entry.stamp, entry.bytes))
+            candidates.append((id, entry.stamp, entry.bytes))
         }
         for (id, entry) in displays where !focus.contains(id) {
-            candidates.append((id, .display, entry.stamp, entry.bytes))
+            candidates.append((id, entry.stamp, entry.bytes))
         }
         // T4 entries join the same LRU pool. A RAW develop is the most expensive thing here, so it
         // is the first thing worth dropping when the budget is tight — and the focus window is
         // still protected, so the photo on screen keeps its pixels.
         for (id, entry) in exactRaws where !focus.contains(id) {
-            candidates.append((id, .exactRaw, entry.stamp, entry.bytes))
+            candidates.append((id, entry.stamp, entry.bytes))
         }
         for candidate in candidates.sorted(by: { $0.stamp < $1.stamp }) where bytes > budgetBytes {
-            let entry: Entry?
-            switch candidate.kind {
-            case .thumbnail: entry = thumbnails.removeValue(forKey: candidate.id)
-            case .display: entry = displays.removeValue(forKey: candidate.id)
-            case .exactRaw: entry = exactRaws.removeValue(forKey: candidate.id)
-            }
-            if let entry { bytes -= entry.bytes }
+            if let entry = thumbnails.removeValue(forKey: candidate.id) { bytes -= entry.bytes }
+            if let entry = displays.removeValue(forKey: candidate.id) { bytes -= entry.bytes }
+            if let entry = exactRaws.removeValue(forKey: candidate.id) { bytes -= entry.bytes }
+            histograms.removeValue(forKey: candidate.id)
         }
     }
 
@@ -1389,9 +1334,7 @@ final class DecodeEngine: @unchecked Sendable {
             &thumbnails, id,
             Entry(
                 image: image, bytes: image.pixelBytes, pixels: max(image.width, image.height),
-                // The signature worker always asks for the one size, so the request and the result
-                // are the same number and `satisfies` behaves exactly as before for this tier.
-                requested: max(image.width, image.height), stamp: clock))
+                stamp: clock))
         evictLocked()
         return true
     }
@@ -1669,16 +1612,7 @@ final class DecodeEngine: @unchecked Sendable {
         guard length > 0 else { return nil }
         do {
             try handle.seek(toOffset: range.offset)
-            // The length check is the point of the function. A card being written to, or a CR3
-            // whose tail is not there yet, gives a short read — and ImageIO will happily decode the
-            // partial progressive JPEG it contains. That half-grey frame was then cached and
-            // displayed with no failure recorded anywhere, which is worse than showing nothing:
-            // the user cannot tell it from a photograph. Refusing it falls back to the container
-            // decode, which re-reads and decides for itself.
-            guard let data = try handle.read(upToCount: length), data.count == length else {
-                return nil
-            }
-            return data
+            return try handle.read(upToCount: length) ?? nil
         } catch {
             return nil
         }
