@@ -24,22 +24,56 @@ const FIRST_READ: u64 = 1 << 20;
 /// (some DNGs) is read again at this size, and one that is still not found is reported.
 const MAX_READ: u64 = 16 << 20;
 
+/// How many SubIFD offsets are followed. A RAW has one to three; the tag's `count` is a `u32` the
+/// file chooses, and every offset costs a walk of an IFD whose own entry count is a `u16`, so an
+/// unbounded list was ~10^12 reads inside a scan worker thread.
+const MAX_SUB_IFDS: usize = 8;
+
 /// Reads whatever `kind`'s container has to say about the photo.
 ///
 /// Only an I/O error is an `Err`; a container this reader does not understand is a `Cr3` with a
 /// warning, so the photo still appears.
 pub(super) fn read(path: &Path, kind: FileKind, size: u64) -> Result<Cr3, String> {
     let mut file = File::open(path).map_err(|e| format!("opening {}: {e}", path.display()))?;
+    read_from(&mut file, kind, size, &path.display().to_string())
+}
+
+/// Whether a capture time is even reachable in this container.
+///
+/// The ladder's exit condition is a `DateTimeOriginal`, so a format this module has no reader for
+/// ran the full 1 MiB → 8 MiB → 16 MiB escalation — three reads and 25 MiB of allocation — for a
+/// file that can never produce one, and the parse is identical at every rung.
+fn carries_a_date(kind: FileKind) -> bool {
+    !matches!(
+        kind,
+        FileKind::Raw(RawFormat::Crw) | FileKind::Raw(RawFormat::X3f)
+    )
+}
+
+/// The escalation itself, over any reader. One buffer for the whole ladder: it used to build a
+/// fresh `vec![0u8; len]` per rung, so the zeroing pass and the read pass both touched every page.
+fn read_from<R: Read + Seek>(
+    file: &mut R,
+    kind: FileKind,
+    size: u64,
+    label: &str,
+) -> Result<Cr3, String> {
+    let mut head: Vec<u8> = Vec::new();
     let mut want = FIRST_READ;
     loop {
         let len = size.min(want) as usize;
-        let mut head = vec![0u8; len];
+        head.clear();
+        head.resize(len, 0);
         file.seek(SeekFrom::Start(0))
             .and_then(|_| file.read_exact(&mut head))
-            .map_err(|e| format!("reading {}: {e}", path.display()))?;
+            .map_err(|e| format!("reading {label}: {e}"))?;
         let meta = parse(&head, kind);
         // Done when the capture time was found, or when there is nothing more to read.
-        if meta.date_time_original.is_some() || size <= want || want >= MAX_READ {
+        if !carries_a_date(kind)
+            || meta.date_time_original.is_some()
+            || size <= want
+            || want >= MAX_READ
+        {
             return Ok(meta);
         }
         want = (want * 8).min(MAX_READ);
@@ -99,8 +133,9 @@ fn tiff_file(data: &[u8], base: usize, meta: &mut Cr3) {
         match entry.tag {
             0x8769 => exif_ifd = tiff.first_int(&entry),
             // SubIFDs: where DNG, ARW and NEF keep the full-size image whose dimensions IFD0 (the
-            // preview) does not have.
-            0x014a => sub_ifds = tiff.ints(&entry),
+            // preview) does not have. The count is a `u32` from the file and each offset starts
+            // another walk of the stream, so the list is capped: a real file has one to three.
+            0x014a => sub_ifds = tiff.ints(&entry).into_iter().take(MAX_SUB_IFDS).collect(),
             _ => {}
         }
     }
@@ -235,7 +270,11 @@ fn jpeg(data: &[u8], at: usize, meta: &mut Cr3) -> bool {
     let mut have_size = false;
     while pos + 4 <= data.len() {
         if data[pos] != 0xff {
-            break;
+            // A stray byte is not the end of the header chain: `cr3::jpeg_dimensions` steps over
+            // it and keeps walking, and stopping here threw away every marker after it — including
+            // the SOF, so the JPEG came back 0×0 (or with only the Exif thumbnail's size).
+            pos += 1;
+            continue;
         }
         let marker = data[pos + 1];
         // Fill bytes, and markers with no length.
@@ -378,15 +417,24 @@ fn bmff_boxes(data: &[u8], start: usize, end: usize) -> Vec<Bmff> {
             },
             n => (8, n as usize),
         };
-        if size < header || pos.checked_add(size).is_none() {
+        if size < header {
+            break;
+        }
+        // A box that claims to run past its container is corrupt, and ending it at the container's
+        // boundary reads its fields out of bytes that belong to the *next* box. `Boxes` in
+        // `meta::cr3` ends the walk here instead, and so does this one.
+        let Some(next) = pos.checked_add(size) else {
+            break;
+        };
+        if next > end {
             break;
         }
         out.push(Bmff {
             kind,
             body: pos + header,
-            end: (pos + size).min(end),
+            end: next,
         });
-        pos += size;
+        pos = next;
     }
     out
 }
@@ -411,6 +459,9 @@ fn heif(data: &[u8], meta: &mut Cr3) {
     // `meta` is a full box: four bytes of version and flags before its children.
     let children = bmff_boxes(data, meta_box.body + 4, meta_box.end);
 
+    // `ispe` first, and unconditionally: every early return below used to run before it, so a HEIC
+    // whose Exif item could not be located reported 0×0 despite carrying the size in plain sight.
+    heif_size(data, &children, meta);
     let mut exif_item: Option<u32> = None;
     if let Some(iinf) = children.iter().find(|b| &b.kind == b"iinf") {
         let version = data.get(iinf.body).copied().unwrap_or(0);
@@ -458,9 +509,14 @@ fn heif(data: &[u8], meta: &mut Cr3) {
     };
     // The payload begins with the length of any prefix before the TIFF header.
     let Some(prefix) = be(payload, 0, 4).map(|p| p as usize) else {
+        meta.warnings
+            .push("the HEIF Exif item has no TIFF header prefix".to_string());
         return;
     };
     tiff_file(data, offset.saturating_add(4).saturating_add(prefix), meta);
+    // And again, because the rule is that `ispe` beats the Exif block: the first call is what makes
+    // the early returns above report a size at all, this one is what still wins when the Exif block
+    // disagrees. `heif_size` only ever grows the pair, and it is a short box walk.
     heif_size(data, &children, meta);
 }
 
@@ -554,7 +610,7 @@ pub(crate) mod fixtures {
 
     /// One IFD at stream offset `at`: `(tag, type, bytes)` entries, values of four bytes or fewer
     /// inline and the rest appended after the IFD, which is how a camera lays them out.
-    fn ifd(at: usize, entries: &[(u16, u16, Vec<u8>)]) -> Vec<u8> {
+    pub fn ifd(at: usize, entries: &[(u16, u16, Vec<u8>)]) -> Vec<u8> {
         let table = 2 + entries.len() * 12 + 4;
         let mut external = Vec::new();
         let mut out = (entries.len() as u16).to_le_bytes().to_vec();
@@ -584,7 +640,7 @@ pub(crate) mod fixtures {
         out
     }
 
-    fn ascii(text: &str) -> Vec<u8> {
+    pub fn ascii(text: &str) -> Vec<u8> {
         let mut bytes = text.as_bytes().to_vec();
         bytes.push(0);
         bytes
@@ -920,5 +976,229 @@ mod tests {
         for cut in 0..png.len() {
             let _ = parse(&png[..cut], FileKind::Png);
         }
+    }
+
+    #[test]
+    fn a_heic_that_cannot_find_its_exif_item_still_knows_its_size() {
+        // `ispe` sits in the plain sight of the `meta` box, and it used to be read *after* every
+        // early return: no Exif item, no `iloc` entry, no payload prefix — all three left the photo
+        // 0×0.
+        let mut bytes = heic(&tiff_bytes(), 4032, 3024);
+        let at = bytes
+            .windows(4)
+            .position(|w| w == b"Exif")
+            .expect("an Exif item type");
+        bytes[at..at + 4].copy_from_slice(b"null");
+
+        let meta = parse(&bytes, FileKind::Heif);
+
+        assert_eq!((meta.width, meta.height), (4032, 3024));
+        assert!(meta.date_time_original.is_none());
+        assert!(
+            !meta.warnings.is_empty(),
+            "the missing item is still reported"
+        );
+    }
+
+    #[test]
+    fn a_jpeg_with_a_stray_byte_before_its_frame_header_still_knows_its_size() {
+        // One `0x00` between the APP1 and the SOF0. The walk broke on it, losing every marker after
+        // it — including the frame header, so the JPEG came back with only the Exif thumbnail's
+        // dimensions instead of the real ones.
+        let whole = fixtures::jpeg(&tiff_bytes(), 4000, 3000);
+        let sof = whole
+            .windows(2)
+            .position(|w| w == [0xff, 0xc0])
+            .expect("a SOF0");
+        let mut bytes = whole;
+        bytes.insert(sof, 0x00);
+
+        let meta = parse(&bytes, FileKind::Jpeg);
+
+        assert_eq!(
+            (meta.width, meta.height),
+            (4000, 3000),
+            "the SOF is the real size"
+        );
+        assert_eq!(
+            meta.date_time_original.as_deref(),
+            Some("2026:08:27 19:54:49")
+        );
+    }
+
+    #[test]
+    fn a_box_that_claims_to_run_past_its_container_ends_the_walk() {
+        // Ending a corrupt box at its container's boundary reads its fields out of the *next*
+        // box's bytes, which is worse than not walking it at all.
+        let mut data = 255u32.to_be_bytes().to_vec();
+        data.extend_from_slice(b"free");
+        data.extend_from_slice(&8u32.to_be_bytes());
+        data.extend_from_slice(b"moov");
+
+        let walk = bmff_boxes(&data, 0, data.len());
+        assert!(walk.is_empty(), "{} boxes walked", walk.len());
+        // A box that fits is still walked, and a zero size still means "to the end".
+        let good = heic(&tiff_bytes(), 10, 10);
+        assert!(bmff_boxes(&good, 0, good.len()).len() >= 3);
+    }
+
+    /// A TIFF whose IFD0 claims `sub_ifds` SubIFDs, each with its own dimensions.
+    fn tiff_with_sub_ifds(width: u32, height: u32, sub_ifds: &[(u32, u32)]) -> Vec<u8> {
+        let array_at = 8 + 2 + 12 * 3 + 4;
+        let first_sub_at = array_at + sub_ifds.len() * 4;
+        // Tag 0x014a's value is the ARRAY of offsets, not one offset, so the tag has to carry
+        // every one of them: `ifd` derives the element count from the byte length, and anything
+        // over four bytes is written out of line at `array_at`.
+        let offsets: Vec<u8> = (0..sub_ifds.len())
+            .flat_map(|index| ((first_sub_at + index * 30) as u32).to_le_bytes())
+            .collect();
+        let entries = vec![
+            (0x0100, 4, width.to_le_bytes().to_vec()),
+            (0x0101, 4, height.to_le_bytes().to_vec()),
+            (0x014a, 4, offsets),
+        ];
+        let mut out = b"II\x2a\x00".to_vec();
+        out.extend_from_slice(&8u32.to_le_bytes());
+        out.extend(fixtures::ifd(8, &entries));
+        for (w, h) in sub_ifds {
+            out.extend(fixtures::ifd(
+                0,
+                &[
+                    (0x0100, 4, w.to_le_bytes().to_vec()),
+                    (0x0101, 4, h.to_le_bytes().to_vec()),
+                ],
+            ));
+        }
+        out
+    }
+
+    #[test]
+    fn only_the_first_few_sub_ifds_of_a_raw_are_followed() {
+        // Tag 0x014a's count is a `u32` from the file and each offset starts another walk of an
+        // IFD. A real RAW has one to three; this one claims eleven, so the last one — the largest —
+        // is past the cap and is not read.
+        let mut sub = vec![(100u32, 80u32)];
+        sub.extend((1..=10u32).map(|i| (5000 + i * 10, 4000)));
+
+        let meta = parse(
+            &tiff_with_sub_ifds(60, 40, &sub),
+            FileKind::Raw(RawFormat::Dng),
+        );
+
+        assert_eq!(
+            (meta.width, meta.height),
+            (5070, 4000),
+            "the largest of the first eight, not of all eleven"
+        );
+    }
+
+    #[test]
+    fn an_ifd_directory_that_claims_sixty_five_thousand_entries_is_walked_briefly() {
+        // The count is a `u16` and every entry costs three reads of the stream. A camera writes tens
+        // of them; the entry at 600 is past the cap, so a file that claims 65,535 of them is a
+        // few hundred reads rather than a few hundred thousand.
+        let mut entries = vec![(0x0100u16, 4u16, 100u32.to_le_bytes().to_vec())];
+        for _ in 0..599 {
+            entries.push((0x0112, 3, 1u16.to_le_bytes().to_vec()));
+        }
+        entries.push((0x0100, 4, 9000u32.to_le_bytes().to_vec()));
+
+        let mut out = b"II\x2a\x00".to_vec();
+        out.extend_from_slice(&8u32.to_le_bytes());
+        out.extend_from_slice(&u16::MAX.to_le_bytes());
+        for (tag, kind, bytes) in &entries {
+            out.extend_from_slice(&tag.to_le_bytes());
+            out.extend_from_slice(&kind.to_le_bytes());
+            out.extend_from_slice(&1u32.to_le_bytes());
+            let mut inline = bytes.clone();
+            inline.resize(4, 0);
+            out.extend_from_slice(&inline);
+        }
+        out.extend_from_slice(&0u32.to_le_bytes());
+
+        let started = std::time::Instant::now();
+        let meta = parse(&out, FileKind::Raw(RawFormat::Arw));
+        let elapsed = started.elapsed();
+
+        assert_eq!(meta.width, 100, "entry 600 is past the cap");
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "a 65,535-entry directory took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn a_format_this_module_has_no_reader_for_is_read_once_however_big_it_is() {
+        // Counts the reads, so "one read" and "the whole ladder" are different answers.
+        struct Counting {
+            inner: std::io::Cursor<Vec<u8>>,
+            reads: usize,
+        }
+        impl Read for Counting {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                self.inner.read(buf)
+            }
+        }
+        impl Seek for Counting {
+            fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+                self.inner.seek(pos)
+            }
+        }
+
+        // A CIFF-ish header and then five mebibytes of nothing. The ladder's exit condition is a
+        // `DateTimeOriginal`, which a CRW can never produce, so it used to run all three rungs —
+        // and re-allocate 25 MiB — to arrive at the same answer three times.
+        let mut whole = vec![0u8; 5 << 20];
+        whole[..4].copy_from_slice(b"HEAP");
+        let size = whole.len() as u64;
+        let mut reader = Counting {
+            inner: std::io::Cursor::new(whole),
+            reads: 0,
+        };
+        let meta =
+            read_from(&mut reader, FileKind::Raw(RawFormat::Crw), size, "the crw").expect("a read");
+        assert_eq!(reader.reads, 1, "one read, not the whole ladder");
+        assert!(meta.date_time_original.is_none());
+        assert!(!meta.warnings.is_empty(), "the format is still reported");
+
+        // A format that can carry a date still escalates: its directories sit past the first mebibyte,
+        // which is the whole reason the ladder exists. The TIFF header is at 0, as a camera writes
+        // it; the IFDs are at 3 MiB, which is what a DNG with a large thumbnail looks like.
+        let ifd0_at = 3usize << 20;
+        // One entry, so the directory holds nothing that has to be stored *after* it: the Exif IFD
+        // goes here, and the builder would otherwise put a value in the middle of it.
+        let exif_at = ifd0_at + 2 + 12 + 4;
+        let ifd0 = [(0x8769, 4, (exif_at as u32).to_le_bytes().to_vec())];
+        let mut whole = b"II\x2a\x00".to_vec();
+        whole.extend_from_slice(&(ifd0_at as u32).to_le_bytes());
+        whole.resize(ifd0_at, 0);
+        whole.extend(fixtures::ifd(ifd0_at, &ifd0));
+        assert_eq!(
+            whole.len(),
+            exif_at,
+            "the Exif IFD is where the pointer says it is"
+        );
+        whole.extend(fixtures::ifd(
+            exif_at,
+            &[
+                (0x8827, 3, 1600u16.to_le_bytes().to_vec()),
+                (0x9003, 2, fixtures::ascii("2026:08:27 19:54:49")),
+                (0x9291, 2, fixtures::ascii("84")),
+            ],
+        ));
+        let size = whole.len() as u64;
+        let mut reader = Counting {
+            inner: std::io::Cursor::new(whole),
+            reads: 0,
+        };
+        let meta =
+            read_from(&mut reader, FileKind::Raw(RawFormat::Arw), size, "the raw").expect("a read");
+        assert_eq!(reader.reads, 2, "1 MiB, then the rest of the file");
+        assert_eq!(
+            meta.date_time_original.as_deref(),
+            Some("2026:08:27 19:54:49")
+        );
+        assert_eq!(meta.iso, Some(1600));
     }
 }

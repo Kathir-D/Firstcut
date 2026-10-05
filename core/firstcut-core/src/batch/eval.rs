@@ -50,8 +50,11 @@ pub struct BoundaryMetrics {
     pub wrong_splits: usize,
     /// Truth batches that no predicted batch overlaps at all.
     pub missed_batches: usize,
-    /// Ground-truth file names that are not in the metadata at all.
-    pub missing_photos: Vec<String>,
+    /// Ground-truth file names the prediction could not be scored against: ones that are not in the
+    /// metadata at all, and ones a hand-written file lists in two batches. Both make the numbers
+    /// above wrong in a way no report would otherwise show — a name in two truth batches silently
+    /// belongs to the *last* of them, which turns a merge into a split or the other way round.
+    pub unusable_truth_names: Vec<String>,
     /// Predicted batches that combine frames from different truth batches. The worst outcome:
     /// photos from two different plays hidden in one batch.
     pub merge_examples: Vec<Vec<String>>,
@@ -84,46 +87,58 @@ pub fn evaluate_boundaries<N: Fn(PhotoId) -> Option<String>>(
 /// [`evaluate_boundaries`] when both sides are already file names, capture-ordered.
 #[must_use]
 pub fn evaluate_names(predicted: &[Vec<String>], truth: &GroundTruth) -> BoundaryMetrics {
-    let mut m = BoundaryMetrics {
-        truth_boundaries: truth.batches.len().saturating_sub(1),
-        predicted_boundaries: predicted.len().saturating_sub(1),
-        ..BoundaryMetrics::default()
-    };
-
+    let mut m = BoundaryMetrics::default();
     let known: std::collections::HashSet<&String> = truth.batches.iter().flatten().collect();
     let predicted_names: std::collections::HashSet<&String> = predicted.iter().flatten().collect();
-    m.missing_photos = known
+    let mut unusable: Vec<String> = known
         .iter()
         .filter(|n| !predicted_names.contains(*n))
         .map(|n| (*n).clone())
         .collect();
-    m.missing_photos.sort();
+    // A name in two truth batches is a hand-editing accident, and it is not harmless: the overlap
+    // maps below can only give that name to one of the two batches — the last — which silently
+    // turns a wrong merge into a wrong split or the other way round.
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for batch in &truth.batches {
+        for name in batch {
+            if !seen.insert(name.as_str()) {
+                unusable.push(name.clone());
+            }
+        }
+    }
+    unusable.sort();
+    unusable.dedup();
+    m.unusable_truth_names = unusable;
 
     // Boundaries as the *set of files that start a batch*, which is robust to a batch being merged
     // or split and does not depend on index arithmetic.
     //
     // The first photo of the shoot is not a boundary — both sides start there — so it is excluded
     // from both sets before counting, otherwise every run gains a spurious true positive.
-    let pred_starts: std::collections::HashSet<&String> =
-        predicted.iter().filter_map(|b| b.first()).collect();
-    let truth_starts: std::collections::HashSet<&String> =
-        truth.batches.iter().filter_map(|b| b.first()).collect();
-    let shoot_start = truth
+    //
+    // A truth batch whose photos are no longer in the folder is not a boundary the batcher could
+    // have drawn either, so it is dropped *before* the shoot's start is removed. Counting it left a
+    // false negative in the denominator for a batch nobody could have predicted.
+    let comparable: Vec<&Vec<String>> = truth
         .batches
+        .iter()
+        .filter(|b| b.iter().any(|n| predicted_names.contains(n)))
+        .collect();
+    let shoot_start = comparable
         .first()
         .and_then(|b| b.first())
         .cloned()
         .or_else(|| predicted.first().and_then(|b| b.first()).cloned());
 
-    let pred_starts: std::collections::HashSet<&String> = pred_starts
+    let pred_starts: std::collections::HashSet<&String> = predicted
         .iter()
-        .copied()
-        .filter(|n| Some((*n).clone()) != shoot_start)
+        .filter_map(|b| b.first())
+        .filter(|n| shoot_start.as_deref() != Some(n.as_str()))
         .collect();
-    let truth_starts: std::collections::HashSet<&String> = truth_starts
+    let truth_starts: std::collections::HashSet<&String> = comparable
         .iter()
-        .copied()
-        .filter(|n| Some((*n).clone()) != shoot_start)
+        .filter_map(|b| b.first())
+        .filter(|n| shoot_start.as_deref() != Some(n.as_str()))
         .collect();
 
     for start in &pred_starts {
@@ -139,6 +154,12 @@ pub fn evaluate_names(predicted: &[Vec<String>], truth: &GroundTruth) -> Boundar
         }
     }
 
+    // Both denominators come from the *filtered* sets. Taking them from `predicted.len() - 1` and
+    // `truth.batches.len() - 1` instead let precision read 1.0 with a false positive counted: the
+    // shoot's first photo is not in either set but was counted in those denominators, so a deleted
+    // first frame made the denominator one short. The 98% F1 target rests on these numbers.
+    m.predicted_boundaries = pred_starts.len();
+    m.truth_boundaries = truth_starts.len();
     let tp = m.true_positives as f32;
     m.precision = if m.predicted_boundaries == 0 {
         0.0
@@ -264,8 +285,56 @@ mod tests {
     fn a_truth_batch_the_folder_no_longer_has_is_reported() {
         let t = truth(&[&["a", "b"], &["zz"]]);
         let m = evaluate_names(&names(&[&["a", "b"]]), &t);
-        assert_eq!(m.missing_photos, vec!["zz".to_string()]);
+        assert_eq!(m.unusable_truth_names, vec!["zz".to_string()]);
         assert_eq!(m.missed_batches, 1);
+    }
+
+    #[test]
+    fn a_deleted_first_frame_cannot_inflate_precision_to_one() {
+        // The shoot's first photo is not a boundary, so it is not in either set — but it was in
+        // `predicted.len() - 1`, which made the denominator one short whenever it was missing from
+        // the folder. A split the batcher got *wrong* then scored precision 1.0, and the headline
+        // 98% F1 rests on precision.
+        let t = truth(&[&["a", "b"], &["c"]]);
+        let m = evaluate_names(&names(&[&["b"], &["c"]]), &t);
+        assert_eq!(
+            m.false_positives, 1,
+            "'b' is not where the truth says a batch starts"
+        );
+        assert_eq!(m.predicted_boundaries, 2);
+        assert_eq!(m.truth_boundaries, 1);
+        assert!((m.precision - 0.5).abs() < 1e-6, "got {}", m.precision);
+        assert!((m.recall - 1.0).abs() < 1e-6, "got {}", m.recall);
+        assert!((m.f1 - 2.0 / 3.0).abs() < 1e-5, "got {}", m.f1);
+    }
+
+    #[test]
+    fn a_truth_batch_that_is_entirely_gone_is_not_a_missed_boundary() {
+        // Its photos are not in the folder, so no boundary could have been drawn there. Scoring it
+        // as a false negative would drag F1 down for something the batcher never saw.
+        let t = truth(&[&["zz", "yy"], &["b", "c"], &["d"]]);
+        let m = evaluate_names(&names(&[&["b", "c"], &["d"]]), &t);
+        assert_eq!(m.truth_boundaries, 1);
+        assert_eq!(m.false_negatives, 0);
+        assert_eq!(m.recall, 1.0);
+        assert_eq!(
+            m.missed_batches, 1,
+            "still reported as a batch nothing overlapped"
+        );
+        assert_eq!(
+            m.unusable_truth_names,
+            vec!["yy".to_string(), "zz".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_name_in_two_truth_batches_is_reported() {
+        // Hand-edited ground truth does this, and it silently skews both directions: the name
+        // belongs to the *last* batch it appears in, so the other batch looks split and the second
+        // one looks merged.
+        let t = truth(&[&["a", "b"], &["b", "c"]]);
+        let m = evaluate_names(&names(&[&["a", "b"], &["c"]]), &t);
+        assert_eq!(m.unusable_truth_names, vec!["b".to_string()]);
     }
 
     #[test]

@@ -8,6 +8,11 @@
 /// so a long pause between two bursts can't inflate the local rate (todo.md §5.3 step 1).
 pub const LOCAL_WINDOW_MAX_MS: i64 = 500;
 
+/// How many gaps either side of a boundary the local rate is estimated from, and how far it widens
+/// before falling back to the whole sequence's median.
+const LOCAL_RADIUS: usize = 5;
+const LOCAL_RADIUS_FALLBACK: usize = 25;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     /// Same burst, decided without scoring.
@@ -36,7 +41,7 @@ pub struct Thresholds {
 }
 
 /// Why a Δt is not trustworthy, if it isn't.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TimeQuality {
     /// Both frames carry a real EXIF capture time.
     Exif,
@@ -49,11 +54,12 @@ pub enum TimeQuality {
     /// prevent, so it splits rather than clamping to zero (REV-63).
     Backwards,
     /// At least one frame has no usable time at all.
+    #[default]
     Missing,
 }
 
 /// Every signal todo.md §5.2 lists, for one consecutive pair.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct PairSignals {
     /// Signed. Negative means the effective times run backwards; see [`TimeQuality::Backwards`].
     pub dt_ms: i64,
@@ -76,9 +82,12 @@ impl PairSignals {
             crate::batch::view::effective_time_ms(cur),
         );
         // Kept signed: clamping a backwards gap to zero turned it into a hard join, which is the
-        // one outcome visual signatures can never revisit (REV-63).
+        // one outcome visual signatures can never revisit (REV-63). Saturating rather than
+        // subtracting, because a corrupt timestamp near `i64::MIN` panicked in debug and wrapped
+        // to a negative number in release — which then reads as a huge Δt or a backwards one
+        // depending on which side the corrupt value was on.
         let dt_ms = match (ta, tb) {
-            (Some(a), Some(b)) => b - a,
+            (Some(a), Some(b)) => b.saturating_sub(a),
             _ => 0,
         };
         let time_quality = match (ta, tb) {
@@ -236,19 +245,47 @@ impl FrameIntervals {
     ///
     /// Widens the window twice before giving up, so a single frame surrounded by long pauses still
     /// gets a usable local rate instead of a global average from the other end of the game.
+    ///
+    /// Allocates a sample vector per call, which is why the batching pass does not use it: it
+    /// asks for every boundary in one shoot, so it calls [`Self::local_intervals`] once and
+    /// indexes the result.
     #[must_use]
     pub fn at(&self, i: usize) -> i64 {
-        for radius in [5usize, 25] {
+        self.at_with(i, &mut Vec::new())
+    }
+
+    /// Every local frame interval for a sequence of `n` photos, computed in one pass.
+    ///
+    /// Same values as calling [`Self::at`] for each `i`, but with one sample buffer for the whole
+    /// shoot instead of one heap allocation and one sort per boundary — `at` is `O(n·w)` with an
+    /// allocation inside the loop, and the batching pass runs it once per boundary.
+    #[must_use]
+    pub fn local_intervals(&self, n: usize) -> Vec<i64> {
+        let mut sample = Vec::with_capacity(2 * LOCAL_RADIUS_FALLBACK + 1);
+        (0..n).map(|i| self.at_with(i, &mut sample)).collect()
+    }
+
+    /// [`Self::at`] with the caller's buffer, so a caller asking for many boundaries allocates
+    /// once.
+    fn at_with(&self, i: usize, sample: &mut Vec<i64>) -> i64 {
+        // No gaps means no rate to estimate: every window is empty, so indexing one would run off
+        // the end of the slice (a one-photo folder reaches this).
+        if self.gaps.is_empty() {
+            return self.default;
+        }
+        for radius in [LOCAL_RADIUS, LOCAL_RADIUS_FALLBACK] {
             let lo = i.saturating_sub(radius);
             let hi = (i + radius).min(self.gaps.len().saturating_sub(1));
-            let mut sample: Vec<i64> = self.gaps[lo..=hi]
-                .iter()
-                .copied()
-                .filter(|&g| g > 0 && g < LOCAL_WINDOW_MAX_MS)
-                .collect();
+            sample.clear();
+            sample.extend(
+                self.gaps[lo..=hi]
+                    .iter()
+                    .copied()
+                    .filter(|&g| g > 0 && g < LOCAL_WINDOW_MAX_MS),
+            );
             if !sample.is_empty() {
                 sample.sort_unstable();
-                return median(&sample);
+                return median(sample);
             }
         }
         self.global.unwrap_or(self.default)
@@ -271,6 +308,7 @@ fn median(sorted: &[i64]) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::batch::view::mock::MockPhoto as M;
 
     #[test]
     fn median_of_even_count_averages_the_middle() {
@@ -295,6 +333,95 @@ mod tests {
 
         let fi = FrameIntervals::new(vec![0, 5_000, 100, 5_000], 100);
         assert_eq!(fi.at(1), 100, "one short gap in the run: global median");
+    }
+
+    #[test]
+    fn an_empty_gap_list_asks_for_no_rate_and_gets_the_default() {
+        // A one-photo folder reaches this. `at` used to slice `gaps[0..=0]` on an empty vector.
+        let fi = FrameIntervals::new(Vec::new(), 100);
+        assert_eq!(fi.at(0), 100);
+    }
+
+    #[test]
+    fn the_batched_local_intervals_are_the_ones_at_returns() {
+        // `local_intervals` exists only to save an allocation per boundary, so every value has to
+        // be the one `at` would have computed, including the widened window and the fallbacks.
+        let gaps = vec![
+            0, 90, 90, 90, 1_000_000, 90, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
+        ];
+        let fi = FrameIntervals::new(gaps.clone(), 90);
+        let all = fi.local_intervals(gaps.len());
+        assert_eq!(all.len(), gaps.len());
+        for (i, &f) in all.iter().enumerate() {
+            assert_eq!(f, fi.at(i), "boundary {i}");
+        }
+        assert!(
+            all.contains(&25),
+            "the 40 fps stretch must survive: {all:?}"
+        );
+    }
+
+    #[test]
+    fn a_fallback_timestamp_never_makes_a_hard_decision() {
+        // REV-63 as a promise: two frames whose times are two seconds apart *because both came from
+        // the file system* must not be joined or split on that gap alone. Coarse mtimes (exFAT's
+        // 2 s granularity) make exactly this Δt look like a re-press. With real capture times the
+        // same pair is a hard split, which is what makes the contrast the assertion.
+        let from_mtime = (
+            M::frame(0, 0).without_capture_time().with_mtime(0),
+            M::frame(1, 0).without_capture_time().with_mtime(2_000),
+        );
+        let sigs = PairSignals::compute(&from_mtime.0, &from_mtime.1);
+        assert_eq!(sigs.time_quality, TimeQuality::Fallback);
+        assert_eq!(sigs.dt_ms, 2_000);
+        assert!(
+            !sigs.has_exif_time(),
+            "an mtime is not EXIF, whatever the field it arrives in"
+        );
+        let t = Thresholds {
+            frame_interval_ms: 90,
+            join_ms: 250,
+            split_ms: 1_500,
+        };
+        assert_eq!(
+            sigs.decide(t),
+            Decision::Ambiguous,
+            "a fallback Δt goes to the ambiguous zone so signatures decide"
+        );
+
+        let from_exif = (M::frame(0, 0), M::frame(1, 0).at(2_000));
+        let sigs = PairSignals::compute(&from_exif.0, &from_exif.1);
+        assert_eq!(sigs.time_quality, TimeQuality::Exif);
+        assert_eq!(sigs.decide(t), Decision::Split);
+    }
+
+    #[test]
+    fn a_timestamp_at_the_integer_limits_does_not_overflow_the_gap() {
+        // A corrupt mtime of `i64::MIN + 1` against a real 2023 instant is a gap no `i64` holds.
+        // Plain subtraction panicked in debug and wrapped to a negative number in release, which
+        // then read as a backwards pair — a hard split nobody could revisit (REV-63).
+        let real = 1_700_000_000_000;
+        let corrupt = M::frame(0, 0).at(i64::MIN + 1);
+
+        let forwards = PairSignals::compute(&corrupt, &M::frame(1, 0).at(real));
+        assert_eq!(
+            forwards.dt_ms,
+            i64::MAX,
+            "the gap saturates rather than wrapping negative"
+        );
+        assert!(
+            forwards.dt_ms > 0,
+            "a huge positive gap must not read as a negative one"
+        );
+        assert_ne!(
+            forwards.time_quality,
+            TimeQuality::Backwards,
+            "the later frame really is later"
+        );
+
+        let backwards = PairSignals::compute(&M::frame(0, 0).at(real), &corrupt);
+        assert_eq!(backwards.time_quality, TimeQuality::Backwards);
+        assert_eq!(backwards.dt_ms, i64::MIN);
     }
 
     #[test]

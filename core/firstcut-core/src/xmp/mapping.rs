@@ -101,7 +101,15 @@ impl XmpMapping {
                 } else {
                     XmpValues {
                         rating: self.not_keep_rating,
-                        label: self.not_keep_label.map(|label| label.as_str().to_string()),
+                        // The user's own label is *kept*, not cleared. `None` here means "remove the
+                        // attribute", so the old spelling deleted a colour the user (or Lightroom)
+                        // had put on the photograph the moment it was decided not a keep — the app
+                        // still had it in its database while Lightroom's copy lost it. A not-keep
+                        // label is only written when one was explicitly asked for.
+                        label: self
+                            .not_keep_label
+                            .map(|label| label.as_str().to_string())
+                            .or_else(|| rating.label.map(|label| label.as_str().to_string())),
                     }
                 }
             }
@@ -123,6 +131,13 @@ impl XmpMapping {
         match mode {
             RatingMode::Stars => {
                 if values.rating.is_none() && label.is_none() {
+                    return None;
+                }
+                // `xmp:Rating="0"` is how some tools spell "not rated", and it is not a rating:
+                // importing it as one gives a never-rated photo a row in `ratings`, which moves
+                // the photos-vs-ratings counts, the tier totals and the Finish summary. A sidecar
+                // that says nothing but zero is nothing, so it gets no row.
+                if !rejected && stars == 0 && label.is_none() {
                     return None;
                 }
                 Some(Rating::new(
@@ -476,5 +491,53 @@ mod tests {
             .rating_from(&sidecar(Some(9), None, None), RatingMode::Stars)
             .unwrap();
         assert_eq!(imported.stars, 5);
+    }
+
+    #[test]
+    fn a_zero_rating_in_a_foreign_sidecar_imports_as_no_rating() {
+        // Lightroom and Bridge both write `xmp:Rating="0"` for a photograph nobody rated. Treating
+        // that as a rating gives every untouched frame in an imported shoot a `ratings` row, which
+        // moves the photos-vs-ratings counts, the tier totals and the Finish summary's "unrated".
+        let mapping = XmpMapping::default();
+        assert_eq!(
+            mapping.rating_from(&sidecar(Some(0), None, None), RatingMode::Stars),
+            None,
+            "a zero with nothing else in the sidecar says nothing"
+        );
+        // And it is only the zero that means nothing: a real reject, a real label or a real star
+        // count still imports.
+        assert!(
+            mapping
+                .rating_from(&sidecar(Some(0), Some("Red"), None), RatingMode::Stars)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn an_unkeep_does_not_delete_the_users_colour_label() {
+        // `XmpValues::None` means *remove the attribute*. The not-keep branch used to send it for
+        // the label whenever no replacement label was configured, so deciding a photo was not a
+        // keep deleted a colour the user had put on it — the app still had it, Lightroom did not.
+        let mapping = XmpMapping::default();
+        let values = mapping.values_for(
+            Rating::new(0, Flag::None, Some(ColorLabel::Yellow), false),
+            RatingMode::KeepNotKeep,
+        );
+        assert_eq!(
+            values.label.as_deref(),
+            Some("Yellow"),
+            "the label the user set has to survive an unkeep"
+        );
+
+        // An explicitly configured not-keep label still wins, because that is what it is for.
+        let replacing = XmpMapping {
+            not_keep_label: Some(ColorLabel::Red),
+            ..XmpMapping::default()
+        };
+        let values = replacing.values_for(
+            Rating::new(0, Flag::None, Some(ColorLabel::Yellow), false),
+            RatingMode::KeepNotKeep,
+        );
+        assert_eq!(values.label.as_deref(), Some("Red"));
     }
 }

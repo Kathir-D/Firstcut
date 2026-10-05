@@ -132,7 +132,14 @@ fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     let temp = directory.join(format!(".{name}.firstcut-{}-{unique}", std::process::id()));
 
     let write = |temp: &Path| -> std::io::Result<()> {
-        let mut file = fs::File::create(temp)?;
+        // `create_new`, not `create`: the temp name is `.{name}.firstcut-{pid}-{counter}`, which is
+        // entirely predictable — a symlink left behind by a `kill -9` between the create and the
+        // rename, at a pid this launch has just been given, would be followed and its target
+        // truncated to zero. `create_new` fails on anything already there, symlink or not.
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(temp)?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()
     };
@@ -325,5 +332,55 @@ mod tests {
             "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"></x:xmpmeta>"
         ));
         assert!(!looks_like_xmp("<?xml version=\"1.0\"?><photos/>"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_sidecar_temp_file_is_claimed_not_followed() {
+        // The temp name is `.{name}.firstcut-{pid}-{counter}` — all three parts are knowable, the
+        // pid because the kernel hands this launch the one a dead launch had. `File::create` opens
+        // *through* a symlink, so a link left at the predicted name would have the RAW truncated to
+        // zero and the sidecar write then fail with the photograph already gone. `create_new`
+        // refuses the name instead, which is the only thing standing between the two.
+        let dir = shoot();
+        let sentinel = dir.path().join("a-precious-original.raw");
+        fs::write(&sentinel, b"the only copy of this photograph").unwrap();
+
+        let sidecar = dir.path().join("IMG_0002.CR3.xmp");
+        let temp_name = |unique: u64| {
+            dir.path().join(format!(
+                ".IMG_0002.CR3.xmp.firstcut-{}-{unique}",
+                std::process::id()
+            ))
+        };
+
+        // `TEMP_COUNTER` is process-global and every earlier sidecar write has taken a value from
+        // it, so the name the next write will use has to be read rather than assumed. Another test
+        // running in parallel can take the value between the read and the write, hence the retry.
+        let mut planted = None;
+        for _ in 0..64 {
+            let unique = TEMP_COUNTER.load(Ordering::Relaxed);
+            let _ = std::fs::remove_file(temp_name(unique));
+            std::os::unix::fs::symlink(&sentinel, temp_name(unique)).unwrap();
+            planted = Some(unique);
+            if write_sidecar(&sidecar, &XmpValues::rating(3)).is_err() {
+                break;
+            }
+            // It got a different value than the one we planted; take another.
+            let _ = std::fs::remove_file(temp_name(unique));
+            planted = None;
+        }
+        let unique = planted.expect("the counter could not be raced to a stable value");
+        let _ = std::fs::remove_file(temp_name(unique));
+
+        assert_eq!(
+            fs::read(&sentinel).unwrap(),
+            b"the only copy of this photograph",
+            "the file the symlink pointed at is untouched"
+        );
+        assert!(
+            !sidecar.exists(),
+            "and the write failed rather than following the link"
+        );
     }
 }

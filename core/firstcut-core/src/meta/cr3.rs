@@ -176,83 +176,112 @@ impl Cr3 {
             })?
             .len();
 
-        let mut head = vec![0u8; size.min(HEAD_BYTES) as usize];
-        file.seek(SeekFrom::Start(0))
-            .and_then(|_| file.read_exact(&mut head))
-            .map_err(|source| Cr3Error::Io {
-                path: path.display().to_string(),
-                source,
-            })?;
-        if head.len() < 12 || &head[4..8] != b"ftyp" {
-            return Err(Cr3Error::NotACr3);
-        }
+        // The header window, borrowed out of a per-thread slot rather than allocated per file: a
+        // 2,900-frame shoot allocated 2,900 fresh mebibytes and first-touched every one of them
+        // on the scan's critical path, and `read_exact` writes all of it again immediately.
+        let mut slot = HEAD_BUFFER.with(std::cell::RefCell::take);
+        let parsed = parse_header(&mut file, path, &mut slot, size.min(HEAD_BYTES) as usize);
+        HEAD_BUFFER.with(|cell| *cell.borrow_mut() = slot);
+        parsed
+    }
+}
 
-        let mut meta = Cr3::default();
-        let mut cmt = CmtBoxes::default();
-        let mut moov: Option<(usize, usize)> = None;
-        let mut traks: Vec<(usize, usize)> = Vec::new();
+thread_local! {
+    /// The header window each worker thread reuses. Taken out for the duration of a parse and put
+    /// back afterwards, so no borrow is held across the walk and a panic costs the buffer, not the
+    /// thread.
+    static HEAD_BUFFER: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
-        for box_ in Boxes::new(&head, 0, head.len()) {
-            match &box_.kind {
-                b"moov" => {
-                    moov = Some((box_.body, box_.end));
-                    for child in Boxes::new(&head, box_.body, box_.end) {
-                        if child.kind == *b"uuid" && child.usertype() == Some(UUID_CANON) {
-                            cmt.scan_canon_uuid(&head, child.usertype_end());
-                        }
-                        if child.kind == *b"trak" {
-                            traks.push((child.body, child.end));
-                        }
+fn parse_header(
+    file: &mut File,
+    path: &Path,
+    head: &mut Vec<u8>,
+    want: usize,
+) -> Result<Cr3, Cr3Error> {
+    head.clear();
+    head.resize(want, 0);
+    file.seek(SeekFrom::Start(0))
+        .and_then(|_| file.read_exact(head))
+        .map_err(|source| Cr3Error::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+    let head = &*head;
+    if head.len() < 12 || &head[4..8] != b"ftyp" {
+        return Err(Cr3Error::NotACr3);
+    }
+
+    let mut meta = Cr3::default();
+    let mut cmt = CmtBoxes::default();
+    let mut moov: Option<(usize, usize)> = None;
+    let mut traks: Vec<(usize, usize)> = Vec::new();
+
+    for box_ in Boxes::new(head, 0, head.len()) {
+        match &box_.kind {
+            b"moov" => {
+                moov = Some((box_.body, box_.end));
+                for child in Boxes::new(head, box_.body, box_.end) {
+                    if child.kind == *b"uuid" && child.usertype() == Some(UUID_CANON) {
+                        cmt.scan_canon_uuid(head, child.usertype_end(), child.end);
+                    }
+                    if child.kind == *b"trak" {
+                        traks.push((child.body, child.end));
                     }
                 }
-                b"uuid" => match box_.usertype() {
-                    Some(UUID_CANON) => cmt.scan_canon_uuid(&head, box_.usertype_end()),
-                    Some(UUID_PRVW) => {
-                        if let Some(preview) = prvw_preview(&head, box_.body, box_.end) {
-                            meta.preview = Some(preview);
-                        } else {
-                            meta.warnings
-                                .push("PRVW box has no usable JPEG".to_string());
-                        }
+            }
+            b"uuid" => match box_.usertype() {
+                Some(UUID_CANON) => cmt.scan_canon_uuid(head, box_.usertype_end(), box_.end),
+                Some(UUID_PRVW) => {
+                    if let Some(preview) = prvw_preview(head, box_.body, box_.end) {
+                        meta.preview = Some(preview);
+                    } else {
+                        meta.warnings
+                            .push("PRVW box has no usable JPEG".to_string());
                     }
-                    _ => {}
-                },
+                }
                 _ => {}
-            }
+            },
+            _ => {}
         }
-
-        // The full-resolution JPEG is whichever track's sample is actually a JPEG. The first `trak`
-        // in an R8 CR3 is the *RAW* one, so this has to look at all of them.
-        if !traks.is_empty() {
-            meta.full_preview = trak_jpeg(&head, &traks);
-        }
-
-        cmt.apply_thumbnail(&mut meta);
-
-        let Some(ifd0) = cmt.cmt1 else {
-            return Err(Cr3Error::NoMetadata);
-        };
-        read_ifd0(&head, ifd0, &mut meta)?;
-        if let Some(exif) = cmt.cmt2 {
-            read_exif(&head, exif, &mut meta);
-        }
-        if let Some(maker) = cmt.cmt3 {
-            read_makernote(&head, maker, &mut meta);
-        }
-
-        // ShutterCount only exists in the meta track's copy of the MakerNote, so this is the one
-        // field that costs a seek. Skipped when the file has no `moov` to point at one.
-        if let Some((start, end)) = moov {
-            if let Some(count) = read_shutter_count(&mut file, &head, start, end) {
-                meta.shutter_count = Some(count);
-            } else {
-                meta.warnings
-                    .push("no shutter count: the meta track has no MakerNote".to_string());
-            }
-        }
-
-        Ok(meta)
     }
+
+    // The full-resolution JPEG is whichever track's sample is actually a JPEG. The first `trak`
+    // in an R8 CR3 is the *RAW* one, so this has to look at all of them.
+    if !traks.is_empty() {
+        meta.full_preview = trak_jpeg(head, &traks);
+    }
+
+    cmt.apply_thumbnail(&mut meta);
+
+    let Some(ifd0) = cmt.cmt1 else {
+        return Err(Cr3Error::NoMetadata);
+    };
+    // An unreadable CMT1 costs the IFD0 fields — dimensions, make, model, orientation — and
+    // nothing else: CMT2 and CMT3 are separate boxes and are read below either way. Failing the
+    // whole file on them threw away a capture time that was sitting right there.
+    if let Err(err) = read_ifd0(head, ifd0, &mut meta) {
+        meta.warnings.push(format!("CMT1 unreadable: {err}"));
+    }
+    if let Some(exif) = cmt.cmt2 {
+        read_exif(head, exif, &mut meta);
+    }
+    if let Some(maker) = cmt.cmt3 {
+        read_makernote(head, maker, &mut meta);
+    }
+
+    // ShutterCount only exists in the meta track's copy of the MakerNote, so this is the one
+    // field that costs a seek. Skipped when the file has no `moov` to point at one.
+    if let Some((start, end)) = moov {
+        if let Some(count) = read_shutter_count(file, head, start, end) {
+            meta.shutter_count = Some(count);
+        } else {
+            meta.warnings
+                .push("no shutter count: the meta track has no MakerNote".to_string());
+        }
+    }
+
+    Ok(meta)
 }
 
 /// Where each `CMT*` box's payload begins, plus the `THMB` box.
@@ -266,8 +295,12 @@ struct CmtBoxes {
 
 impl CmtBoxes {
     /// The Canon `uuid` body is a flat list of boxes: `CNCV`, `CCTP`, `CTBO`, `free`, `CMT1`…`THMB`.
-    fn scan_canon_uuid(&mut self, head: &[u8], start: usize) {
-        for box_ in Boxes::new(head, start, head.len()) {
+    ///
+    /// `end` is the `uuid` box's own end, not the end of the header window. Walking past it adopted
+    /// every `CMT1`/`THMB` in the rest of `moov` as Canon's metadata, so a `THMB` belonging to some
+    /// other box overwrote the thumbnail and a `CMT1` overwrote IFD0.
+    fn scan_canon_uuid(&mut self, head: &[u8], start: usize, end: usize) {
+        for box_ in Boxes::new(head, start, end) {
             match &box_.kind {
                 b"CMT1" => self.cmt1 = Some(box_.body),
                 b"CMT2" => self.cmt2 = Some(box_.body),
@@ -357,18 +390,22 @@ impl<'a> Iterator for Boxes<'a> {
             if size < header as u64 {
                 return None;
             }
-            let size = size as usize;
-            if start + size > self.end {
+            // `size` can come from a 64-bit `largesize` field, so it is not a `usize` until it has
+            // been narrowed, and `start + size` is not an addition that can be trusted to land
+            // inside the buffer. `LittleBoxes` and `bmff_boxes` bound it the same way; here the
+            // unwrapped addition overflowed in a debug build and walked backwards in a release one.
+            let size = usize::try_from(size).ok()?;
+            let end = start.checked_add(size)?;
+            if end > self.end {
                 return None;
             }
-            self.offset = start + size;
+            self.offset = end;
             let body = start + header;
-            let uuid = (kind == *b"uuid" && body + 16 <= start + size)
-                .then(|| &self.data[body..body + 16]);
+            let uuid = (kind == *b"uuid" && body + 16 <= end).then(|| &self.data[body..body + 16]);
             return Some(BoxHeader {
                 kind,
                 body,
-                end: start + size,
+                end,
                 uuid,
             });
         }
@@ -397,6 +434,18 @@ pub(super) struct Entry {
     /// Offset of the value, stream-relative (already resolved for the ≤4-byte inline case).
     pub(super) value_offset: usize,
 }
+
+/// The most entries one IFD may claim.
+///
+/// The count is a `u16`, so a file can name 65,535 of them, and every entry costs a walk of the
+/// stream. A camera writes tens — Canon's MakerNote IFD0 has a handful — and the ones that do not
+/// (a DNG with SubIFDs) are still well under a hundred, so a cap this loose costs nothing real and
+/// turns a crafted count from ~10^10 reads into ~10^3.
+const MAX_IFD_ENTRIES: usize = 512;
+
+/// The most integers read out of one array entry. CanonCameraSettings is indexed to 0x05 and
+/// CanonFileInfo to 0x17, so a real array is tens of elements; the cap is on the file's claim.
+const MAX_ARRAY_INTS: usize = 1024;
 
 /// The TIFF field types this parser understands. Anything else is skipped, which is what lets a
 /// MakerNote carry dozens of uninteresting tags without a match arm for each.
@@ -459,7 +508,7 @@ impl<'d> Tiff<'d> {
     }
 
     pub(super) fn entries_at(&self, offset: usize) -> Option<Entries<'_, '_>> {
-        let count = self.u16_at(offset)? as usize;
+        let count = (self.u16_at(offset)? as usize).min(MAX_IFD_ENTRIES);
         Some(Entries {
             tiff: self,
             offset,
@@ -483,17 +532,50 @@ impl<'d> Tiff<'d> {
     }
 
     pub(super) fn first_int(&self, entry: &Entry) -> Option<i64> {
-        self.ints(entry).first().copied()
+        self.first_int_at(entry, 0)
+    }
+
+    /// One element of an integer array, read where it is rather than by materialising the array.
+    ///
+    /// `first_int` used to build the whole `Vec<i64>` to take its head, and `count` is a field in
+    /// the file: one crafted LONG made it allocate ~2 MB, for each of the seven tags every photo
+    /// asks for, before the scan had read a single preview.
+    pub(super) fn first_int_at(&self, entry: &Entry, index: usize) -> Option<i64> {
+        let bytes = self.value_bytes(entry)?;
+        let width = match entry.kind {
+            1 | 7 => 1,
+            6 => 1,
+            3 | 8 => 2,
+            4 | 9 => 4,
+            _ => return None,
+        };
+        let element = bytes.get(index.checked_mul(width)?..)?.get(..width)?;
+        Some(match (entry.kind, self.little) {
+            (6, _) => i64::from(element[0] as i8),
+            (3, true) | (8, true) => i64::from(u16::from_le_bytes([element[0], element[1]])),
+            (3, false) | (8, false) => i64::from(u16::from_be_bytes([element[0], element[1]])),
+            (4, true) | (9, true) => {
+                i64::from(u32::from_le_bytes(element.try_into().expect("four bytes")))
+            }
+            (4, false) | (9, false) => {
+                i64::from(u32::from_be_bytes(element.try_into().expect("four bytes")))
+            }
+            _ => i64::from(element[0]),
+        })
     }
 
     /// Reads `count` integers of the entry's type. Out-of-range and unknown types give an empty
     /// vector, so a caller that indexes gets `None` from `first_int` rather than a bogus number.
     pub(super) fn ints(&self, entry: &Entry) -> Vec<i64> {
-        let bytes = match self.value_bytes(entry) {
-            Some(bytes) => bytes,
-            None => return Vec::new(),
+        let Some(bytes) = self.value_bytes(entry) else {
+            return Vec::new();
         };
-        let count = entry.count as usize;
+        // A file may claim four billion elements of a four-byte type; the vector below is sized
+        // from that claim, and every walk that follows it is sized from the vector. A camera writes
+        // tens, so a real array is never near the cap.
+        let width = type_size(entry.kind).unwrap_or(1);
+        let count = (entry.count as usize).min(MAX_ARRAY_INTS);
+        let bytes = &bytes[..count.saturating_mul(width).min(bytes.len())];
         match entry.kind {
             1 | 7 => bytes.iter().map(|&b| i64::from(b)).collect(),
             6 => bytes.iter().map(|&b| i64::from(b as i8)).collect(),
@@ -521,6 +603,25 @@ impl<'d> Tiff<'d> {
 
     /// The first element of an unsigned RATIONAL, as `f32`.
     pub(super) fn first_rational(&self, entry: &Entry) -> Option<f32> {
+        let (numerator, denominator) = self.rational_pair(entry)?;
+        let value = f64::from(numerator) / f64::from(denominator);
+        // f32 cannot hold every rational a camera writes; values that overflow it are reported by
+        // the caller's bounds check rather than becoming `inf` here.
+        (value.is_finite() && value.abs() <= f64::from(f32::MAX)).then_some(value as f32)
+    }
+
+    /// The first element of a signed RATIONAL, as `f32`. EXIF's `ExposureCompensation` is one.
+    ///
+    /// Read as unsigned, a −1/3 EV stored as `0xFFFFFFFF / 3` comes out as 1,431,655,765 EV: it
+    /// passes the finite guard and reaches the UI as a real number. All four exiftool fixtures
+    /// record `0`, which is why the agreement test could not see it.
+    pub(super) fn first_srational(&self, entry: &Entry) -> Option<f32> {
+        let (numerator, denominator) = self.rational_pair(entry)?;
+        let value = f64::from(numerator as i32) / f64::from(denominator);
+        (value.is_finite() && value.abs() <= f64::from(f32::MAX)).then_some(value as f32)
+    }
+
+    fn rational_pair(&self, entry: &Entry) -> Option<(u32, u32)> {
         let bytes = self.value_bytes(entry)?;
         let (numerator, denominator) = match self.little {
             true => (
@@ -532,13 +633,7 @@ impl<'d> Tiff<'d> {
                 u32::from_be_bytes(bytes.get(4..8)?.try_into().expect("four bytes")),
             ),
         };
-        if denominator == 0 {
-            return None;
-        }
-        let value = f64::from(numerator) / f64::from(denominator);
-        // f32 cannot hold every rational a camera writes; values that overflow it are reported by
-        // the caller's bounds check rather than becoming `inf` here.
-        (value.is_finite() && value.abs() <= f64::from(f32::MAX)).then_some(value as f32)
+        (denominator != 0).then_some((numerator, denominator))
     }
 }
 
@@ -628,7 +723,7 @@ pub(super) fn apply_exif(tiff: &Tiff<'_>, entries: Entries<'_, '_>, meta: &mut C
             0xa434 => meta.lens_model = tiff.string(&entry),
             0x829a => meta.exposure_time_s = tiff.first_rational(&entry),
             0x829d => meta.f_number = tiff.first_rational(&entry),
-            0x9204 => meta.exposure_comp_ev = tiff.first_rational(&entry),
+            0x9204 => meta.exposure_comp_ev = tiff.first_srational(&entry),
             0x920a => meta.focal_length_mm = tiff.first_rational(&entry),
             0x8827 => {
                 meta.iso = tiff
@@ -819,6 +914,19 @@ fn af_info(record: &[u8]) -> Option<AfInfo> {
             })
         })
         .collect();
+    // The same bits, one flag per point, built once. Asking `points_in_focus` whether it holds a
+    // point is a linear scan, and `count` is an i16 straight from the file, so a crafted
+    // `CanonAFInfo2` claiming 32,767 points turned each valid point into 32,767 comparisons —
+    // ~10^9 of them, on a scan worker thread, for a folder that then never opens.
+    let mut focused = vec![false; count];
+    for (word, &bits) in in_focus.iter().enumerate() {
+        for bit in 0..16 {
+            let Some(flag) = focused.get_mut(word * 16 + bit) else {
+                break;
+            };
+            *flag = bits & (1 << bit) != 0;
+        }
+    }
 
     let scale_x = if image_width > 0 {
         image_width as f32
@@ -844,7 +952,7 @@ fn af_info(record: &[u8]) -> Option<AfInfo> {
                 y: center_y.clamp(0.0, 1.0),
                 w: (raw_w / scale_x).clamp(0.0, 1.0),
                 h: (raw_h / scale_y).clamp(0.0, 1.0),
-                in_focus: points_in_focus.contains(&(i as u16)),
+                in_focus: focused[i],
             }
         })
         .collect();
@@ -1043,6 +1151,11 @@ fn prvw_preview(head: &[u8], start: usize, end: usize) -> Option<EmbeddedPreview
     let len = be32(marker + 0x10)?;
     let offset = marker + 0x14;
     let len = usize::try_from(len).ok()?;
+    // The declared length is the file's own claim, and the range goes straight to Swift as a seek
+    // and a read. Clamped to what is left of the box, so a box claiming 0xFFFF_FFFF cannot turn
+    // into a 4 GiB read of whatever follows in the file. (The 1 MiB header window is *not* the
+    // bound: the preview itself is megabytes and lives well past it.)
+    let len = len.min(end.saturating_sub(offset));
     let body = head.get(offset..offset + len.min(2))?;
     if !body.starts_with(&[0xff, 0xd8]) {
         return None;
@@ -1181,11 +1294,15 @@ fn meta_sample(head: &[u8], start: usize, end: usize) -> Option<(u64, u64)> {
                             b"co64" => {
                                 let count = be32(child.body + 4).unwrap_or(0);
                                 if count == 1 {
-                                    let bytes = head.get(child.body + 8..child.body + 16)?;
-                                    chunk_offset = Some(u64::from_be_bytes(
-                                        bytes.try_into().expect("eight bytes"),
-                                    )
-                                        as usize);
+                                    // `?` here aborted the whole search for this file and threw
+                                    // away an `stco` that had already been read; a table truncated
+                                    // inside its own box skips only itself.
+                                    chunk_offset =
+                                        head.get(child.body + 8..child.body + 16).map(|bytes| {
+                                            u64::from_be_bytes(
+                                                bytes.try_into().expect("eight bytes"),
+                                            ) as usize
+                                        });
                                 }
                             }
                             // stsz: version/flags, sample_size, sample_count, then the sizes.
@@ -1693,6 +1810,20 @@ mod tests {
             std::fs::write(&path, &bytes).unwrap();
             let _ = Cr3::parse(&path);
         }
+        // And again over the box headers alone, where the sizes and the 64-bit `largesize` fields
+        // live. The pass above only reaches those by luck, and a walker that trusts one of those
+        // fields is what this module's first bug was.
+        for _ in 0..3000 {
+            let mut bytes = whole.clone();
+            for _ in 0..1 + next() % 3 {
+                let at = (next() as usize) % 48.min(bytes.len());
+                if at + 4 <= bytes.len() {
+                    bytes[at..at + 4].copy_from_slice(&(next() as u32).to_be_bytes());
+                }
+            }
+            std::fs::write(&path, &bytes).unwrap();
+            let _ = Cr3::parse(&path);
+        }
     }
 
     #[test]
@@ -1703,5 +1834,251 @@ mod tests {
         assert_eq!(type_size(99), None);
         assert_eq!(type_size(3), Some(2));
         assert_eq!(type_size(5), Some(8));
+    }
+
+    /// A little-endian TIFF with one IFD0, for the entries the synthetic builder cannot express.
+    ///
+    /// `tiff_stream` writes the element *count* field as the value's byte length, which is right
+    /// only for the byte-sized types a synthetic CR3 uses — a two-million-element LONG or an
+    /// SRATIONAL would come out with a count that puts its value outside the stream.
+    fn tiff_with(entries: &[(u16, u16, u32, Vec<u8>)]) -> Vec<u8> {
+        let directory = 2 + entries.len() * 12 + 4;
+        let mut out = b"II\x2a\x00".to_vec();
+        out.extend_from_slice(&8u32.to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        let mut values = Vec::new();
+        for (tag, kind, count, bytes) in entries {
+            out.extend_from_slice(&tag.to_le_bytes());
+            out.extend_from_slice(&kind.to_le_bytes());
+            out.extend_from_slice(&count.to_le_bytes());
+            if type_size(*kind).unwrap_or(1) * *count as usize <= 4 {
+                let mut inline = bytes.clone();
+                inline.resize(4, 0);
+                out.extend_from_slice(&inline);
+            } else {
+                out.extend_from_slice(&((8 + directory + values.len()) as u32).to_le_bytes());
+                values.extend_from_slice(bytes);
+                if values.len() % 2 == 1 {
+                    values.push(0);
+                }
+            }
+        }
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&values);
+        out
+    }
+
+    #[test]
+    fn a_box_walker_rejects_a_64_bit_size_that_would_overflow_the_offset() {
+        // A `largesize` of `u64::MAX`. `start + size` left `usize` entirely: a panic in a debug
+        // build, and a walk that went backwards over the header in a release one. The sibling
+        // walkers already refused; this is the one that did not.
+        let mut data = vec![
+            0u8, 0, 0, 8, b'f', b'r', b'e', b'e', 0, 0, 0, 1, b'u', b'u', b'i', b'd',
+        ];
+        data.extend_from_slice(&[0xff; 8]);
+        assert_eq!(Boxes::new(&data, 0, data.len()).count(), 1);
+    }
+
+    #[test]
+    fn first_int_reads_one_element_without_materialising_the_array() {
+        // Two million LONGs. `first_int` built the whole `Vec<i64>` to take its head, and it runs
+        // for seven tags on every photograph: one crafted entry cost ~16 MB per call.
+        let count = 2_000_000u32;
+        let mut values = Vec::with_capacity(count as usize * 4);
+        for index in 0..count {
+            values.extend_from_slice(&index.to_le_bytes());
+        }
+        let bytes = tiff_with(&[(0x0100, 4, count, values)]);
+        let tiff = Tiff::new(&bytes, 0).expect("a TIFF");
+        let entry = tiff.ifd0().expect("an IFD0").next().expect("one entry");
+
+        let started = std::time::Instant::now();
+        assert_eq!(tiff.first_int(&entry), Some(0));
+        let reading = started.elapsed();
+        assert!(
+            reading < std::time::Duration::from_millis(100),
+            "reading one element of a {count}-element array took {reading:?}"
+        );
+        // It indexes into the array rather than always reading the head.
+        assert_eq!(tiff.first_int_at(&entry, 1), Some(1));
+        assert_eq!(tiff.first_int_at(&entry, 1_999_999), Some(1_999_999));
+        assert_eq!(tiff.first_int_at(&entry, 2_000_000), None);
+    }
+
+    #[test]
+    fn a_negative_exposure_compensation_is_a_negative_number() {
+        // −1/3 EV is an SRATIONAL of `0xFFFFFFFF / 3`. Read as an unsigned rational it came out as
+        // 1,431,655,765 EV, which passes the finite guard and every bounds check on the way to the
+        // UI. All four exiftool fixtures record `0`, so the agreement test cannot see this.
+        let mut meta = Cr3::default();
+        let stream = tiff_with(&[(0x9204, 10, 1, srational(-1, 3))]);
+        let tiff = Tiff::new(&stream, 0).expect("a TIFF");
+        apply_exif(&tiff, tiff.ifd0().expect("an IFD0"), &mut meta);
+        let ev = meta.exposure_comp_ev.expect("a value");
+        assert!((ev + 1.0 / 3.0).abs() < 1e-6, "got {ev}");
+
+        let mut meta = Cr3::default();
+        let stream = tiff_with(&[(0x9204, 10, 1, srational(2, 3))]);
+        let tiff = Tiff::new(&stream, 0).expect("a TIFF");
+        apply_exif(&tiff, tiff.ifd0().expect("an IFD0"), &mut meta);
+        let ev = meta.exposure_comp_ev.expect("a value");
+        assert!((ev - 2.0 / 3.0).abs() < 1e-6, "got {ev}");
+    }
+
+    fn srational(numerator: i32, denominator: u32) -> Vec<u8> {
+        let mut out = (numerator as u32).to_le_bytes().to_vec();
+        out.extend_from_slice(&denominator.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn an_af_grid_of_thirty_two_thousand_points_is_read_not_searched() {
+        // `NumAFPoints` is an i16 straight out of the record, and each valid point used to ask
+        // whether the whole in-focus list contained it: 32,767 × 32,767 comparisons, on a scan
+        // worker thread, for a folder that then never opened.
+        let count = i16::MAX as usize;
+        let mut record = vec![0u8; 16];
+        let put = |record: &mut Vec<u8>, index: usize, value: i16| {
+            record[index * 2..index * 2 + 2].copy_from_slice(&value.to_le_bytes());
+        };
+        put(&mut record, AF_NUM_POINTS, i16::MAX);
+        put(&mut record, AF_VALID_POINTS, i16::MAX);
+        put(&mut record, AF_IMAGE_WIDTH, 6000);
+        put(&mut record, AF_IMAGE_HEIGHT, 4000);
+        for _ in 0..4 * count {
+            record.extend_from_slice(&0i16.to_le_bytes());
+        }
+        for _ in 0..count.div_ceil(16) {
+            record.extend_from_slice(&u16::MAX.to_le_bytes());
+        }
+
+        let started = std::time::Instant::now();
+        let af = af_info(&record).expect("a grid");
+        let elapsed = started.elapsed();
+
+        assert_eq!(af.points.len(), count);
+        assert!(
+            af.points_in_focus.contains(&0),
+            "every bit of the mask is set"
+        );
+        assert!(af.points_in_focus.contains(&(count as u16 - 1)));
+        assert!(af.points.iter().all(|point| point.in_focus));
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "a {count}-point AF record took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn a_preview_range_is_bounded_by_the_box_that_declares_it() {
+        // The `PRVW` length is a field in the file, and the range goes to Swift as a seek and a
+        // read. `0xFFFF_FFFF` became a trusted 4 GiB range; the box is 46 bytes long here.
+        let mut body = UUID_PRVW.to_vec();
+        body.extend_from_slice(b"PRVW");
+        // The offsets are from the marker itself: +0x0a width, +0x0c height, +0x10 length, +0x14
+        // JPEG, so there are two reserved bytes between the dimensions and the length.
+        body.extend_from_slice(&[0u8; 6]);
+        body.extend_from_slice(&1620u16.to_be_bytes());
+        body.extend_from_slice(&1080u16.to_be_bytes());
+        body.extend_from_slice(&[0u8; 2]);
+        body.extend_from_slice(&0xffff_ffffu32.to_be_bytes());
+        body.extend_from_slice(&[0xff, 0xd8, 0xff, 0xd9]);
+        let head = be_box(b"uuid", &body);
+
+        let preview = prvw_preview(&head, 8, head.len()).expect("a preview");
+        assert_eq!((preview.width, preview.height), (1620, 1080));
+        let room = head.len() - preview.range.offset as usize;
+        assert!(
+            preview.range.len as usize <= room,
+            "claimed {} bytes of a box with {room} left in it",
+            preview.range.len
+        );
+    }
+
+    #[test]
+    fn a_truncated_chunk_offset_table_does_not_cost_the_other_one() {
+        // A `co64` that claims one entry and then ends. The `?` on its value aborted the whole
+        // search for the file and threw away the `stco` that had already been read.
+        let mut stbl = be_box(b"co64", &[0, 0, 0, 0, 0, 0, 0, 1]);
+        let mut stco = vec![0u8; 4];
+        stco.extend_from_slice(&1u32.to_be_bytes());
+        stco.extend_from_slice(&0x1234u32.to_be_bytes());
+        stbl.extend_from_slice(&be_box(b"stco", &stco));
+        let mut stsz = vec![0u8; 4];
+        stsz.extend_from_slice(&64u32.to_be_bytes()); // a uniform sample_size
+        stsz.extend_from_slice(&1u32.to_be_bytes()); // of one sample
+        stbl.extend_from_slice(&be_box(b"stsz", &stsz));
+
+        let mut minf = be_box(b"stbl", &stbl);
+        minf.extend_from_slice(&be_box(b"free", b""));
+        let mut mdia = be_box(b"minf", &minf);
+        let mut hdlr = vec![0u8; 8];
+        hdlr.extend_from_slice(b"meta");
+        mdia.extend_from_slice(&be_box(b"hdlr", &hdlr));
+        let moov = be_box(b"trak", &be_box(b"mdia", &mdia));
+
+        assert_eq!(meta_sample(&moov, 0, moov.len()), Some((0x1234, 64)));
+    }
+
+    #[test]
+    fn an_unreadable_ifd0_does_not_cost_the_exif_ifd() {
+        // CMT1 is IFD0 and CMT2 is the Exif IFD: separate boxes, and the capture time is in CMT2.
+        // Returning `Err` failed the whole file over a box the others did not need.
+        let mut bytes = SyntheticCr3::r8().subsec("84").build();
+        let at = bytes
+            .windows(4)
+            .position(|w| w == b"CMT1")
+            .expect("a CMT1 box");
+        // The TIFF byte-order mark is the first thing inside the box, right after its type.
+        bytes[at + 4] = b'X';
+        bytes[at + 5] = b'X';
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("broken-cmt1.CR3");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let parsed = Cr3::parse(&path).expect("CMT2 is still readable");
+
+        assert_eq!(
+            parsed.date_time_original.as_deref(),
+            Some("2026:08:27 19:54:49")
+        );
+        assert_eq!(parsed.body_serial_number.as_deref(), Some("122022006902"));
+        // The IFD0 fields really are lost, and that is said rather than hidden.
+        assert_eq!(parsed.width, 0);
+        assert!(
+            parsed.warnings.iter().any(|w| w.contains("CMT1")),
+            "{:?}",
+            parsed.warnings
+        );
+    }
+
+    #[test]
+    fn canon_metadata_stops_at_the_end_of_the_uuid_box() {
+        // `moov` holds the Canon `uuid` and then, as a sibling box, a second `CMT1` with a
+        // different width. The walk ran to the end of the header window rather than to the uuid's
+        // own end, so the stray box was adopted as Canon's IFD0.
+        let dims = |width: u16| {
+            tiff_stream(&[
+                (0x0100, 3, width.to_le_bytes().to_vec()),
+                (0x0101, 3, 4000u16.to_le_bytes().to_vec()),
+            ])
+        };
+        let mut canon = UUID_CANON.to_vec();
+        canon.extend_from_slice(&be_box(b"CMT1", &dims(6000)));
+        let mut moov_body = be_box(b"uuid", &canon);
+        moov_body.extend_from_slice(&be_box(b"CMT1", &dims(1234)));
+        let mut bytes = be_box(b"ftyp", b"crx \0\0\0\x01crx isom");
+        bytes.extend_from_slice(&be_box(b"moov", &moov_body));
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("decoy.CR3");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let parsed = Cr3::parse(&path).expect("a synthetic file");
+        assert_eq!(
+            parsed.width, 6000,
+            "the real CMT1, not a sibling of the uuid box"
+        );
     }
 }

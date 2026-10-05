@@ -5,17 +5,18 @@
 //!
 //! 1. **Invariants** that must hold for every game, whatever the thresholds end up being.
 //! 2. **Ground-truth F1** against `tests/fixtures/ground-truth/<game>.json`, once a human has
-//!    verified those boundaries by looking at the photos. Skipped until the file exists, so this
-//!    test never blocks anyone on a fixture that hasn't been built yet.
+//!    verified those boundaries by looking at the photos. `#[ignore]`d until the file exists, so
+//!    `cargo test` reports it as ignored rather than it passing while checking nothing.
 //! 3. **Golden batches** for the four games, so a threshold change that moves a boundary in the
-//!    real data shows up as a diff rather than as a silently different cull.
+//!    real data shows up as a diff rather than as a silently different cull. `#[ignore]`d until the
+//!    dumps are committed.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use firstcut_core::batch::fixture::PhotoMeta;
 use firstcut_core::batch::view::Photo;
-use firstcut_core::batch::{BatchParams, GroundTruth, batch_with, evaluate_names};
+use firstcut_core::batch::{BatchParams, GroundTruth, PhotoId, batch_with, evaluate_names};
 use serde_json::Value;
 
 const GAMES: [&str; 4] = ["Game1JENKS", "Gane2NC", "Game3KC", "Game4VRE"];
@@ -45,18 +46,19 @@ fn load_photos(game: &str) -> Vec<PhotoMeta> {
 fn batch_names(game: &str) -> Vec<Vec<String>> {
     let photos = load_photos(game);
     let out = batch_with(&photos, &HashMap::new(), &[], BatchParams::default());
+    // One pass to map id → name. Searching the whole folder per photo is 8.4M string-free
+    // comparisons per game, in a test that runs for four games, twice.
+    let by_id: HashMap<_, &str> = photos.iter().map(|p| (p.id, p.rel_path.as_str())).collect();
     out.batches
         .iter()
         .map(|b| {
             b.photo_ids
                 .iter()
                 .map(|id| {
-                    photos
-                        .iter()
-                        .find(|p| p.id == *id)
+                    by_id
+                        .get(id)
                         .unwrap_or_else(|| panic!("unknown photo id {}", id.0))
-                        .rel_path
-                        .clone()
+                        .to_string()
                 })
                 .collect()
         })
@@ -103,20 +105,20 @@ fn the_invariants_hold_for_every_game() {
             "{game}: batching is not deterministic"
         );
 
-        // Batches are capture-ordered and disjoint.
+        // Batches are capture-ordered and disjoint. `order` is the inverse of a map built once,
+        // not a search: a batch's positions were found with `position()` per photo, which is the
+        // same 8.4M comparisons per game as the name lookup above.
         let order = &out.order;
+        let position: HashMap<PhotoId, usize> =
+            order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        let by_id: HashMap<PhotoId, &PhotoMeta> = photos.iter().map(|p| (p.id, p)).collect();
         let mut previous_end = 0usize;
         for (i, b) in batches.iter().enumerate() {
             assert_eq!(b.index as usize, i, "{game}: batch indices are not dense");
             let positions: Vec<usize> = b
                 .photo_ids
                 .iter()
-                .map(|id| {
-                    order
-                        .iter()
-                        .position(|o| o == id)
-                        .expect("batch photo is in the order")
-                })
+                .map(|id| *position.get(id).expect("batch photo is in the order"))
                 .collect();
             assert!(
                 positions.windows(2).all(|w| w[0] < w[1]),
@@ -137,12 +139,7 @@ fn the_invariants_hold_for_every_game() {
             let serials: Vec<Option<&str>> = b
                 .photo_ids
                 .iter()
-                .map(|id| {
-                    photos
-                        .iter()
-                        .find(|p| p.id == *id)
-                        .and_then(|p| p.camera_serial.as_deref())
-                })
+                .map(|id| by_id.get(id).and_then(|p| p.camera_serial.as_deref()))
                 .collect();
             assert!(
                 serials.windows(2).all(|w| w[0] == w[1]),
@@ -361,8 +358,11 @@ fn scramble_number(index: u64, n: u64) -> u64 {
 }
 
 // `CullProgress`-style ground truth: the F1 measurement below needs a human, so until the file
-// exists the test skips loudly rather than passing on its own output.
+// exists this is ignored rather than silently skipped — a test that returns early passes while
+// enforcing nothing, and `cargo test` has to say so. Run it with
+// `cargo test --test batching boundary_f1 -- --ignored --nocapture`.
 #[test]
+#[ignore = "no ground truth in tests/fixtures/ground-truth yet; boundary F1 is UNMEASURED (REQ-core-batch-1)"]
 fn boundary_f1_matches_the_visual_ground_truth() {
     let mut checked = 0;
     let mut failures: Vec<String> = Vec::new();
@@ -390,9 +390,10 @@ fn boundary_f1_matches_the_visual_ground_truth() {
         let m = evaluate_names(&predicted, &truth);
 
         assert!(
-            m.missing_photos.is_empty(),
-            "{game}: ground truth names photos that are not in the fixture: {:?}",
-            m.missing_photos
+            m.unusable_truth_names.is_empty(),
+            "{game}: ground truth names a photo the fixture does not have, or lists one in two \
+             batches: {:?}",
+            m.unusable_truth_names
         );
 
         println!(
@@ -440,7 +441,12 @@ fn boundary_f1_matches_the_visual_ground_truth() {
 
 /// Golden batches. Regenerate with `FIRSTCUT_UPDATE_GOLDEN=1 cargo test golden_batches` after a
 /// deliberate threshold change, and read the diff before committing it.
+///
+/// Ignored, not skipped, while `tests/fixtures/golden/` is empty: a missing fixture used to return
+/// early and report a pass, so a threshold change moved every boundary in the real corpus with
+/// nothing to catch it. Run it with `cargo test --test batching golden_batches -- --ignored`.
 #[test]
+#[ignore = "no committed golden batches in tests/fixtures/golden yet"]
 fn golden_batches_match_the_committed_dumps() {
     let golden_dir = repo_path("tests/fixtures/golden");
     if !golden_dir.exists() {

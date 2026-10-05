@@ -33,6 +33,18 @@ pub trait Photo {
     fn iso(&self) -> Option<u32>;
     /// EXIF orientation, 1..=8.
     fn orientation(&self) -> u8;
+
+    /// True when the effective time is a guess the file system made, not a time the camera
+    /// recorded (todo.md §5.1), and so must never produce a hard decision (REV-63).
+    ///
+    /// The default covers the shape where the fallback lives in its own field: no capture time,
+    /// but an mtime. An implementation that folds the mtime *into* the capture-time field — as
+    /// `core_meta::PhotoMeta` does, keeping `source: FileModified` on it — has to override this,
+    /// because there `capture_unix_ms()` is `Some` and the default would hand the batcher an
+    /// mtime wearing EXIF's name.
+    fn time_source_is_fallback(&self) -> bool {
+        self.capture_unix_ms().is_none() && self.file_mtime_ms().is_some()
+    }
 }
 
 impl<T: Photo + ?Sized> Photo for &T {
@@ -75,6 +87,9 @@ impl<T: Photo + ?Sized> Photo for &T {
     fn orientation(&self) -> u8 {
         (**self).orientation()
     }
+    fn time_source_is_fallback(&self) -> bool {
+        (**self).time_source_is_fallback()
+    }
 }
 
 /// The timestamp `order()` sorts on: capture time when present, file mtime otherwise.
@@ -86,9 +101,14 @@ pub fn effective_time_ms<P: Photo + ?Sized>(p: &P) -> Option<i64> {
 }
 
 /// True when the timestamp is a fallback and must be flagged in the log (todo.md §5.1).
+///
+/// Routed through [`Photo::time_source_is_fallback`] rather than worked out here: `meta`'s
+/// `PhotoMeta` reports no `file_mtime_ms` at all and keeps the mtime inside `capture_time` with
+/// `source: FileModified`, so the two-field rule below is false for exactly the photos that are
+/// guesses, and every mtime-derived gap would have been scored as EXIF-quality.
 #[must_use]
 pub fn time_is_fallback<P: Photo + ?Sized>(p: &P) -> bool {
-    p.capture_unix_ms().is_none() && p.file_mtime_ms().is_some()
+    p.time_source_is_fallback()
 }
 
 /// A `Photo` with every field settable, for the ordering and batching tests. Shared so the two test

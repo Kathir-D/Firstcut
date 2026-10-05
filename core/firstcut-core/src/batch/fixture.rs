@@ -166,13 +166,21 @@ impl Photo for PhotoMeta {
     fn orientation(&self) -> u8 {
         self.orientation
     }
+    /// This fixture keeps the mtime inside `capture_time` with `source: FileModified`, exactly as
+    /// `core_meta::PhotoMeta` does, and has no separate mtime field — so `capture_unix_ms()`
+    /// alone cannot tell a guessed time from a recorded one and `source` is the only place the
+    /// guess is written down.
+    fn time_source_is_fallback(&self) -> bool {
+        self.capture_time
+            .as_ref()
+            .is_some_and(|c| c.source == TimeSource::FileModified)
+    }
 }
 
 /// A folder's metadata, by file name, for turning batches back into something a human can read.
 #[derive(Debug, Default)]
 pub struct Folder {
     pub photos: Vec<PhotoMeta>,
-    by_path: HashMap<String, usize>,
     by_id: HashMap<PhotoId, usize>,
 }
 
@@ -187,12 +195,10 @@ impl Folder {
 
     pub fn assemble(photos: Vec<PhotoMeta>) -> Self {
         let mut folder = Self {
-            by_path: HashMap::with_capacity(photos.len()),
             by_id: HashMap::with_capacity(photos.len()),
             photos,
         };
         for (i, p) in folder.photos.iter().enumerate() {
-            folder.by_path.insert(p.rel_path.clone(), i);
             folder.by_id.insert(p.id, i);
         }
         folder
@@ -260,24 +266,38 @@ fn from_exiftool(r: ExifToolRecord) -> Result<PhotoMeta, String> {
             .ok_or_else(|| format!("{}: unsupported extension", r.file_name))?,
     );
 
-    let (unix_ms, subsec_resolution_ms, offset_minutes) = match &r.subsec {
-        Some(s) => parse_subsec_datetime(s),
-        None => return Err(format!("{}: no SubSecDateTimeOriginal", r.file_name)),
+    let mut warnings = Vec::new();
+    let Some(raw_subsec) = &r.subsec else {
+        return Err(format!("{}: no SubSecDateTimeOriginal", r.file_name));
     };
+    // A SubSecDateTimeOriginal we cannot read leaves the photo with *no* capture time rather than a
+    // sentinel: the old `(0, 1000, None)` became `capture_time { unix_ms: 0, source: Exif }` — an
+    // instant at the epoch with EXIF's name on it, which the batcher then hard-joins to both
+    // neighbours or splits at both boundaries. No capture time puts the pair in the ambiguous zone
+    // instead, where a human is asked.
+    let parsed = parse_subsec_datetime(raw_subsec);
+    if parsed.is_none() {
+        warnings.push(format!(
+            "{}: unreadable SubSecDateTimeOriginal {raw_subsec:?}",
+            r.file_name
+        ));
+    }
+    let capture_time = parsed.map(
+        |(unix_ms, subsec_resolution_ms, offset_minutes)| CaptureTime {
+            unix_ms,
+            subsec_resolution_ms,
+            offset_minutes: offset_minutes.or_else(|| r.offset.as_deref().and_then(parse_offset)),
+            source: TimeSource::Exif,
+        },
+    );
 
-    let warnings = Vec::new();
     Ok(PhotoMeta {
         id: photo_id(&r.file_name),
         rel_path: r.file_name.clone(),
         companions: Vec::new(),
         kind,
         file_size: r.file_size.unwrap_or(0),
-        capture_time: Some(CaptureTime {
-            unix_ms,
-            subsec_resolution_ms,
-            offset_minutes: offset_minutes.or_else(|| r.offset.as_deref().and_then(parse_offset)),
-            source: TimeSource::Exif,
-        }),
+        capture_time,
         shutter_count: r.shutter_count,
         file_number: file_number_of(&r.file_name),
         camera_make: r.make,
@@ -294,7 +314,10 @@ fn from_exiftool(r: ExifToolRecord) -> Result<PhotoMeta, String> {
         // the continuous rate is the one §3 says varies per burst.
         drive_mode: r.continuous_drive.or(r.drive_mode),
         shutter_mode: r.shutter_mode,
-        orientation: r.orientation.unwrap_or(1).min(8) as u8,
+        // exiftool reports an orientation of 0 for a file whose EXIF tag it could not read. Left as
+        // 0 it compares unequal to every real photo's 1..=8, so `orientation_changed` fires on
+        // *both* sides of that frame and it is split off from the whole shoot.
+        orientation: r.orientation.unwrap_or(1).clamp(1, 8) as u8,
         width: r.width.unwrap_or(0),
         height: r.height.unwrap_or(0),
         af: r.af_area_mode.map(|area_mode| AfInfo {
@@ -318,22 +341,24 @@ pub fn load_exiftool(path: &Path) -> Result<Vec<PhotoMeta>, String> {
     Ok(photos)
 }
 
-/// `2026:08:27 19:54:49.84-06:00` → (UTC milliseconds, sub-second resolution, offset in minutes).
+/// `2026:08:27 19:54:49.84-06:00` → (UTC milliseconds, sub-second resolution, offset in minutes),
+/// or `None` when the string is not a date this can read.
 ///
 /// Splitting on the fixed `YYYY:MM:DD hh:mm:ss` separators keeps this obvious at a glance, which a
 /// hand-rolled character loop over six different field widths would not.
-fn parse_subsec_datetime(s: &str) -> (i64, u16, Option<i16>) {
-    let bad = (0, 1000, None);
-    let Some((date, rest)) = s.split_once(' ') else {
-        return bad;
-    };
+///
+/// `None` rather than a sentinel: the caller has to be able to tell "no time" from "the epoch",
+/// because the two batch completely differently (an epoch is EXIF-quality and every pair either
+/// side of it is a hard join or a hard split).
+fn parse_subsec_datetime(s: &str) -> Option<(i64, u16, Option<i16>)> {
+    let (date, rest) = s.split_once(' ')?;
     let mut date_fields = date.split(':');
     let (Some(y), Some(mo), Some(d)) = (date_fields.next(), date_fields.next(), date_fields.next())
     else {
-        return bad;
+        return None;
     };
     if date_fields.next().is_some() {
-        return bad;
+        return None;
     }
 
     // `hh:mm:ss[.fff][±HH:MM]`
@@ -351,10 +376,10 @@ fn parse_subsec_datetime(s: &str) -> (i64, u16, Option<i16>) {
         clock_fields.next(),
         clock_fields.next(),
     ) else {
-        return bad;
+        return None;
     };
     if clock_fields.next().is_some() {
-        return bad;
+        return None;
     }
     let (Ok(y), Ok(mo), Ok(d), Ok(h), Ok(mi), Ok(sec)) = (
         y.parse::<i64>(),
@@ -364,14 +389,27 @@ fn parse_subsec_datetime(s: &str) -> (i64, u16, Option<i16>) {
         mi.parse::<i64>(),
         sec.parse::<i64>(),
     ) else {
-        return bad;
+        return None;
     };
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
-        return bad;
+    // A year outside this range is a corrupt or padded tag, not a photograph. Left unbounded it
+    // overflows `days_from_civil(y, ..) * 86_400_000`, and the wrapped value lands inside the range
+    // of real instants, so a corrupt tag reads as a plausible instant in 2026.
+    if !(MIN_YEAR..=MAX_YEAR).contains(&y)
+        || !(1..=12).contains(&mo)
+        || !(1..=31).contains(&d)
+        || h > 23
+        || mi > 59
+        || sec > 60
+    {
+        return None;
     }
 
     // exiftool pads the fraction to the camera's resolution: `.8` means 800 ms, `.84` means 840.
+    // More than nine digits is not a sub-second field but a corrupt one, and scaling it overflows.
     let frac_digits = frac.map_or(0, str::len);
+    if frac_digits > MAX_FRAC_DIGITS {
+        return None;
+    }
     let frac_value: i64 = frac
         .and_then(|f| f.parse().ok())
         .or(if frac_digits == 0 { Some(0) } else { None })
@@ -379,7 +417,7 @@ fn parse_subsec_datetime(s: &str) -> (i64, u16, Option<i16>) {
     let frac_ms = if frac_digits == 0 {
         0
     } else {
-        frac_value * 1_000 / 10_i64.pow(frac_digits.min(9) as u32)
+        frac_value * 1_000 / 10_i64.pow(frac_digits as u32)
     };
     let resolution = match frac_digits {
         0 | 1 => 1000,
@@ -395,12 +433,19 @@ fn parse_subsec_datetime(s: &str) -> (i64, u16, Option<i16>) {
 
     // Local wall-clock time → UTC. Without an offset the local reading is all we have; ordering
     // inside a folder is unaffected either way, only the absolute instant moves.
-    (
+    Some((
         local_ms - i64::from(offset.unwrap_or(0)) * 60_000,
         resolution,
         offset,
-    )
+    ))
 }
+
+/// Years a photograph can plausibly carry. A camera's clock can be wrong by decades, not by
+/// millennia, and the bound is what keeps `days_from_civil` from overflowing.
+const MIN_YEAR: i64 = 1900;
+const MAX_YEAR: i64 = 2200;
+/// Digits of sub-second a fraction may carry before `frac * 1000` stops fitting.
+const MAX_FRAC_DIGITS: usize = 9;
 
 /// Days since the Unix epoch for a proleptic Gregorian date (Howard Hinnant's algorithm).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
@@ -451,7 +496,13 @@ fn stringify(v: serde_json::Value) -> Option<String> {
 /// Canon `FileNumber` tag.
 fn file_number_of(name: &str) -> Option<u32> {
     let stem = name.rsplit_once('.')?.0;
-    let digits: String = stem.chars().skip_while(|c| !c.is_ascii_digit()).collect();
+    // Only the digits that follow the first one: a name like `IMG_1234-1` is still frame 1234, and
+    // collecting every remaining character made the whole stem unparseable and lost the number.
+    let digits: String = stem
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     digits.parse().ok()
 }
 
@@ -492,10 +543,21 @@ fn raw_format_of(name: &str) -> Option<RawFormat> {
 mod tests {
     use super::*;
 
+    /// A record carrying only the exiftool tags a test asks for, so a new tag on
+    /// `ExifToolRecord` does not mean editing every fixture here.
+    fn record(tags: serde_json::Value) -> ExifToolRecord {
+        let mut v = serde_json::json!({ "FileName": "IMG_0001.CR3" });
+        for (k, value) in tags.as_object().expect("an object of exiftool tags") {
+            v[k.as_str()] = value.clone();
+        }
+        serde_json::from_value(v).expect("a record shaped like exiftool output")
+    }
+
     #[test]
     fn a_canon_subsec_datetime_becomes_utc_milliseconds() {
         // 2026:08:27 19:54:49.84 at -06:00 is 2026-08-28 01:54:49.840 UTC.
-        let (ms, res, offset) = parse_subsec_datetime("2026:08:27 19:54:49.84-06:00");
+        let (ms, res, offset) =
+            parse_subsec_datetime("2026:08:27 19:54:49.84-06:00").expect("a Canon stamp");
         assert_eq!(res, 10, "two sub-second digits means 10 ms resolution");
         assert_eq!(offset, Some(-360));
         assert_eq!(ms % 1000, 840);
@@ -508,21 +570,36 @@ mod tests {
     #[test]
     fn two_photos_ten_milliseconds_apart_keep_their_order() {
         // The whole point of SubSecTimeOriginal: without it these two frames tie.
-        let (a, _, _) = parse_subsec_datetime("2026:08:27 19:54:49.84-06:00");
-        let (b, _, _) = parse_subsec_datetime("2026:08:27 19:54:49.85-06:00");
+        let (a, _, _) = parse_subsec_datetime("2026:08:27 19:54:49.84-06:00").unwrap();
+        let (b, _, _) = parse_subsec_datetime("2026:08:27 19:54:49.85-06:00").unwrap();
         assert_eq!(b - a, 10);
     }
 
     #[test]
     fn sub_second_digits_set_the_resolution() {
-        assert_eq!(parse_subsec_datetime("2026:01:02 03:04:05.1-06:00").1, 1000);
-        assert_eq!(parse_subsec_datetime("2026:01:02 03:04:05.12-06:00").1, 10);
-        assert_eq!(parse_subsec_datetime("2026:01:02 03:04:05.123-06:00").1, 1);
+        assert_eq!(
+            parse_subsec_datetime("2026:01:02 03:04:05.1-06:00")
+                .unwrap()
+                .1,
+            1000
+        );
+        assert_eq!(
+            parse_subsec_datetime("2026:01:02 03:04:05.12-06:00")
+                .unwrap()
+                .1,
+            10
+        );
+        assert_eq!(
+            parse_subsec_datetime("2026:01:02 03:04:05.123-06:00")
+                .unwrap()
+                .1,
+            1
+        );
     }
 
     #[test]
     fn a_datetime_without_a_fraction_is_whole_seconds() {
-        let (ms, res, _) = parse_subsec_datetime("2026:01:02 03:04:05-06:00");
+        let (ms, res, _) = parse_subsec_datetime("2026:01:02 03:04:05-06:00").unwrap();
         assert_eq!(res, 1000);
         assert_eq!(ms % 1000, 0);
     }
@@ -531,10 +608,74 @@ mod tests {
     fn an_offset_moves_the_instant_towards_utc() {
         // The same wall-clock reading east of Greenwich is an *earlier* instant in UTC, so the
         // +05:30 stamp comes out 11 hours before the -05:30 one.
-        let (east, _, offset) = parse_subsec_datetime("2026:01:02 03:04:05.00+05:30");
+        let (east, _, offset) =
+            parse_subsec_datetime("2026:01:02 03:04:05.00+05:30").expect("a stamp with offset");
         assert_eq!(offset, Some(330));
-        let (west, _, _) = parse_subsec_datetime("2026:01:02 03:04:05.00-05:30");
+        let (west, _, _) = parse_subsec_datetime("2026:01:02 03:04:05.00-05:30").unwrap();
         assert_eq!(west - east, 11 * 3_600_000);
+    }
+
+    #[test]
+    fn an_unreadable_stamp_leaves_the_photo_with_no_capture_time() {
+        // A malformed date used to become `(0, 1000, None)`, stored as a real capture time at the
+        // epoch with `source: Exif`: the batcher hard-joined its neighbours to it, or split at both
+        // of its boundaries, and neither decision could ever be revisited. The photo must come out
+        // with *no* time instead, and say why.
+        assert!(parse_subsec_datetime("0000:00:00 00:00:00").is_none());
+        assert!(parse_subsec_datetime("not a date at all").is_none());
+        assert!(parse_subsec_datetime("2026:13:02 03:04:05").is_none());
+
+        let meta = from_exiftool(record(serde_json::json!({
+            "SubSecDateTimeOriginal": "0000:00:00 00:00:00",
+        })))
+        .expect("a photo, not a rejected one");
+        assert_eq!(
+            meta.capture_unix_ms(),
+            None,
+            "an unreadable stamp is not the Unix epoch"
+        );
+        assert!(
+            meta.warnings
+                .iter()
+                .any(|w| w.contains("SubSecDateTimeOriginal")),
+            "and it is reported: {:?}",
+            meta.warnings
+        );
+    }
+
+    #[test]
+    fn an_absurd_year_or_fraction_is_rejected_rather_than_wrapped() {
+        // `days_from_civil(999999999999, ..) * 86_400_000` overflows, and the wrapped product is a
+        // number inside the range of real instants — a corrupt tag that reads as a plausible date.
+        assert!(parse_subsec_datetime("999999999999:01:01 00:00:00").is_none());
+        assert!(parse_subsec_datetime("2026:01:01 00:00:00.1234567891234").is_none());
+        // Nine digits is still a real fraction, and still the finest resolution.
+        assert_eq!(
+            parse_subsec_datetime("2026:01:01 00:00:00.123456789")
+                .expect("nine digits")
+                .1,
+            1
+        );
+    }
+
+    #[test]
+    fn an_orientation_of_zero_becomes_the_normal_one() {
+        // exiftool writes 0 for an orientation tag it could not read. Kept as 0 it differs from
+        // every real photo's 1..=8, so the frame reports an orientation change on *both* sides and
+        // is split off from the shoot it belongs to.
+        let meta = from_exiftool(record(serde_json::json!({
+            "SubSecDateTimeOriginal": "2026:01:02 03:04:05",
+            "Orientation": 0,
+        })))
+        .expect("a photo with an unreadable orientation");
+        assert_eq!(meta.orientation, 1);
+
+        let meta = from_exiftool(record(serde_json::json!({
+            "SubSecDateTimeOriginal": "2026:01:02 03:04:05",
+            "Orientation": 8,
+        })))
+        .expect("a rotated photo");
+        assert_eq!(meta.orientation, 8, "a real orientation is left alone");
     }
 
     #[test]
@@ -543,6 +684,11 @@ mod tests {
         assert_eq!(file_number_of("IMG_9999.CR3"), Some(9999));
         assert_eq!(file_number_of("DSC_0001.ARW"), Some(1));
         assert_eq!(file_number_of("holiday.CR3"), None);
+        // A suffix after the number — a duplicated frame, an edited copy — is not part of the
+        // number. Collecting the whole remainder made this unparseable and lost the number that
+        // order() uses as its last tie-break.
+        assert_eq!(file_number_of("IMG_1234-1.CR3"), Some(1234));
+        assert_eq!(file_number_of("IMG_1234_edit.CR3"), Some(1234));
     }
 
     #[test]

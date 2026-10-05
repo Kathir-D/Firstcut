@@ -10,7 +10,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// 64-bit dHash plus a 16-bin-per-channel histogram of the 256 px thumbnail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisualSig {
-    /// Bit `row * 8 + col` is `luma[row][col] > luma[row][col + 1]`, MSB first.
+    /// Bit `row * 8 + col` is `luma[row][col] > luma[row][col + 1]`, MSB first: row 0, column 0 is
+    /// bit 63.
     pub dhash: u64,
     /// 16 bins each for R, G, B; each channel normalized so its largest bin is 255.
     pub hist: [u8; 48],
@@ -154,6 +155,12 @@ fn to_gray(rgba: &[u8], w: u32, h: u32) -> Vec<u8> {
 }
 
 /// 9×8 area-averaged resize, then one comparison bit per horizontal neighbour pair.
+///
+/// Bit order is MSB first, as the contract states: the comparison for row 0, column 0 is bit 63
+/// and the one for row 7, column 7 is bit 0, so the hash reads left-to-right, top-to-bottom when
+/// written as binary. The order is arbitrary for Hamming distance — every pair of hashes differs in
+/// the same number of bits under either permutation — but it is not arbitrary for anything that
+/// compares a hash to a golden value, so it is pinned by a test here rather than left to the reader.
 fn dhash(gray: &[u8], w: u32, h: u32) -> u64 {
     let small = area_resize(gray, w, h, 9, 8);
     let mut bits: u64 = 0;
@@ -162,7 +169,7 @@ fn dhash(gray: &[u8], w: u32, h: u32) -> u64 {
             let left = small[row * 9 + col];
             let right = small[row * 9 + col + 1];
             if left > right {
-                bits |= 1 << (row * 8 + col);
+                bits |= 1 << (63 - (row * 8 + col));
             }
         }
     }
@@ -299,6 +306,34 @@ mod tests {
         assert_eq!(
             sig.hist[32], 255,
             "green is flat: still normalized to its own peak"
+        );
+    }
+
+    #[test]
+    fn the_first_comparison_is_the_top_bit() {
+        // Pins the bit order the contract specifies (MSB first) with one fixed vector: a frame
+        // whose only left-to-right gradient is in the top row of the 9×8 grid must set the top eight
+        // bits and nothing else. Written LSB-first the same frame would set bits 0..=7, and a
+        // golden fixture built from the other reading of the contract would differ from this one in
+        // every bit of every row while scoring an identical Hamming distance — the exact drift this
+        // test exists to make impossible.
+        let mut gray = vec![128u8; 9 * 8];
+        // Row 0 of a 9×8 grid resized to 9×8 is itself, so a ramp written straight into it is what
+        // the comparison sees.
+        gray[..9].copy_from_slice(&[200, 190, 180, 170, 160, 150, 140, 130, 120]);
+        assert_eq!(
+            dhash(&gray, 9, 8),
+            0xff00_0000_0000_0000,
+            "row 0 fills the top eight bits"
+        );
+
+        // And the same ramp in the last row lands in the bottom eight.
+        gray[..9].fill(128);
+        gray[7 * 9..].copy_from_slice(&[200, 190, 180, 170, 160, 150, 140, 130, 120]);
+        assert_eq!(
+            dhash(&gray, 9, 8),
+            0x0000_0000_0000_00ff,
+            "row 7 fills the bottom eight bits"
         );
     }
 

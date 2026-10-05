@@ -15,8 +15,16 @@ use super::schema;
 
 /// `~/Library/Application Support/Firstcut/Sessions`, created on demand.
 pub fn sessions_dir() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").ok_or(StoreError::NoHomeDir)?;
-    Ok(default_sessions_dir(&PathBuf::from(home)))
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    sessions_dir_in(home)
+}
+
+/// [`sessions_dir`] against an explicit home directory, so the one failure here — no `HOME`, which
+/// happens for a process launched by a login item or `launchd` — is reachable from a test instead
+/// of only from a broken environment.
+pub fn sessions_dir_in(home: Option<PathBuf>) -> Result<PathBuf> {
+    let home = home.ok_or(StoreError::NoHomeDir)?;
+    Ok(default_sessions_dir(&home))
 }
 
 pub fn default_sessions_dir(home: &Path) -> PathBuf {
@@ -314,9 +322,17 @@ impl Db {
     }
 
     /// Durability proof used by the crash tests: everything committed is in the WAL file on disk.
+    ///
+    /// Built with an `OsString` push rather than `format!("{}-wal", path.display())`: `display()`
+    /// goes through `to_string_lossy`, so a folder whose name is not valid UTF-8 would produce a
+    /// *different* path than the one SQLite opened, and this would report 0 bytes for a WAL that is
+    /// right there — a durability test passing for the wrong reason.
     pub fn wal_bytes(&self) -> Result<u64> {
-        let path = PathBuf::from(format!("{}-wal", self.path.display()));
-        Ok(std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0))
+        let mut path = self.path.clone().into_os_string();
+        path.push("-wal");
+        Ok(std::fs::metadata(PathBuf::from(path))
+            .map(|meta| meta.len())
+            .unwrap_or(0))
     }
 }
 
@@ -341,13 +357,29 @@ fn connect(path: &Path) -> Result<Connection> {
 
 /// Renames a session database together with its write-ahead log, which must travel with it or
 /// SQLite would read a stale log against a new file.
+///
+/// Three steps, in this order, because it cannot be one atomic rename:
+///
+/// 1. **Checkpoint and close first.** The database files here are not open (the candidates are read
+///    through short-lived read-only connections), so a `wal_checkpoint(TRUNCATE)` folds every
+///    committed transaction into the main file. After that the main file is self-contained, and a
+///    failure in step 2 or 3 costs at most a re-created sidecar, never a lost transaction.
+/// 2. **Sidecars first, main file last** (`-wal`, then `-shm`, then the database). The residual
+///    risk, stated precisely: if the `-shm` rename fails, the database is still at the old name
+///    and the old `-wal` is gone. The old path then re-creates an empty `-wal` on next open and
+///    SQLite recovers from the checkpointed main file, so no committed row is lost — but the next
+///    open has to redo the recovery rather than finding a clean file. Renaming the database first
+///    would invert that: a database at the new name with no `-wal` beside it, and every
+///    transaction still only in the old log gone for good.
 fn rename_session(from: &Path, to: &Path) -> Result<()> {
-    for suffix in ["", "-wal", "-shm"] {
-        let source = PathBuf::from(format!("{}{suffix}", from.display()));
+    checkpoint_for_move(from);
+
+    for suffix in ["-wal", "-shm", ""] {
+        let source = sidecar_path(from, suffix);
         if !source.exists() {
             continue;
         }
-        let target = PathBuf::from(format!("{}{suffix}", to.display()));
+        let target = sidecar_path(to, suffix);
         std::fs::rename(&source, &target).map_err(|err| {
             StoreError::io(
                 format!(
@@ -360,6 +392,27 @@ fn rename_session(from: &Path, to: &Path) -> Result<()> {
         })?;
     }
     Ok(())
+}
+
+/// Folds the write-ahead log into the database file, so the file being moved is the whole session.
+///
+/// Best effort: a database that will not checkpoint (a card that went read-only, a file that is not
+/// a database at all) still has to be moved or the shoot cannot be opened, so the error is
+/// deliberately dropped here and the rename reports whatever is actually wrong.
+fn checkpoint_for_move(path: &Path) {
+    let Ok(conn) = Connection::open(path) else {
+        return;
+    };
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+}
+
+/// `<path>`, `<path>-wal`, `<path>-shm`. An `OsString` push, not a `format!` on `display()`:
+/// `display()` is lossy, so a session folder whose name is not valid UTF-8 would be moved to a
+/// *different* path than the one it lives at.
+fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
+    PathBuf::from(name)
 }
 
 /// Looks for an earlier session of this same folder (same volume and path) whose files have
@@ -734,6 +787,72 @@ mod tests {
             "a checkpoint folds the WAL away"
         );
         assert_eq!(records::photos_count(&db).unwrap(), 1);
+    }
+
+    /// The move has to carry every committed row with it. Before the checkpoint, the rows below
+    /// exist only in `-wal`; renaming the database without it would leave a database that answers
+    /// every query from an older state, and no error to say so.
+    #[test]
+    fn moving_a_session_takes_its_committed_rows_with_it() {
+        let sessions = new_sessions_dir();
+        let shoot_dir = tempfile::tempdir().unwrap();
+        shoot(shoot_dir.path(), 1);
+        let from = sessions.path().join("old-name.sqlite");
+        let to = sessions.path().join("new-name.sqlite");
+        {
+            let db = Db::open_existing_at(&from).unwrap();
+            records::upsert_photo(&db, &test_photo(42, "IMG_0001.CR3", 16)).unwrap();
+            assert!(
+                db.wal_bytes().unwrap() > 0,
+                "the commit is still only in the WAL"
+            );
+        }
+        rename_session(&from, &to).unwrap();
+
+        // Every committed transaction was folded into the file before it moved, so nothing is
+        // stranded in a log. An empty `-wal` may still be beside it — SQLite re-creates one on
+        // open, which is why this is a size check and not an existence check.
+        let wal = to.with_file_name("new-name.sqlite-wal");
+        assert!(
+            !wal.exists() || std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0) == 0,
+            "and nothing was left behind in a log beside it"
+        );
+        assert!(
+            !from.with_file_name("old-name.sqlite-wal").exists(),
+            "and the log did not stay behind under the old name"
+        );
+
+        let moved = Db::open_existing_at(&to).unwrap();
+        assert_eq!(
+            records::photos_count(&moved).unwrap(),
+            1,
+            "the row committed before the move is still there"
+        );
+    }
+
+    /// The ordering the residual-risk comment in `rename_session` claims: the sidecars move before
+    /// the database, so a failure part-way leaves the database where it was rather than at the new
+    /// name with no log beside it. Simulated by making the *second* sidecar's destination
+    /// impossible: the `-wal` goes, the `-shm` cannot, and the main file must not have moved.
+    #[test]
+    fn a_failed_sidecar_move_leaves_the_database_at_its_old_name() {
+        let sessions = new_sessions_dir();
+        let shoot_dir = tempfile::tempdir().unwrap();
+        shoot(shoot_dir.path(), 1);
+        let from = sessions.path().join("old-name.sqlite");
+        let to = sessions.path().join("nested").join("new-name.sqlite");
+        {
+            let db = Db::open_existing_at(&from).unwrap();
+            records::upsert_photo(&db, &test_photo(1, "IMG_0001.CR3", 16)).unwrap();
+        }
+        // `to`'s folder does not exist, so every rename under it fails with ENOENT.
+        assert!(rename_session(&from, &to).is_err());
+        assert!(
+            from.exists(),
+            "the database itself must not have moved before its sidecars"
+        );
+        let still_there = Db::open_existing_at(&from).unwrap();
+        assert_eq!(records::photos_count(&still_there).unwrap(), 1);
     }
 
     #[test]

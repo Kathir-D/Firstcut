@@ -197,8 +197,13 @@ pub struct BoundaryVerdict {
     pub thresholds: Thresholds,
     /// True when a visual signature was available for both frames.
     pub had_sigs: bool,
-    /// True when the boundary can still change once signatures arrive.
+    /// True when the boundary can still change once signatures arrive, which is exactly when it came
+    /// out of the ambiguous zone. A hard join, a hard split and a boundary a visited batch has
+    /// locked are all settled.
     pub provisional: bool,
+    /// True when an ambiguous boundary's score was past the split threshold, so metadata alone
+    /// started a new batch here. Only meaningful when `decision` is `Ambiguous`.
+    pub split: bool,
 }
 
 /// Batches plus the trace that produced them.
@@ -242,51 +247,66 @@ pub fn batch_with<P: Photo>(
                 0
             } else {
                 match (effective_time_ms(seq[i - 1]), effective_time_ms(seq[i])) {
-                    (Some(a), Some(b)) => (b - a).max(0),
+                    (Some(a), Some(b)) => b.saturating_sub(a).max(0),
                     _ => 0,
                 }
             }
         })
         .collect();
     let intervals = FrameIntervals::new(gaps, params.default_frame_interval_ms);
+    // Every boundary's local frame interval, in one pass: `FrameIntervals::at` allocates and sorts a
+    // sample per call, and this runs once per boundary of every shoot.
+    let local = intervals.local_intervals(n);
     let locks = Locks::from_frozen(frozen, &seq);
 
     let mut verdicts = Vec::with_capacity(n);
     let mut splits: Vec<bool> = vec![false; n];
     for i in 1..n {
-        let thresholds = thresholds_at(&intervals, &params, i);
-        let signals = PairSignals::compute(seq[i - 1], seq[i]);
-        let (decision, score, had_sigs, provisional) = if locks.forced_join[i] {
+        let thresholds = thresholds_at_interval(local[i], &params);
+        // Locks first. A boundary inside or beside a batch the user has already been in is settled
+        // whatever the evidence says, so nothing is computed for it: a re-batch of a fully visited
+        // shoot does no per-pair work at all. A locked verdict carries no signals for the same
+        // reason — the freeze settled it, so there is no evidence to report.
+        let (decision, score, split, signals) = if locks.forced_join[i] {
             // Inside a batch the user has already seen: nothing may split it.
-            (Decision::Join, 0.0, false, false)
+            (Decision::Join, 0.0, false, PairSignals::default())
         } else if locks.forced_split[i] {
             // The edge of a visited batch: it cannot grow into its neighbour either.
-            (Decision::Split, 0.0, false, false)
+            (Decision::Split, 0.0, false, PairSignals::default())
         } else {
-            let dist = match (sigs.get(&seq[i - 1].id()), sigs.get(&seq[i].id())) {
-                (Some(a), Some(b)) => Some(visual::distance(a, b)),
-                _ => None,
-            };
-            let had_sigs = dist.is_some();
+            let signals = PairSignals::compute(seq[i - 1], seq[i]);
             match signals.decide(thresholds) {
-                Decision::Join => (Decision::Join, 0.0, had_sigs, false),
-                Decision::Split => (Decision::Split, 0.0, had_sigs, false),
+                Decision::Join => (Decision::Join, 0.0, false, signals),
+                Decision::Split => (Decision::Split, 0.0, false, signals),
                 Decision::Ambiguous => {
+                    let dist = match (sigs.get(&seq[i - 1].id()), sigs.get(&seq[i].id())) {
+                        (Some(a), Some(b)) => Some(visual::distance(a, b)),
+                        _ => None,
+                    };
                     let score = score_pair(&signals, &thresholds, dist, &params);
-                    let split = score > params.split_threshold;
-                    (Decision::Ambiguous, score, had_sigs, split)
+                    (
+                        Decision::Ambiguous,
+                        score,
+                        score > params.split_threshold,
+                        signals,
+                    )
                 }
             }
         };
-        splits[i] = decision == Decision::Split || (decision == Decision::Ambiguous && provisional);
+        splits[i] = decision == Decision::Split || split;
         verdicts.push(BoundaryVerdict {
             index: i,
             decision,
             score,
             signals,
             thresholds,
-            had_sigs,
-            provisional,
+            // Whether both signatures exist is a fact about `sigs`, not about the decision, so a
+            // boundary a lock settled still says so. It used to be reported as "no signature
+            // available" for every locked pair, which is how a frozen shoot that had been refined
+            // read as never refined.
+            had_sigs: sigs.contains_key(&seq[i - 1].id()) && sigs.contains_key(&seq[i].id()),
+            provisional: decision == Decision::Ambiguous,
+            split,
         });
     }
 
@@ -304,7 +324,13 @@ pub fn batch_with<P: Photo>(
 /// Adaptive thresholds for boundary `i` (todo.md §5.3 steps 2–3).
 #[must_use]
 pub fn thresholds_at(intervals: &FrameIntervals, params: &BatchParams, i: usize) -> Thresholds {
-    let f = intervals.at(i);
+    thresholds_at_interval(intervals.at(i), params)
+}
+
+/// [`thresholds_at`] for a frame interval already in hand, which is how the batching pass reads
+/// them: [`FrameIntervals::local_intervals`] has already computed every boundary's rate.
+#[must_use]
+pub fn thresholds_at_interval(f: i64, params: &BatchParams) -> Thresholds {
     let join_ms = (params.hard_join_floor_ms as f32).max(params.hard_join_factor * f as f32) as i64;
     let split_ms =
         (params.hard_split_floor_ms as f32).max(params.hard_split_factor * f as f32) as i64;
@@ -339,7 +365,20 @@ pub fn score_pair(
     let dt_n = if signals.has_scorable_time() {
         let f = thresholds.frame_interval_ms.max(1) as f32;
         let join_intervals = thresholds.join_ms as f32 / f;
-        let span = (DT_FULL_INTERVALS - join_intervals).max(0.5);
+        // The span is the ambiguous zone itself, in frame intervals — except where the constant
+        // scale is still the wider of the two. `DT_FULL_INTERVALS - join_intervals` goes negative
+        // once the hard join is more than six intervals wide, which is any rate from about 24 fps
+        // up: there the old span fell to its 0.5 floor and every gap past the hard join scored a
+        // certain split, in exactly the range the rule exists to cover. Below that rate the
+        // constant is the narrower scale, and the thresholds it was calibrated against are the ones
+        // in the corpus, so it stands.
+        let constant_span = DT_FULL_INTERVALS - join_intervals;
+        let zone_span = (thresholds.split_ms - thresholds.join_ms) as f32 / f;
+        let span = if constant_span > 0.5 {
+            constant_span
+        } else {
+            zone_span.max(0.5)
+        };
         ((signals.dt_ms as f32 / f - join_intervals) / span).clamp(0.0, 1.0)
     } else {
         // No timing evidence at all: the middle of the zone, so the other signals decide.
@@ -399,16 +438,27 @@ impl Locks {
                 forced_join,
             };
         }
-        let positions: HashMap<PhotoId, usize> =
-            seq.iter().enumerate().map(|(i, p)| (p.id(), i)).collect();
+        // Built on the first lookup rather than up front: a shoot is usually frozen a batch or two
+        // at a time, and mapping every photo to its position costs a whole pass over the sequence.
+        let mut positions: Option<HashMap<PhotoId, usize>> = None;
 
         for b in frozen {
+            let positions = positions
+                .get_or_insert_with(|| seq.iter().enumerate().map(|(i, p)| (p.id(), i)).collect());
             let found: Vec<usize> = b
                 .photo_ids
                 .iter()
                 .filter_map(|id| positions.get(id))
                 .copied()
                 .collect();
+            // A frozen batch whose photos are no longer all here is not a lock. The user culled a
+            // ten-frame burst, deleted five of its files and rescanned: forcing a join between the
+            // first and last survivor swallows whatever bursts happened to sit between them, which
+            // is the one outcome a freeze exists to prevent. Skipping the lock only means the
+            // batch may be re-cut, which is what an unvisited batch is allowed to do anyway.
+            if found.len() != b.photo_ids.len() {
+                continue;
+            }
             let (Some(&start), Some(&end)) = (found.iter().min(), found.iter().max()) else {
                 continue;
             };
@@ -448,14 +498,20 @@ fn assemble<P: Photo>(seq: &[&P], splits: &[bool], verdicts: &[BoundaryVerdict])
     };
 
     for v in verdicts {
+        // A batch is provisional when any boundary touching it came out of the ambiguous zone, in
+        // either direction: a scored join may be split, and a scored split may be joined back. Only
+        // signatures settle both. An ambiguous boundary touches *two* batches — the one it ends and
+        // the one it starts — so the flag goes on both sides of the flush: set after it and the
+        // batch being closed comes back settled, and a later `submit_visual_sigs` can join a photo
+        // into a batch the app has already told itself is settled.
+        let ambiguous = v.decision == Decision::Ambiguous;
+        if ambiguous {
+            provisional = true;
+        }
         if splits[v.index] {
             flush(&mut members, &mut provisional, &mut batches);
         }
-        // A batch is provisional when any boundary touching it came out of the ambiguous zone, in
-        // either direction: a scored join may be split, and a scored split may be joined back. Only
-        // signatures settle both. The boundary that ends the previous batch counts for the next one
-        // too, which is why this runs after the flush.
-        if v.decision == Decision::Ambiguous {
+        if ambiguous {
             provisional = true;
         }
         members.push(seq[v.index].id());
@@ -473,29 +529,36 @@ fn apply_single_grouping<P: Photo>(batches: &mut Vec<Batch>, seq: &[&P], params:
     if params.single_group_window_ms <= 0 {
         return;
     }
-    let position: HashMap<PhotoId, usize> =
-        seq.iter().enumerate().map(|(i, p)| (p.id(), i)).collect();
     let mut merged: Vec<Batch> = Vec::with_capacity(batches.len());
-    let mut pending: Option<Batch> = None;
+    // The group being built. `single` is how it *started*, not what it is now: a run of three
+    // one-photo batches is still a group that began as a single, and refusing to extend it after
+    // the first merge stopped a shoot's frames from ever becoming one batch.
+    let mut pending: Option<(Batch, bool)> = None;
+    let mut positions: Option<HashMap<PhotoId, usize>> = None;
 
     for batch in batches.drain(..) {
+        let started_as_single = batch.photo_ids.len() == 1;
         match pending.take() {
-            Some(mut prev)
-                if batch.photo_ids.len() == 1
-                    && prev.photo_ids.len() == 1
-                    && singles_close(&prev, &batch, seq, &position, params) =>
+            Some((mut prev, prev_single))
+                if started_as_single
+                    && prev_single
+                    && singles_close(&prev, &batch, seq, &mut positions, params) =>
             {
+                // Either half being provisional makes the merged batch provisional: the post-pass
+                // has just overridden a boundary the ambiguous zone left open, and reporting
+                // `false` would let the app treat the result as settled.
+                prev.provisional |= batch.provisional;
                 prev.photo_ids.extend(batch.photo_ids);
-                pending = Some(prev);
+                pending = Some((prev, true));
             }
-            Some(prev) => {
+            Some((prev, _)) => {
                 merged.push(prev);
-                pending = Some(batch);
+                pending = Some((batch, started_as_single));
             }
-            None => pending = Some(batch),
+            None => pending = Some((batch, started_as_single)),
         }
     }
-    if let Some(last) = pending {
+    if let Some((last, _)) = pending {
         merged.push(last);
     }
     for (i, b) in merged.iter_mut().enumerate() {
@@ -504,15 +567,27 @@ fn apply_single_grouping<P: Photo>(batches: &mut Vec<Batch>, seq: &[&P], params:
     *batches = merged;
 }
 
+/// True when a one-photo group may absorb `b`.
+///
+/// The window is measured from the group's **first** photo, not from the one before `b`. That is
+/// what stops a run of singles chaining without limit: a group stays open only while its own start
+/// is still within the window, so four frames 1.5 s apart become one batch under a 5 s window and
+/// the fifth frame at 6 s starts the next one.
 fn singles_close<P: Photo>(
     a: &Batch,
     b: &Batch,
     seq: &[&P],
-    position: &HashMap<PhotoId, usize>,
+    positions: &mut Option<HashMap<PhotoId, usize>>,
     params: &BatchParams,
 ) -> bool {
-    let (Some(&ia), Some(&ib)) = (position.get(&a.photo_ids[0]), position.get(&b.photo_ids[0]))
-    else {
+    // Built on the first pair that could merge at all. A burst shoot has no one-photo batches to
+    // group, so this map — one entry per photo in the shoot — is never built there.
+    let positions =
+        positions.get_or_insert_with(|| seq.iter().enumerate().map(|(i, p)| (p.id(), i)).collect());
+    let (Some(&ia), Some(&ib)) = (
+        positions.get(&a.photo_ids[0]),
+        positions.get(&b.photo_ids[0]),
+    ) else {
         return false;
     };
     let (a, b) = (seq[ia], seq[ib]);
@@ -524,7 +599,7 @@ fn singles_close<P: Photo>(
         return false;
     }
     match (a.capture_unix_ms(), b.capture_unix_ms()) {
-        (Some(x), Some(y)) => (y - x).abs() <= params.single_group_window_ms,
+        (Some(x), Some(y)) => y.abs_diff(x) <= params.single_group_window_ms as u64,
         _ => false,
     }
 }
@@ -921,6 +996,184 @@ mod tests {
             batch_ids(&photos).len(),
             1,
             "400 ms at 11 fps is a boundary anyway"
+        );
+    }
+
+    #[test]
+    fn an_ambiguous_split_marks_both_neighbours_provisional() {
+        // 400 ms at 11 fps: past the hard join of 250 ms, inside the ambiguous zone, and the score
+        // splits it without a signature. The boundary touches two batches — the one it ends and the
+        // one it starts — and both can still change. Marking only the second let a later
+        // `submit_visual_sigs` join a photo into a batch the app had already called settled.
+        let mut photos = burst(4, 0, 90);
+        photos.push(M::frame(4, 3 * 90 + 400));
+        let out = batch(&photos, &no_sigs(), &[]);
+        assert_eq!(out.len(), 2, "the score splits it without signatures");
+        assert!(
+            out[0].provisional,
+            "the batch the ambiguous boundary ends is not settled either"
+        );
+        assert!(out[1].provisional);
+    }
+
+    #[test]
+    fn an_ambiguous_boundary_is_provisional_even_when_it_scored_a_join() {
+        // 300 ms at 11 fps is inside the ambiguous zone but scores below the threshold, so the two
+        // frames stay together. That is precisely the boundary a human is being asked to check, and
+        // `provisional` used to mean "the score said split" — so it read `false` here, and the
+        // tuning output printed it as `split: no` for a boundary nothing had settled.
+        let mut photos = burst(4, 0, 90);
+        photos.push(M::frame(4, 3 * 90 + 300));
+        let out = batch_with(&photos, &no_sigs(), &[], BatchParams::default());
+        assert_eq!(out.batches.len(), 1, "300 ms scores below the threshold");
+        let v = out.verdicts.last().expect("a verdict per boundary");
+        assert_eq!(v.decision, Decision::Ambiguous);
+        assert!(v.provisional, "an ambiguous boundary can still change");
+        assert!(!v.split, "but the score did not split it");
+        assert!(out.batches[0].provisional, "and the batch says so");
+    }
+
+    #[test]
+    fn a_frozen_batch_whose_photos_are_missing_is_not_a_lock() {
+        // Three bursts three seconds apart, and the user culled the middle one together with the
+        // first frame of the third — then deleted two of that batch's files. The batch's photos are
+        // no longer all in the sequence, so it is not a lock: forcing a join from the first
+        // surviving frame to the last swallowed the whole third burst into a batch the user had
+        // already been in. Skipping the lock only means the batch may be re-cut, which is what an
+        // unvisited batch is allowed to do.
+        let photos: Vec<M> = [
+            M::frame(0, 0),
+            M::frame(1, 90),
+            M::frame(2, 3_000),
+            M::frame(3, 3_090),
+            M::frame(4, 3_180),
+            M::frame(5, 6_000),
+            M::frame(6, 6_090),
+        ]
+        .into_iter()
+        .filter(|p| p.id != 4 && p.id != 6)
+        .collect();
+        let frozen = vec![Batch {
+            id: batch_id(PhotoId(2)),
+            index: 0,
+            photo_ids: vec![PhotoId(2), PhotoId(3), PhotoId(4), PhotoId(5), PhotoId(6)],
+            provisional: false,
+        }];
+        assert_eq!(
+            batch_ids(&photos),
+            vec![vec![0, 1], vec![2, 3], vec![5]],
+            "without the freeze this is what the shoot looks like"
+        );
+        let out = batch(&photos, &no_sigs(), &frozen);
+        let ids: Vec<Vec<u64>> = out
+            .iter()
+            .map(|b| b.photo_ids.iter().map(|id| id.0).collect())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![vec![0, 1], vec![2, 3], vec![5]],
+            "and the third burst is not swallowed by a batch the user has been in"
+        );
+    }
+
+    #[test]
+    fn a_locked_boundary_still_reports_the_signatures_it_has() {
+        // `had_sigs` says whether a signature existed for both frames, which is a fact about `sigs`
+        // and not about the decision. It was hard-coded to `false` for every locked boundary, so a
+        // re-batched shoot that had been through the visual phase read as never refined.
+        let photos = burst(3, 0, 90);
+        let sig = VisualSig {
+            dhash: 0,
+            hist: [0; 48],
+        };
+        let sigs: HashMap<PhotoId, VisualSig> = photos.iter().map(|p| (p.id(), sig)).collect();
+        let frozen = vec![Batch {
+            id: batch_id(PhotoId(0)),
+            index: 0,
+            photo_ids: vec![PhotoId(0), PhotoId(1)],
+            provisional: false,
+        }];
+        let out = batch_with(&photos, &sigs, &frozen, BatchParams::default());
+        assert_eq!(out.batches.len(), 2, "the visited batch still holds");
+        assert!(
+            out.verdicts.iter().all(|v| v.had_sigs),
+            "both locked boundaries had signatures for both frames"
+        );
+    }
+
+    #[test]
+    fn a_run_of_single_frames_becomes_one_batch() {
+        // 1.5 s at 11 fps: past the hard join of 250 ms, short of the hard split of 2 s, and scored
+        // a certain split on metadata alone. Three one-photo batches span 3 s, inside the 5 s
+        // grouping window, so they are one moment — but the post-pass only ever merged *pairs*,
+        // because once the group had two photos the "is this a single" guard stopped it growing.
+        let photos = vec![M::frame(0, 0), M::frame(1, 1_500), M::frame(2, 3_000)];
+        assert_eq!(batch_ids(&photos), vec![vec![0, 1, 2]]);
+    }
+
+    #[test]
+    fn a_run_of_single_frames_still_stops_at_the_window() {
+        // The bound that keeps the grouping from chaining without limit: the window is measured
+        // from the group's *first* photo, so the fifth frame at 6 s starts a new group however
+        // close it is to the fourth.
+        let photos: Vec<M> = (0..5u64).map(|i| M::frame(i, i as i64 * 1_500)).collect();
+        assert_eq!(batch_ids(&photos), vec![vec![0, 1, 2, 3], vec![4]]);
+    }
+
+    #[test]
+    fn grouping_two_singles_keeps_a_provisional_one_provisional() {
+        // The first boundary is a hard split, so the frame before it is settled; the second is
+        // ambiguous, so the frame after it is not. The post-pass merges the two, and keeping only
+        // the settled one's flag reported the result as settled — including when the merge has just
+        // overridden a boundary the ambiguous zone left open. (0/2100/3100 rather than
+        // 0/2100/4200, where *every* gap is a hard split and nothing is provisional to lose.)
+        let photos = vec![M::frame(0, 0), M::frame(1, 2_100), M::frame(2, 3_100)];
+        let out = batch(&photos, &no_sigs(), &[]);
+        assert_eq!(
+            out.len(),
+            1,
+            "2.1 s and 1 s apart, both inside the 5 s window"
+        );
+        assert!(
+            out[0].provisional,
+            "one half of the group was provisional, so the group is"
+        );
+    }
+
+    #[test]
+    fn a_fast_frame_rate_does_not_score_every_gap_as_a_certain_split() {
+        // 40 fps. The hard join is ten frame intervals wide there, so the span the score normalises
+        // by — a constant six intervals, minus the join — was already negative and fell to its 0.5
+        // floor: every gap past the hard join scored 1.0 and split, in exactly the range the
+        // ambiguous zone is meant to cover. A 900 ms gap is 36 intervals: a quarter of a second past
+        // the hard join and a second short of the hard split, so it is the one boundary a signature
+        // exists to decide.
+        let params = BatchParams::default();
+        let photos = vec![
+            M::frame(0, 0),
+            M::frame(1, 25),
+            M::frame(2, 50),
+            M::frame(3, 75),
+            M::frame(4, 975),
+        ];
+        let intervals =
+            FrameIntervals::new(vec![0, 25, 25, 25, 900], params.default_frame_interval_ms);
+        let thresholds = thresholds_at(&intervals, &params, 4);
+        assert_eq!(thresholds.frame_interval_ms, 25, "the local rate is 40 fps");
+
+        let signals = PairSignals::compute(&photos[3], &photos[4]);
+        assert_eq!(signals.dt_ms, 900);
+        let score = score_pair(&signals, &thresholds, None, &params);
+        assert!(
+            score < 1.0,
+            "a gap inside the ambiguous zone is not a certain split, and it scored {score}"
+        );
+        assert!(score > 0.0, "nor is it no evidence at all: {score}");
+
+        assert_eq!(
+            batch_ids_with(&photos, &params),
+            vec![vec![0, 1, 2, 3, 4]],
+            "so metadata alone leaves the burst together"
         );
     }
 

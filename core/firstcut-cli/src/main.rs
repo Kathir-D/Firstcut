@@ -247,7 +247,7 @@ fn cmd_gaps(args: &[String]) -> Result<(), String> {
             v.score,
             v.signals.focal_stops,
             v.signals.exposure_ev,
-            if v.provisional { "yes" } else { "no" }
+            if v.split { "yes" } else { "no" }
         );
     }
 
@@ -354,7 +354,7 @@ fn cmd_ground_truth(args: &[String]) -> Result<(), String> {
             name_of(&folder, outcome.order[v.index - 1]),
             name_of(&folder, outcome.order[v.index]),
             v.signals.dt_ms,
-            if v.provisional {
+            if v.split {
                 "SPLIT (new batch starts at `to`)"
             } else {
                 "JOIN (same batch)"

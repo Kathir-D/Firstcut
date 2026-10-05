@@ -631,3 +631,62 @@ fn starts_with_jpeg(bytes: &[u8], preview: firstcut_core::meta::cr3::EmbeddedPre
     let end = start.saturating_add(preview.range.len as usize);
     end <= bytes.len() && bytes.get(start..start + 2) == Some(&[0xff, 0xd8])
 }
+
+/// `ExposureCompensation` is the one field the tally above cannot check, and this is why.
+///
+/// Measured over all four fixture files: 2,880 records, every one of them `"0"`. The tally
+/// therefore compares a zero against a zero, which is exactly what an unsigned reading of an
+/// SRATIONAL produces — `−1/3` EV is stored as `0xFFFFFFFF / 3` and came out as 1,431,655,765 EV,
+/// finite, in range for an `f32`, and agreed with exiftool on every photo in the corpus. So this
+/// asserts the blindness rather than assuming it: when a corpus with real compensation lands, this
+/// fails and the tally earns the field back.
+#[test]
+fn the_fixtures_hold_no_exposure_compensation_to_disagree_about() {
+    let mut values: std::collections::BTreeSet<String> = Default::default();
+    let mut records = 0usize;
+    for game in GAMES {
+        for record in load_exiftool(game) {
+            values.insert(format!("{:?}", record.exposure_compensation));
+            records += 1;
+        }
+    }
+    assert!(
+        records > 2_000,
+        "the fixtures are meant to be the whole corpus, and this read {records}"
+    );
+    assert_eq!(
+        values,
+        std::collections::BTreeSet::from(["Some(0.0)".to_string()]),
+        "a fixture with a non-zero ExposureCompensation means the sign is finally checkable — \
+         keep the bound in the next test, and drop the claim that this field is blind"
+    );
+}
+
+/// The bound that stands in for the fixtures: no camera writes an exposure compensation of
+/// 1,431,655,765 EV, so a value outside a few dozen stops is a misread rather than a setting.
+#[test]
+fn a_reported_exposure_compensation_is_something_a_camera_wrote() {
+    let Some(root) = photos_root() else {
+        eprintln!(
+            "skipping: no test photos. Set FIRSTCUT_TEST_PHOTOS or create ~/Documents/testing."
+        );
+        return;
+    };
+    for game in GAMES {
+        for record in load_exiftool(game).iter().take(SAMPLE) {
+            let path = root.join(game).join(&record.file_name);
+            let Ok(parsed) = Cr3::parse(&path) else {
+                continue;
+            };
+            let Some(ev) = parsed.exposure_comp_ev else {
+                continue;
+            };
+            assert!(
+                (-20.0..=20.0).contains(&ev),
+                "{}: {ev} EV is not a compensation any camera writes — SRATIONAL read as unsigned \
+                 turns -1/3 into 1431655765",
+                record.file_name
+            );
+        }
+    }
+}

@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::store::rating::{Rating, RatingMode, Tier};
 use crate::store::records::PhotoRow;
@@ -228,7 +228,7 @@ pub fn plan_finish(
     unvisited_batches: usize,
 ) -> FinishPlan {
     let mut plan = FinishPlan::default();
-    let mut reserved: HashMap<PathBuf, ()> = HashMap::new();
+    let mut reserved = Reserved::default();
 
     if unvisited_batches > 0 {
         plan.warnings.push(format!(
@@ -252,13 +252,31 @@ pub fn plan_finish(
     for photo in photos {
         let rating = ratings.get(&photo.id).copied().unwrap_or_default();
         let kept = rating.is_kept_at(options.rating_mode, options.keep_stars);
-        let files = group_files(folder, photo);
+
+        // A `rel_path` that would take the operation outside the shoot folder is refused here, at
+        // plan time, where the refusal can be *shown* as a warning rather than discovered halfway
+        // through a Finish. Every arm below that needs a file path goes through this one result.
+        let files = match group_files(folder, photo) {
+            Ok(files) => files,
+            Err(escape) => {
+                plan.warnings
+                    .push(format!("{} was left alone: {}", escape.rel, escape.reason));
+                continue;
+            }
+        };
 
         if kept {
             match &options.kept {
                 KeptAction::None => {}
                 KeptAction::CopyTo(root) | KeptAction::MoveTo(root) => {
-                    let root = resolve(folder, root);
+                    let root = match resolve_destination(folder, root) {
+                        Ok(root) => root,
+                        Err(escape) => {
+                            plan.warnings
+                                .push(format!("kept folder left alone: {}", escape));
+                            continue;
+                        }
+                    };
                     let destination =
                         unique_destination(&root, &photo.rel_path, &files, &mut reserved);
                     if !root.exists() {
@@ -284,14 +302,17 @@ pub fn plan_finish(
                 }
                 KeptAction::SplitByTier(root) => {
                     let subfolder = Tier::Keep.split_dir(options.rating_mode);
-                    let destination = split_destination(
+                    let Some(destination) = split_destination(
                         folder,
                         root,
                         &subfolder,
                         &photo.rel_path,
                         &files,
                         &mut reserved,
-                    );
+                        &mut plan.warnings,
+                    ) else {
+                        continue;
+                    };
                     if crosses_volume(folder, &destination) {
                         copy_bytes += files.iter().map(|file| file.size).sum::<u64>();
                         copy_destinations.push(destination.clone());
@@ -314,14 +335,17 @@ pub fn plan_finish(
                     )
                     .stars
                     .to_string();
-                    let destination = split_destination(
+                    let Some(destination) = split_destination(
                         folder,
                         root,
                         &subfolder,
                         &photo.rel_path,
                         &files,
                         &mut reserved,
-                    );
+                        &mut plan.warnings,
+                    ) else {
+                        continue;
+                    };
                     if crosses_volume(folder, &destination) {
                         copy_bytes += files.iter().map(|file| file.size).sum::<u64>();
                         copy_destinations.push(destination.clone());
@@ -342,7 +366,14 @@ pub fn plan_finish(
             match &options.unkept {
                 UnkeptAction::Nothing => {}
                 UnkeptAction::MoveToSubfolder(root) => {
-                    let root = resolve(folder, root);
+                    let root = match resolve_destination(folder, root) {
+                        Ok(root) => root,
+                        Err(escape) => {
+                            plan.warnings
+                                .push(format!("not-kept folder left alone: {}", escape));
+                            continue;
+                        }
+                    };
                     let destination =
                         unique_destination(&root, &photo.rel_path, &files, &mut reserved);
                     if !root.exists() {
@@ -377,32 +408,45 @@ pub fn plan_finish(
                     }
                 }
                 UnkeptAction::MarkRejectedInXmp => {
-                    // The sidecar is the file being changed, so that is what the op points at.
+                    // The sidecar is the file being changed, so that is what the op points at. It
+                    // is derived from `rel_path`, so it goes through the same containment check: a
+                    // row that escaped would otherwise have `xmp:Rating="-1"` written into a
+                    // stranger's `.xmp` file.
                     let sidecar = crate::xmp::sidecar_path(&photo.rel_path);
-                    plan.ops.push(FileOp::new(
-                        FileOpKind::MarkRejected,
-                        resolve(folder, &sidecar.to_string_lossy())
-                            .to_string_lossy()
-                            .into_owned(),
-                        None,
-                    ));
+                    let sidecar_rel = sidecar.to_string_lossy().into_owned();
+                    match resolve_under(folder, &sidecar_rel) {
+                        Ok(sidecar) => plan.ops.push(FileOp::new(
+                            FileOpKind::MarkRejected,
+                            sidecar.to_string_lossy().into_owned(),
+                            None,
+                        )),
+                        Err(escape) => plan
+                            .warnings
+                            .push(format!("not marked rejected: {}", escape)),
+                    }
                 }
             }
         }
     }
 
     if let KeptAction::WriteList(path) = &options.kept {
-        let destination = resolve(folder, path);
-        plan.ops.push(FileOp::new(
-            FileOpKind::WriteList,
-            file_name(&destination.to_string_lossy()),
-            Some(destination.to_string_lossy().into_owned()),
-        ));
-        plan.warnings.push(format!(
-            "Kept list: {} ({} photos)",
-            destination.display(),
-            kept_names.len()
-        ));
+        match resolve_destination(folder, path) {
+            Ok(destination) => {
+                plan.ops.push(FileOp::new(
+                    FileOpKind::WriteList,
+                    file_name(&destination.to_string_lossy()),
+                    Some(destination.to_string_lossy().into_owned()),
+                ));
+                plan.warnings.push(format!(
+                    "Kept list: {} ({} photos)",
+                    destination.display(),
+                    kept_names.len()
+                ));
+            }
+            Err(escape) => plan
+                .warnings
+                .push(format!("kept list not written: {}", escape)),
+        }
     }
 
     plan.bytes_to_copy = copy_bytes;
@@ -423,7 +467,7 @@ struct GroupFile {
 ///
 /// A sidecar Firstcut has written is included even if it was not there when the folder was
 /// scanned, because a group that left its rating behind would look rejected in Lightroom.
-fn group_files(folder: &Path, photo: &PhotoRow) -> Vec<GroupFile> {
+fn group_files(folder: &Path, photo: &PhotoRow) -> std::result::Result<Vec<GroupFile>, PathEscape> {
     let mut relatives = vec![photo.rel_path.clone()];
     relatives.extend(photo.companions.iter().cloned());
 
@@ -439,17 +483,26 @@ fn group_files(folder: &Path, photo: &PhotoRow) -> Vec<GroupFile> {
         }
     }
 
-    relatives
-        .into_iter()
-        .filter_map(|relative| {
-            let path = resolve(folder, &relative);
-            let metadata = std::fs::metadata(&path).ok()?;
-            metadata.is_file().then_some(GroupFile {
-                path,
-                size: metadata.len(),
-            })
-        })
-        .collect()
+    // The primary needs no stat at all: its size is already in the `photos` row, which the scan
+    // filled from the same `stat`. On a 1,500-frame shoot that is 1,500 syscalls saved on a path
+    // that runs on every plan, including the dry run the UI asks for. A primary that has since
+    // disappeared is not filtered out here — execution reports it as "the file is no longer there"
+    // against that one operation, which is exactly what it does for any other missing file.
+    let mut files = Vec::with_capacity(relatives.len());
+    for (index, relative) in relatives.into_iter().enumerate() {
+        let path = resolve_under(folder, &relative)?;
+        let size = if index == 0 {
+            photo.file_size
+        } else {
+            match std::fs::metadata(&path) {
+                Ok(metadata) if metadata.is_file() => metadata.len(),
+                // A companion that has gone is not part of the group any more.
+                _ => continue,
+            }
+        };
+        files.push(GroupFile { path, size });
+    }
+    Ok(files)
 }
 
 /// One op per file of the group, all sharing the destination's base name.
@@ -510,16 +563,70 @@ fn member_suffix(member: &Path, base: &str) -> String {
     }
 }
 
+/// The root of a split, resolved and checked the same way any other destination folder is. `None`
+/// means the folder the user chose is not one this module will act on; the reason goes into
+/// `warnings`, because "nothing happened here" with no explanation is the failure mode this
+/// whole check exists to avoid.
 fn split_destination(
     folder: &Path,
     root: &str,
     subfolder: &str,
     rel_path: &str,
     files: &[GroupFile],
-    reserved: &mut HashMap<PathBuf, ()>,
-) -> PathBuf {
-    let directory = resolve(folder, &format!("{root}/{subfolder}"));
-    unique_destination(&directory, rel_path, files, reserved)
+    reserved: &mut Reserved,
+    warnings: &mut Vec<String>,
+) -> Option<PathBuf> {
+    let root = match resolve_destination(folder, root) {
+        Ok(root) => root,
+        Err(escape) => {
+            warnings.push(format!("kept folder left alone: {}", escape));
+            return None;
+        }
+    };
+    // `subfolder` is one of our own names (`5 Keep`), never user input.
+    let directory = resolve(&root, subfolder);
+    Some(unique_destination(&directory, rel_path, files, reserved))
+}
+
+/// The names already spoken for in one plan: the destinations claimed by earlier photos, plus the
+/// files already on disk in each directory, read once.
+///
+/// The old version asked the filesystem per candidate name — `path.exists()` for every suffix of
+/// every member, inside a `while` that grows the counter. 1,500 same-named frames split into one
+/// folder is therefore ~1.1M stat calls on a plan that is supposed to be a fast dry run. Reading
+/// each directory once and answering from the set turns it into one `read_dir` per directory.
+#[derive(Default)]
+struct Reserved {
+    claimed: HashMap<PathBuf, ()>,
+    /// Directory → the file names in it, read on first use and then never re-read.
+    on_disk: HashMap<PathBuf, HashMap<String, ()>>,
+}
+
+impl Reserved {
+    fn on_disk(&mut self, directory: &Path) -> &HashMap<String, ()> {
+        self.on_disk
+            .entry(directory.to_path_buf())
+            .or_insert_with(|| {
+                let mut names = HashMap::new();
+                if let Ok(entries) = std::fs::read_dir(directory) {
+                    for entry in entries.flatten() {
+                        names.insert(entry.file_name().to_string_lossy().into_owned(), ());
+                    }
+                }
+                names
+            })
+    }
+
+    fn is_taken(&mut self, directory: &Path, name: &str) -> bool {
+        if self.on_disk(directory).contains_key(name) {
+            return true;
+        }
+        self.claimed.contains_key(&directory.join(name))
+    }
+
+    fn claim(&mut self, directory: &Path, name: &str) {
+        self.claimed.insert(directory.join(name), ());
+    }
 }
 
 /// The destination for one photo, never overwriting anything.
@@ -533,7 +640,7 @@ fn unique_destination(
     directory: &Path,
     rel_path: &str,
     files: &[GroupFile],
-    reserved: &mut HashMap<PathBuf, ()>,
+    reserved: &mut Reserved,
 ) -> PathBuf {
     let base = base_name(rel_path);
     let primary_suffix = member_suffix(Path::new(rel_path), &base);
@@ -544,11 +651,10 @@ fn unique_destination(
     if !suffixes.contains(&primary_suffix) {
         suffixes.push(primary_suffix.clone());
     }
-    let taken = |stem: &str, reserved: &HashMap<PathBuf, ()>| {
-        suffixes.iter().any(|suffix| {
-            let path = directory.join(format!("{stem}{suffix}"));
-            path.exists() || reserved.contains_key(&path)
-        })
+    let taken = |stem: &str, reserved: &mut Reserved| {
+        suffixes
+            .iter()
+            .any(|suffix| reserved.is_taken(directory, &format!("{stem}{suffix}")))
     };
 
     let mut stem = base.clone();
@@ -558,7 +664,7 @@ fn unique_destination(
         stem = format!("{base}-{counter}");
     }
     for suffix in &suffixes {
-        reserved.insert(directory.join(format!("{stem}{suffix}")), ());
+        reserved.claim(directory, &format!("{stem}{suffix}"));
     }
     directory.join(format!("{stem}{primary_suffix}"))
 }
@@ -576,6 +682,89 @@ pub fn suffixed(name: &str, counter: usize) -> String {
         }
         _ => format!("{name}-{counter}"),
     }
+}
+
+/// Resolves a path from the `photos` table to an absolute one inside `folder`.
+///
+/// `rel_path` is a string in a database, written by an earlier version of Firstcut and by whatever
+/// put that row there; it is validated nowhere. `Path::join` **replaces** the base when the second
+/// argument is absolute, so `folder.join("/Users/me/Documents/Thesis.pdf")` is the thesis, not a
+/// file in the shoot — and a row reading `../../../etc/hosts` resolves to the root. Either becomes a
+/// `Delete` on a file outside the folder the user opened, so this rejects rather than resolves:
+///
+/// * an absolute `rel_path`, because `join` would discard `folder` entirely;
+/// * any `..` component, because a lexical check cannot see where the symlinks point and
+///   `strip_prefix`/`starts_with` are both happy with a path that leaves and re-enters;
+/// * a `RootDir` or `Prefix` component that survived the two checks above.
+///
+/// The result is then *asserted* to be under `folder`, so a rule added here without its check
+/// failing loudly is still caught.
+pub fn resolve_under(folder: &Path, rel: &str) -> std::result::Result<PathBuf, PathEscape> {
+    let candidate = Path::new(rel);
+    let reject = |reason: &str| PathEscape {
+        rel: rel.to_string(),
+        reason: reason.to_string(),
+    };
+
+    if candidate.is_absolute() {
+        return Err(reject("an absolute path cannot be inside the shoot folder"));
+    }
+    if candidate
+        .components()
+        .any(|part| matches!(part, Component::ParentDir))
+    {
+        return Err(reject("`..` would leave the shoot folder"));
+    }
+    if candidate
+        .components()
+        .any(|part| matches!(part, Component::RootDir | Component::Prefix(_)))
+    {
+        return Err(reject("a rooted path cannot be inside the shoot folder"));
+    }
+
+    let resolved = folder.join(candidate);
+    if !resolved.starts_with(folder) {
+        return Err(reject("it resolves outside the shoot folder anyway"));
+    }
+    Ok(resolved)
+}
+
+/// A `rel_path` that would have taken an operation outside the shoot folder. Carries both the path
+/// as stored and why it was refused, because the message is what the Finish report shows the user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PathEscape {
+    /// The value as it was stored, so the user can see which row it was.
+    pub rel: String,
+    pub reason: String,
+}
+
+impl fmt::Display for PathEscape {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} was refused: {}", self.rel, self.reason)
+    }
+}
+
+/// Resolves a destination folder the *user* chose: absolute is fine (a kept folder may be anywhere,
+/// including another volume), but `..` is not, because `MoveTo("../selected")` would put
+/// `Firstcut_finish.txt` and the whole kept shoot in the shoot's parent.
+pub fn resolve_destination(folder: &Path, root: &str) -> std::result::Result<PathBuf, PathEscape> {
+    let candidate = Path::new(root);
+    if candidate
+        .components()
+        .any(|part| matches!(part, Component::ParentDir))
+    {
+        return Err(PathEscape {
+            rel: root.to_string(),
+            reason: "`..` would put it outside the shoot folder".to_string(),
+        });
+    }
+    if root.trim().is_empty() {
+        return Err(PathEscape {
+            rel: root.to_string(),
+            reason: "it names no folder".to_string(),
+        });
+    }
+    Ok(resolve(folder, root))
 }
 
 /// Relative destinations are taken from the shoot folder, absolute ones as they are.
@@ -891,9 +1080,20 @@ fn copy_then_remove(source: &Path, target: &Path) -> std::io::Result<()> {
     std::fs::remove_file(source)
 }
 
-/// Copies `source` to a `target` that must not exist, checks the byte count and keeps the
-/// modification time. A failed copy (disk full, a card pulled) removes its partial target, so a
-/// truncated file is never left behind to look like a good copy or block a retry.
+/// Copies `source` to a `target` that must not exist, checks the byte count, flushes it to the
+/// device and keeps the modification time. A failed copy (disk full, a card pulled) removes its
+/// partial target, so a truncated file is never left behind to look like a good copy or block a
+/// retry.
+///
+/// Two things here are about not losing a photograph, and neither is optional:
+///
+/// - **The target is claimed with `create_new`, not checked with `exists()`.** `fs::copy` truncates
+///   whatever is already there, so an `exists()` check followed by a copy is a window in which a
+///   file that appeared in between — a sync client restoring a file the user already moved — is
+///   destroyed. Opening with `create_new` is the claim, and the kernel makes it atomic.
+/// - **The target is `sync_all`ed before the source is unlinked.** `fs::copy` returns once the
+///   bytes are in the page cache, and `copy_then_remove` deletes the source immediately after. A
+///   power loss in between left a truncated target and no original at all.
 fn copy_verified(source: &Path, target: &Path) -> std::io::Result<()> {
     if target.exists() {
         return Err(std::io::Error::new(
@@ -902,13 +1102,23 @@ fn copy_verified(source: &Path, target: &Path) -> std::io::Result<()> {
         ));
     }
     let expected = std::fs::metadata(source)?;
-    let copied = std::fs::copy(source, target).and_then(|bytes| {
+    let copied = (|| {
+        let mut input = std::fs::File::open(source)?;
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(target)?;
+        let bytes = std::io::copy(&mut input, &mut out)?;
         if bytes != expected.len() {
             return Err(std::io::Error::other(format!(
                 "copied {bytes} of {} bytes",
                 expected.len()
             )));
         }
+        // Before the source is unlinked, not after: the whole point is that the target survives a
+        // power loss on its own.
+        out.sync_all()?;
+        drop(out);
         // Keep the capture-era modification time; Finder and other catalogs sort by it.
         if let Ok(modified) = expected.modified() {
             let _ = std::fs::File::options()
@@ -917,7 +1127,7 @@ fn copy_verified(source: &Path, target: &Path) -> std::io::Result<()> {
                 .and_then(|file| file.set_modified(modified));
         }
         Ok(())
-    });
+    })();
     if let Err(error) = copied {
         let _ = std::fs::remove_file(target);
         return Err(error);
@@ -2173,6 +2383,30 @@ mod tests {
         assert!(copy_then_remove(&source, &target).is_err());
         assert_eq!(std::fs::read(&source).unwrap(), b"mine");
         assert_eq!(std::fs::read(&target).unwrap(), b"theirs");
+    }
+
+    #[test]
+    fn a_cross_volume_move_copies_every_byte_before_it_drops_the_original() {
+        // The failure this guards is not a wrong byte count — `copy_verified` has always checked
+        // that — it is a byte count read out of the page cache while the data is still only in
+        // it. The copy has to be on the device before the source is unlinked, or a power loss
+        // between the two leaves a truncated destination and no original at all.
+        let here = tempfile::tempdir().unwrap();
+        let source = here.path().join("IMG_0001.CR3");
+        let target = here.path().join("kept").join("IMG_0001.CR3");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let original: Vec<u8> = (0..64 * 1024u32).map(|i| (i % 251) as u8).collect();
+        fs::write(&source, &original).unwrap();
+
+        copy_then_remove(&source, &target).expect("a cross-volume move");
+
+        assert!(!source.exists(), "the original was unlinked after the copy");
+        assert_eq!(
+            fs::metadata(&target).unwrap().len(),
+            original.len() as u64,
+            "the destination is the whole file, not a prefix of it"
+        );
+        assert_eq!(fs::read(&target).unwrap(), original);
     }
 
     #[test]
