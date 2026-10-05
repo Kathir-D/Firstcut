@@ -1084,12 +1084,12 @@ final class DecodeEngine: @unchecked Sendable {
     private static func satisfies(
         _ entry: Entry, needed: Double, slack: Double, prefetch: Double
     ) -> Bool {
+        // Prefetch entries only. The display tier has its own `bigEnough`, which also knows that a
+        // decode that came back under its request gave the whole file; this one deliberately does
+        // not, because a thumbnail that is smaller than the prefetch size is a filmstrip cell that
+        // asked for less than the prefetch, and widening it here turned a genuine miss into a hit.
         let longest = entry.image.longestEdge
         if longest >= needed { return true }
-        // The decode came back under what it was asked for, so it returned the whole file and a
-        // bigger ask cannot improve it. Without this a photograph smaller than the viewer is
-        // re-decoded on every window resize, each time returning the same pixels.
-        if longest < Double(entry.requested) { return true }
         return longest + 0.5 >= prefetch && needed <= prefetch * slack
     }
 
