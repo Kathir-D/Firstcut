@@ -328,7 +328,8 @@ public enum InfoField: String, Codable, Equatable, Sendable, CaseIterable, Ident
 
     static func formatShutter(_ seconds: Float) -> String {
         guard seconds > 0, seconds.isFinite else { return "—" }
-        return seconds >= 1 ? String(format: "%.1f s", seconds)
+        return seconds >= 1
+            ? String(format: "%.1f s", seconds)
             : "1/\(Int((1 / Double(seconds)).rounded())) s"
     }
 
