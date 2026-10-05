@@ -23,6 +23,16 @@ permissions:
 
 jobs:
   release:
+    # Two tags seconds apart would otherwise have both jobs clone the tap and both push; the second
+    # is a non-fast-forward and the tap silently keeps whichever landed first.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    # The documented failure mode of a build on this repo is a hang, not a failure: a test host
+    # asking for Documents access blocks forever waiting for a click nobody is there to give
+    # (docs/contracts/build.md, "Nothing in a test run may touch ~/Documents"). GitHub's default is
+    # six hours, so without this a hang holds the release queue open behind it.
+    timeout-minutes: 60
     # macos-26 is the arm64 image with Xcode 26, the toolchain that compiles the Liquid Glass path
     # (`glassEffect`); a build on macos-15 / Xcode 16 would ship the material fallback on every Mac.
     # The Xcode 16 build stays in ci.yml as the minimum-toolchain check (todo.md §2).
@@ -47,8 +57,24 @@ jobs:
           cargo clippy --manifest-path core/Cargo.toml --all-targets --all-features -- -D warnings
           cargo test --manifest-path core/Cargo.toml --all-features
 
-      - name: Install xcodegen
-        run: brew install xcodegen
+      - name: Install xcodegen and swift-format
+        run: brew install xcodegen swift-format
+
+      # ci.yml is `tags-ignore: ["v*"]`, so a tag push runs no CI at all. That made this workflow
+      # the only gate on the artefact people install, and it was not running the Swift tests: a
+      # commit whose tests failed but which still compiled would go straight from `main` to a
+      # published zip and a cask bump. `9257d65` is the shape of that bug — it compiled locally and
+      # only CI's warnings-as-errors build caught it.
+      - name: swift-format lint
+        run: swift-format lint --strict --recursive App/Sources App/Tests
+
+      - name: Swift tests
+        run: |
+          scripts/generate-project.sh
+          SWIFT_TREAT_WARNINGS_AS_ERRORS=YES xcodebuild \
+            -project Firstcut.xcodeproj -scheme Firstcut \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/dd test
 
       - name: Build the app
         run: ./scripts/build-app.sh

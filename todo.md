@@ -181,6 +181,36 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
+> **As of 2026-10-05 (full codebase audit).** A systematic audit of `core/` and `App/` — every
+> module read in full, findings triaged by what they would cost a user — landed in `ccff25a` and the
+> commit after it. Both suites are green: **Rust 391 unit + 16 integration** (fmt and clippy clean),
+> **Swift 309 tests in 39 suites** plus 3 XCTest, green under `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES`.
+>
+> - **Fixed, with regression tests.** Path containment on every operation that reaches a file; a
+>   cross-volume copy that is on the device before the original is unlinked; a sidecar temp file
+>   claimed with `create_new` instead of following a symlink; a user's colour label no longer deleted
+>   by an unkeep; `xmp:Rating="0"` no longer importing as a rating; one unreadable scan entry no
+>   longer failing the whole scan; a 64-bit box size no longer overflowing an offset; an absurd EXIF
+>   year no longer overflowing the calendar; the SubIFD and IFD walks bounded; `\` no longer turned
+>   into a path separator; a fallback capture time no longer producing a hard split; boundary
+>   precision no longer reportable as 100% with a false positive counted; the decode engine no longer
+>   leaking an in-flight slot; eviction no longer crossing cache tiers; the histogram path no longer
+>   dropping the EXIF orientation; a short read no longer cached as a picture; ⇧1–⇧5 no longer
+>   advancing twice; `formatShutter` no longer trapping on a zero exposure time; the clipping
+>   thresholds no longer read statically through an existential; the typed `DELETE` no longer
+>   surviving a plan rebuild. Also removed a placeholder test that asserted `#expect(Bool(true))` and
+>   one that compared `pickerTag` against its own implementation.
+> - **Release safety.** `release.yml` ran neither the Swift tests nor the lint, and `ci.yml` is
+>   `tags-ignore: ["v*"]`, so a tag push published an artefact whose tests had never been run. Both
+>   now run before the app is built, and `ci.yml` and `release.yml` have `timeout-minutes` — the
+>   documented failure mode here is a hang, not a failure, and GitHub's default is six hours.
+> - **Known not done, deliberately.** `theThreadCountReachesTheEngine` samples `decodesInProgress` in
+>   a tight loop and flaked once under full-suite load; it passes in isolation. Separating "queued"
+>   from "executing" in the decode engine would fix a real double-counting of the concurrency bound on
+>   a folder switch, but the first attempt stalled `waitUntilIdle` because nothing re-pumps the queue
+>   when the gate reopens, so it was reverted rather than shipped unproven. Both are in the open work
+>   below.
+>
 > **As of 2026-10-05 (setup session).** GitNexus code intelligence is set up
 > for this repo and for the machine, and nothing else changed.
 >

@@ -464,6 +464,51 @@ struct AppModelRatingTests {
         #expect(model.currentPhotoIndex == 0)
     }
 
+    /// ⇧1…⇧5 advances whether or not auto-advance is on, and auto-advance lives inside the rating
+    /// step because every way of setting a rating moves on. Both doing it meant the cursor moved
+    /// twice per keypress: with Caps Lock on, every second photograph was skipped and left unrated,
+    /// with nothing on screen to say so.
+    @Test("Shift-number advances exactly once with auto-advance on")
+    func shiftNumberAdvancesOnceWithAutoAdvanceOn() throws {
+        let (model, _) = Self.makeModel()
+        model.updateSettings { $0.general.autoAdvance = true }
+
+        model.perform(.setStarsAndAdvance(3))
+
+        #expect(model.currentPhotoIndex == 1, "one keypress, one step")
+        #expect(
+            model.allPhotos[0].rating.stars == 3, "and it rated the photo it left"
+        )
+        #expect(
+            model.allPhotos[1].rating == Rating(), "the one it landed on is untouched")
+        #expect(
+            model.allPhotos.filter { $0.tier != .unrated }.count == 1,
+            "one photograph rated, not two: the one skipped over was never rated")
+        #expect(model.progress.ratedPhotos == 1)
+    }
+
+    /// The other half of the same property: with auto-advance off, ⇧N still advances — that is the
+    /// Lightroom behaviour it exists for, and the reason the fix could not simply be "delete the
+    /// advance".
+    @Test("Shift-number still advances with auto-advance off")
+    func shiftNumberAdvancesWithAutoAdvanceOff() throws {
+        let (model, _) = Self.makeModel()
+        #expect(model.autoAdvance == false)
+        model.perform(.setStarsAndAdvance(4))
+        #expect(model.currentPhotoIndex == 1)
+        #expect(model.allPhotos[0].rating.stars == 4)
+    }
+
+    /// ⇧1 is "at least one star", not "zero stars" — the bound differs from `setStars` on purpose,
+    /// so a photo can always be brought back to "no decision" with the unrated key instead.
+    @Test("Shift-number still refuses to write zero stars")
+    func shiftNumberNeverWritesZeroStars() throws {
+        let (model, _) = Self.makeModel()
+        model.perform(.setStarsAndAdvance(0))
+        #expect(model.allPhotos[0].rating.stars >= 1)
+        #expect(model.allPhotos[0].tier != .unrated)
+    }
+
     @Test("Caps Lock flips auto-advance for the session without touching the setting")
     func capsLockTogglesAutoAdvance() throws {
         let (model, _) = Self.makeModel()

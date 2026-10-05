@@ -52,6 +52,13 @@ protocol CullViewState: AnyObject {
     var standInFramesPresented: Int { get }
     var showsAFOverlay: Bool { get }
     var showsClippingOverlay: Bool { get }
+    /// The clipping overlay's clip points.
+    ///
+    /// A *requirement*, not an extension default. With it in the extension, a call through
+    /// `any CullViewState` dispatched statically and every user got `ClippingMask`'s defaults, so
+    /// the Settings → Viewer sliders moved nothing and the overlay rebuilt at 250/5 whatever the
+    /// slider said. The same trap `activeModel` was fixed for, below.
+    var clippingThresholds: (highlight: UInt8, shadow: UInt8) { get }
     var isZoomLocked: Bool { get }
     var finishStage: FinishStage { get }
     var recentFolders: [RecentFolder] { get }

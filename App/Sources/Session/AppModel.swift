@@ -678,8 +678,10 @@ public final class AppModel: SessionListener, KeyRouterSource {
 
         case .setStars(let stars): rateCurrent { $0.stars = UInt8(min(max(stars, 0), 5)) }
         case .setStarsAndAdvance(let stars):
-            rateCurrent { $0.stars = UInt8(min(max(stars, 1), 5)) }
-            advance()  // ⇧1…⇧5 always advances, auto-advance or not (Lightroom)
+            // ⇧1…⇧5 always advances, auto-advance or not (Lightroom). `advanceAfterwards: false`
+            // so that with auto-advance on the cursor moves once, not twice — see `rateCurrent`.
+            rateCurrent({ $0.stars = UInt8(min(max(stars, 1), 5)) }, advanceAfterwards: false)
+            advance()
         case .togglePickFlag: rateCurrent { $0.flag = $0.flag == .pick ? .none : .pick }
         case .setRatingMode(let mode): updateSettings { $0.general.ratingMode = mode }
         case .jumpBatch(let delta):
@@ -894,6 +896,16 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// only rating entry point takes the *current* photo, and `currentPhoto` is always inside
     /// `currentBatch`. There is no API that can rate a photo in another batch.
     public func rateCurrent(_ mutate: (inout Rating) -> Void) {
+        rateCurrent(mutate, advanceAfterwards: true)
+    }
+
+    /// `rateCurrent`, with the auto-advance step under the caller's control.
+    ///
+    /// A command that advances in its own right passes `false`. Auto-advance lives here because it
+    /// belongs to the *rating* — every way of setting a rating moves on — but ⇧1…⇧5 advances
+    /// whether auto-advance is on or not, so letting both do it moved the cursor twice per press:
+    /// with Caps Lock on, every second photograph was skipped and silently left unrated.
+    func rateCurrent(_ mutate: (inout Rating) -> Void, advanceAfterwards: Bool) {
         // `canAct`, not `phase == .culling`: while the first-photo fast path's frame is on screen the
         // backend still belongs to the *previous* folder, so a rating written now would land in the
         // wrong shoot's database and sidecar.
@@ -905,12 +917,14 @@ public final class AppModel: SessionListener, KeyRouterSource {
         // because `setRating` hands back the before/after pair, and it must be recorded *before* the
         // local state moves, or undo would come back with the wrong "before".
         _ = backend.setRating(photo: photo.id, updated)
-        applyRatingLocally(photo.id, updated)
+        applyRatingLocally(photo.id, updated, advanceAfterwards: advanceAfterwards)
     }
 
     /// Updates the model's copy of a photo's rating. Never touches the session — callers that change
     /// a rating persist it first.
-    private func applyRatingLocally(_ id: PhotoID, _ rating: Rating) {
+    private func applyRatingLocally(
+        _ id: PhotoID, _ rating: Rating, advanceAfterwards: Bool = true
+    ) {
         guard let index = photoIndex[id] else { return }
         var photo = allPhotos[index]
         let previousRating = photo.rating
@@ -927,7 +941,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         if RatingRules.isReviewed(previousRating) != RatingRules.isReviewed(rating) {
             ratedCount += RatingRules.isReviewed(rating) ? 1 : -1
         }
-        if autoAdvance, currentPhoto?.id == id { advanceAfterRating() }
+        if advanceAfterwards, autoAdvance, currentPhoto?.id == id { advanceAfterRating() }
     }
 
     private func advanceAfterRating() {

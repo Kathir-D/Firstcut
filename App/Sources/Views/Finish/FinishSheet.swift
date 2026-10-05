@@ -46,8 +46,13 @@ struct FinishSheet: View {
         .padding(24)
         .frame(width: 560)
         .frame(minHeight: 320)
-        .onChange(of: state.finishStage.isVisible) { _, visible in
-            if !visible { deleteConfirmation = "" }
+        .onChange(of: state.finishStage) { _, stage in
+            // Keyed on the *stage*, not on `isVisible`. `isVisible` is `self != .hidden`, so it stays
+            // true across dryRun → options → dryRun: the user could type DELETE, press Back, change
+            // "Not kept" from a subfolder to the Trash, press Preview, and find the old word still in
+            // the field with Finish already armed for a list they never looked at. The stage carries
+            // the plan, so any change of plan is a change of stage.
+            if case .dryRun = stage {} else { deleteConfirmation = "" }
         }
     }
 }

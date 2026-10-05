@@ -8,7 +8,10 @@ struct FinishActionKindsTests {
     @Test("A picker tag is found by kind, whatever folder name the value carries")
     func pickerTag() {
         let typed = UnkeptAction.moveToSubfolder("Rejects 2026")
-        #expect(typed.pickerTag == UnkeptAction.allCases.first { $0.isSameKind(as: typed) })
+        // Spelled out rather than recomputed with `allCases.first { $0.isSameKind(as:) }`, which is
+        // literally the body of `pickerTag`: the old assertion compared the function to itself and
+        // passed whatever `pickerTag` was.
+        #expect(typed.pickerTag == .moveToSubfolder("_Not kept"))
         #expect(typed.isSameKind(as: .moveToSubfolder("anything")))
         #expect(!typed.isSameKind(as: .moveToTrash))
         #expect(UnkeptAction.deletePermanently.pickerTag == .deletePermanently)

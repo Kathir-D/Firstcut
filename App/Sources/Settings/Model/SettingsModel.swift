@@ -327,7 +327,9 @@ public enum InfoField: String, Codable, Equatable, Sendable, CaseIterable, Ident
     }
 
     static func formatShutter(_ seconds: Float) -> String {
-        seconds >= 1 ? String(format: "%.1f s", seconds) : "1/\(Int((1 / Double(seconds)).rounded())) s"
+        guard seconds > 0, seconds.isFinite else { return "—" }
+        return seconds >= 1 ? String(format: "%.1f s", seconds)
+            : "1/\(Int((1 / Double(seconds)).rounded())) s"
     }
 
     static func formatRating(_ photo: PhotoVM) -> String {
