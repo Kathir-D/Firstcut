@@ -938,8 +938,19 @@ The single most important property of the app: **navigation never waits for deco
       `DecodeEngine.isDisplayLayout`, which two tests assert for every decode path.
 - [x] Never re-encode to JPEG/HEIC for caching; cache decoded pixels or the camera's original
       compressed bytes only.
-- [ ] Preserve color: honor the embedded ICC profile, render in the display's color space
-      (Display P3), 8-bit is fine for previews; consider 10-bit for T3.
+- [x] Preserve color: honor the embedded ICC profile, render in the display's color space
+      (Display P3), 8-bit is fine for previews; consider 10-bit for T3. **Done 2026-10-10:** the T4
+      develop renders into Display P3 and is ΔE00 ≤ 0.04 from Preview/Photos on 12 frames over all
+      four games (the old sRGB render was 3–4.5 off on saturated colours); any wide-gamut decode
+      stays P3 in the cache, and the histogram/clipping overlay read it in P3. LibRaw was checked
+      as a colorimetric reference (ΔE00 ~2–4 from Apple's engine, a profile difference, not a
+      defect). The embedded Canon previews are sRGB-tagged and already correct. Not done: 10-bit,
+      and EDR headroom on XDR displays. **Open question found on the way:** forcing the pixels
+      (rendering into a buffer, as `decodeExactRaw` does) a full develop measured ~0.5 s median on
+      IMG_3192 (old sRGB path 538 ms, new P3 path 499 ms), not the ~0.079 s recorded above. That
+      figure comes from `testExactRawCostsAboutTheSameAsThePreviewItReplaces`, which times
+      `createCGImage` without touching the pixels and may be timing a lazily rendered image.
+      Re-measure through `DecodeEngine.decodeExactRaw` before relying on the 0.079 s.
 - [ ] **Benchmark task**: compare embedded preview vs `CIRAWFilter` decode on the high-ISO night
       shots in the test set at 100% and fit-to-screen; pick defaults from the result and document it
       here (grain structure, sharpness, noise reduction differences). **Both halves of this are now

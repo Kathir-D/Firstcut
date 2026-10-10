@@ -34,6 +34,12 @@ The first release.
 
 ### Fixed
 
+- The "Exact RAW" develop was rendered into sRGB, which clipped the saturated colours a sports frame
+  is full of (jerseys, signage, LED boards; up to 7% of a frame) and put them ΔE 3–4.5 away from
+  what Preview and Photos show for the same file. It now renders in Display P3 and matches them.
+  Wide-gamut photos (P3 HEIC, Adobe RGB TIFF) also keep their gamut, and the histogram and clipping
+  overlay read them in their own colour space.
+
 Defects found in a full audit of `core/` and `App/`, grouped by what they would have cost a user.
 None of these had a reported symptom, which is why they are worth writing down.
 

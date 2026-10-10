@@ -534,7 +534,11 @@ enum ClippingMask {
         // colour bytes are at offsets 0, 1, 2 and alpha is at offset 3.
         let sourceRowBytes = width * 4
         var source = [UInt8](repeating: 0, count: sourceRowBytes * height)
+        // Read in the image's own space (Display P3 for a RAW develop), so "clips" means the
+        // develop clips, not that sRGB cannot hold the colour. The mask itself is drawn in device
+        // RGB below: it is a red/blue overlay, not photograph data.
         let space = CGColorSpaceCreateDeviceRGB()
+        let readSpace = DecodeEngine.analysisSpace(for: image)
         let readLayout =
             CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         let maskLayout =
@@ -543,7 +547,7 @@ enum ClippingMask {
             guard
                 let context = CGContext(
                     data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                    bytesPerRow: sourceRowBytes, space: space, bitmapInfo: readLayout)
+                    bytesPerRow: sourceRowBytes, space: readSpace, bitmapInfo: readLayout)
             else { return false }
             // No interpolation: the mask is a threshold test, and averaging two neighbouring pixels
             // to decide whether either clips is how a threshold stops being a threshold.

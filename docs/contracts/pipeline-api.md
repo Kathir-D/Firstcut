@@ -219,6 +219,17 @@ the only thing that knows how many pixels it covers, and T2 is decoded at exactl
   ImageIO's container read does not apply the tag, and doing both rotates an orientation-8 frame
   twice. 26 of Game1JENKS's 708 frames are orientation 8.
   `testExactRawKeepsTheExifOrientation` pins this on geometry, which is what a rotation changes.
+- **T4 is rendered in Display P3, and is the picture Preview and Photos show.** The filter runs at
+  its defaults, which are Apple's RAW engine as Preview, Quick Look and Photos use it, and renders
+  straight into an 8-bit Display P3 BGRX buffer (`DecodeEngine.wideGamut`). Measured on 12 frames
+  across the four games, against ImageIO's own develop of the same file: ΔE00 p95 ≤ 0.04, i.e.
+  identical. The earlier sRGB render clipped the 0.2–7% of a sports frame that lies outside sRGB
+  and was ΔE00 3–4.5 off on those pixels. LibRaw (`dcraw_emu -o 5`, Adobe's matrix) was measured as
+  a colorimetric reference and agrees to ΔE00 ~2–4, the normal spread between camera profiles; it
+  has no tone curve and one D65 matrix for every light, so it is a yardstick, not a better develop.
+  `testExactRawMatchesPreviewColour` pins this. The cache therefore holds two colour spaces, device
+  RGB (sRGB) and Display P3, and `inDisplayLayout` keeps any wide-gamut source in P3; the histogram
+  and clipping overlay read a P3 bitmap in P3 (`DecodeEngine.analysisSpace`).
 
 ## Proposed changes
 
@@ -245,6 +256,8 @@ the only thing that knows how many pixels it covers, and T2 is decoded at exactl
   a develop against ~0.09 s for the preview — so memory, not latency, is what keeps T4 one
   photograph deep; `scaleFactor` and draft mode do not help. Six unit tests (no photos needed) and
   four integration tests (real CR3s).
+- v0.5 (2026-10-10): T4 renders in **Display P3** instead of sRGB, matching Preview/Photos to
+  ΔE00 ≤ 0.04 (was 3–4.5 on saturated colours); wide-gamut decodes stay wide in the cache.
 - v0.3 (2026-10-01): matched the contract to the shipped code. **`DisplayImage` is gone entirely** —
   the provider returns a bare `CGImage`, `fullImage(_:)` and `clippingMask(_:)` are no longer
   provider methods, and `thumbnailProgress` is a `Double` rather than an `AsyncStream`. The one

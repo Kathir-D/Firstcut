@@ -580,6 +580,45 @@ struct ImageProviderTests {
         #expect(DecodeEngine.inDisplayLayout(already) === already)
     }
 
+    /// A wide-gamut bitmap stays wide. The RAW develop is Display P3, and so is a P3 HEIC; narrowing
+    /// either to sRGB on the way into the cache clipped the saturated colours (measured ΔE00 3–4.5
+    /// against Preview on a sports frame's jerseys and boards).
+    ///
+    /// The probe is P3's own pure red, which sRGB cannot hold: clipped to sRGB's red and read back
+    /// in P3 it is about (234, 51, 35), so the assertion fails on the old narrowing.
+    @Test("A Display P3 decode keeps its gamut in the display layout")
+    func wideGamutIsNotNarrowedToSRGB() throws {
+        let p3 = try #require(CGColorSpace(name: CGColorSpace.displayP3))
+        let context = try #require(
+            CGContext(
+                data: nil, width: 8, height: 6, bitsPerComponent: 16, bytesPerRow: 0, space: p3,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | CGBitmapInfo.byteOrder16Little.rawValue))
+        context.setFillColor(try #require(CGColor(colorSpace: p3, components: [1, 0, 0, 1])))
+        context.fill(CGRect(x: 0, y: 0, width: 8, height: 6))
+        let deep = try #require(context.makeImage())
+
+        let cached = DecodeEngine.inDisplayLayout(deep)
+        #expect(DecodeEngine.isDisplayLayout(cached))
+        #expect(cached.bitsPerComponent == 8)
+        #expect(
+            cached.colorSpace == p3, "a P3 decode was narrowed to \(String(describing: cached.colorSpace))")
+        #expect(DecodeEngine.analysisSpace(for: cached) == p3)
+
+        // Read back in P3: still P3's pure red.
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let read = try #require(
+            CGContext(
+                data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: p3,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        read.draw(cached, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        #expect(pixel[0] >= 250 && pixel[1] <= 5 && pixel[2] <= 5, "P3 red came back as \(pixel)")
+
+        // An sRGB decode is unchanged: it stays in device RGB.
+        let srgb = try #require(ImageFixtures.image(bitsPerComponent: 8, alpha: .premultipliedLast))
+        #expect(DecodeEngine.inDisplayLayout(srgb).colorSpace == CGColorSpaceCreateDeviceRGB())
+    }
+
     /// The byte-range read must produce the *same pixels* as reading the container.
     ///
     /// This is the whole of the todo.md §7.5 optimisation: hand ImageIO the JPEG's own bytes so it

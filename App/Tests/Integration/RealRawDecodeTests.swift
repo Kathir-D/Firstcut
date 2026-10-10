@@ -473,8 +473,8 @@ final class RealRawDecodeTests: XCTestCase {
                 "an EXIF \(orientation) frame must come out upright (portrait); "
                     + "\(developed.width)x\(developed.height) means the tag was applied twice")
         }
-        // `CIRAWFilter`'s output lacks `byteOrder32Little`, so this is the assertion that
-        // `inDisplayLayout` really ran on the way in.
+        // The develop renders straight into the cache's layout (Display P3, BGRX); this is the
+        // assertion that it really did, rather than handing the layer a format to convert.
         XCTAssertTrue(
             DecodeEngine.isDisplayLayout(developed),
             "the develop came back as \(developed.bitsPerComponent)bpc in "
@@ -489,6 +489,94 @@ final class RealRawDecodeTests: XCTestCase {
         let settled = await provider.waitUntilIdle(timeout: 60)
         XCTAssertTrue(settled)
         XCTAssertEqual(provider.stats.exactRawBytes, 0)
+    }
+
+    /// The develop shows the colours Preview, Quick Look and Photos show for the same file.
+    ///
+    /// ImageIO's own `CreateImageAtIndex` on a CR3 is Apple's RAW engine developing the sensor data
+    /// (16-bit Display P3) — the picture the system's premium viewers put on screen — so it is the
+    /// reference. Compared in CIELAB (ΔE76) on a 600×400 grid, overall and on saturated pixels
+    /// (C* > 40), where an sRGB-clipped develop goes wrong. Measured on 12 frames over the four
+    /// games with an out-of-repo ΔE00 harness: the old sRGB render was p95 ΔE00 up to 4.5 on
+    /// saturated pixels; the Display P3 render is ≤ 0.04 everywhere. The bound here (1.0) sits far
+    /// from both, so it fails on a gamut clip or a flipped bitmap, and not on noise.
+    ///
+    /// It also asserts the frame really has colour outside sRGB, or a pass would prove nothing.
+    func testExactRawMatchesPreviewColour() throws {
+        let files = try realCR3s(count: 24)
+        var compared = 0
+        var sawWideGamut = false
+        for file in files where try exifOrientation(of: file) == 1 {
+            guard compared < 3 else { break }
+            compared += 1
+            let name = file.lastPathComponent
+            let developed = try XCTUnwrap(DecodeEngine.decodeExactRaw(url: file), "\(name)")
+            let source = try XCTUnwrap(CGImageSourceCreateWithURL(file as CFURL, nil))
+            let reference = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+            XCTAssertEqual(developed.width, reference.width, "\(name): not the same frame")
+            XCTAssertEqual(developed.height, reference.height, "\(name): not the same frame")
+
+            let ours = try XCTUnwrap(linearGrid(developed))
+            let theirs = try XCTUnwrap(linearGrid(reference))
+            var all: [Double] = []
+            var saturated: [Double] = []
+            for (a, b) in zip(theirs, ours) {
+                let la = lab(a)
+                let lb = lab(b)
+                let difference =
+                    ((la.0 - lb.0) * (la.0 - lb.0) + (la.1 - lb.1) * (la.1 - lb.1)
+                    + (la.2 - lb.2) * (la.2 - lb.2)).squareRoot()
+                all.append(difference)
+                if (la.1 * la.1 + la.2 * la.2).squareRoot() > 40 { saturated.append(difference) }
+                if min(a.0, a.1, a.2) < -0.01 { sawWideGamut = true }
+            }
+            func p95(_ values: [Double]) -> Double {
+                values.isEmpty ? 0 : values.sorted()[values.count * 95 / 100]
+            }
+            print(
+                "\(name): develop vs Preview, ΔE76 p95 \(String(format: "%.2f", p95(all))) overall, "
+                    + "\(String(format: "%.2f", p95(saturated))) on \(saturated.count) saturated px")
+            XCTAssertLessThan(p95(all), 1.0, "\(name): the develop is not the picture Preview shows")
+            XCTAssertLessThan(
+                p95(saturated), 1.0,
+                "\(name): saturated colours differ from Preview — the develop is clipping its gamut")
+        }
+        XCTAssertGreaterThan(compared, 0, "no upright frame in the first 24 photos")
+        XCTAssertTrue(sawWideGamut, "no colour outside sRGB in the sample; the test proves nothing")
+    }
+
+    /// `image` downsampled to 600×400 in extended linear sRGB, so colours outside sRGB come back as
+    /// negative components instead of being clipped by the read itself.
+    private func linearGrid(_ image: CGImage) -> [(Double, Double, Double)]? {
+        let width = 600
+        let height = 400
+        guard let space = CGColorSpace(name: CGColorSpace.extendedLinearSRGB),
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 32,
+                bytesPerRow: width * 16, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | CGBitmapInfo.floatComponents.rawValue
+                    | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else { return nil }
+        let floats = data.bindMemory(to: Float.self, capacity: width * height * 4)
+        return (0..<(width * height)).map {
+            (Double(floats[$0 * 4]), Double(floats[$0 * 4 + 1]), Double(floats[$0 * 4 + 2]))
+        }
+    }
+
+    /// CIELAB (D65 white) from linear sRGB.
+    private func lab(_ rgb: (Double, Double, Double)) -> (Double, Double, Double) {
+        let x = 0.4124564 * rgb.0 + 0.3575761 * rgb.1 + 0.1804375 * rgb.2
+        let y = 0.2126729 * rgb.0 + 0.7151522 * rgb.1 + 0.0721750 * rgb.2
+        let z = 0.0193339 * rgb.0 + 0.1191920 * rgb.1 + 0.9503041 * rgb.2
+        func f(_ t: Double) -> Double { t > 0.008856 ? cbrt(t) : 7.787 * t + 16 / 116 }
+        let fx = f(x / 0.95047)
+        let fy = f(y)
+        let fz = f(z / 1.08883)
+        return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
     }
 
     /// The EXIF orientation ImageIO reports for a file, as an integer 1...8.

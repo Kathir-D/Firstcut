@@ -1471,20 +1471,35 @@ final class DecodeEngine: @unchecked Sendable {
     static let displayBitmapInfo = CGBitmapInfo(
         rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
 
-    /// The colour space a cached bitmap has to be in to skip the conversion. `deviceRGB` compares
-    /// equal to `CGColorSpace(name: sRGB)`, so both spellings pass.
+    /// The colour space a cached sRGB-gamut bitmap is kept in. `deviceRGB` compares equal to
+    /// `CGColorSpace(name: sRGB)`, so both spellings pass.
     private static let deviceRGB = CGColorSpaceCreateDeviceRGB()
+
+    /// The colour space a **wide-gamut** bitmap is kept in: the RAW develop, and any file whose own
+    /// profile is wider than sRGB (a P3 HEIC, an Adobe RGB TIFF).
+    ///
+    /// Narrowing those to sRGB is not a layout fix, it is a colour error. Measured on 12 Canon R8
+    /// frames across the four test games (`RealRawDecodeTests.testExactRawMatchesPreviewColour`),
+    /// 0.2–3% of a sports frame's pixels lie outside sRGB — jerseys, signage, LED boards — and
+    /// clipping them to sRGB put the develop **ΔE00 3–4.5** away from what Preview and Photos show
+    /// for the same file on those pixels. Kept in Display P3 the develop is ΔE00 ≤ 0.02 from
+    /// Preview everywhere, i.e. identical. Display P3 rather than the screen's own profile because
+    /// the window can move between screens; Core Animation matches it to whichever screen it is on,
+    /// exactly as it does for an sRGB bitmap.
+    static let wideGamut = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
 
     /// Whether `image` can be assigned to `layer.contents` with no conversion at all.
     ///
-    /// The colour space has to be the device one, not merely "some RGB space": a JPEG carrying an
-    /// embedded ICC profile decodes into a colour space that is RGB but is not the display's, and
-    /// Core Animation has to convert *that* anyway. A nil colour space is "unknown", not "fine", so
-    /// it fails: an image the decoder cannot describe is exactly the one whose layout you cannot
-    /// promise.
+    /// The colour space has to be one of the two the cache keeps (sRGB/device or Display P3), not
+    /// merely "some RGB space": a JPEG carrying an embedded ICC profile decodes into a colour space
+    /// that is RGB but is neither, and is redrawn into the nearest of the two. A nil colour space is
+    /// "unknown", not "fine", so it fails: an image the decoder cannot describe is exactly the one
+    /// whose layout you cannot promise.
     static func isDisplayLayout(_ image: CGImage) -> Bool {
         guard image.bitsPerComponent == 8, image.bitsPerPixel == 32 else { return false }
-        guard let space = image.colorSpace, space == deviceRGB else { return false }
+        guard let space = image.colorSpace, space == deviceRGB || space == wideGamut else {
+            return false
+        }
         // The byte order is compared through `rawValue & byteOrderMask` rather than the newer
         // `bitmapInfo.byteOrder` accessor: the overlay member does not exist on the macOS 15 SDK,
         // and CI builds against it (Xcode 16.x) while the app is developed on Xcode 27. The mask
@@ -1514,10 +1529,13 @@ final class DecodeEngine: @unchecked Sendable {
         let alpha = opaque ? CGImageAlphaInfo.noneSkipFirst : CGImageAlphaInfo.premultipliedFirst
         let info = CGBitmapInfo(
             rawValue: alpha.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        // A wide-gamut source stays wide: drawing it into sRGB would clip exactly the saturated
+        // colours its profile exists to carry (see `wideGamut`).
+        let space = image.colorSpace?.isWideGamutRGB == true ? wideGamut : deviceRGB
         guard
             let context = CGContext(
                 data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
-                bytesPerRow: 0, space: deviceRGB, bitmapInfo: info.rawValue)
+                bytesPerRow: 0, space: space, bitmapInfo: info.rawValue)
         else { return image }
         // `.none`, not `.high`: this is a colour conversion at identical geometry, and an
         // interpolating filter at 1:1 would read every pixel's neighbours for nothing.
@@ -1569,19 +1587,39 @@ final class DecodeEngine: @unchecked Sendable {
     // not a saving.) `isDraftModeEnabled` is no help either at full size (0.291 s vs 0.299 s). So the
     // develop is always full resolution and the layer resamples, which is also the only way the
     /// picture keeps the detail the user turned the setting on for.
+    //
+    // **4. Render into Display P3, not the context's default sRGB.** The filter is left at its
+    // defaults on purpose: they are the develop Preview, Quick Look and Photos show (ImageIO's own
+    // RAW decode is the same engine), and measured against `CGImageSourceCreateImageAtIndex` on the
+    // same file the P3 render is ΔE00 ≤ 0.02 — the same picture. The old `createCGImage(_:from:)`
+    // rendered into sRGB and clipped every colour outside it, ΔE00 3–4.5 on saturated pixels (see
+    // `wideGamut`). LibRaw was measured as a reference too (`dcraw_emu -o 5`, Adobe's matrix): it
+    // agrees with this develop to ΔE00 ~2–4 colorimetrically, the usual distance between two camera
+    // profiles, but applies one D65 matrix whatever the light and no tone curve, so it is a
+    // yardstick and not a better picture.
+    //
+    // Rendering straight into a buffer in `displayBitmapInfo` layout also removes the redraw the
+    // old path needed (`createCGImage` hands back the wrong byte order), one 92 MB buffer and one
+    // full-frame draw fewer per develop.
     static func decodeExactRaw(url: URL) -> CGImage? {
         guard let filter = CIRAWFilter(imageURL: url), let output = filter.outputImage else {
             return nil
         }
-        let context = sharedRawContext
-        guard let rendered = context.createCGImage(output, from: output.extent.integral) else {
-            return nil
-        }
-        // Measured layout of `rendered`: 8 bpc, 32 bpp, `deviceRGB`, but `byteOrder32Little` is
-        // **not** set (raw value 1, `premultipliedFirst` in the default byte order). So
-        // `isDisplayLayout` returns false and this redraw is real work, not a no-op — it is the
-        // step that keeps the conversion off the main thread and out of the layer commit (§7.5).
-        return inDisplayLayout(rendered)
+        let extent = output.extent.integral
+        let width = Int(extent.width)
+        let height = Int(extent.height)
+        guard width > 0, height > 0,
+            let bitmap = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: wideGamut, bitmapInfo: displayBitmapInfo.rawValue),
+            let data = bitmap.data
+        else { return nil }
+        // `.BGRA8` is the in-memory order of `noneSkipFirst | byteOrder32Little` (B, G, R, X), and
+        // the develop is opaque, so the skipped byte is written as 255 and never read.
+        sharedRawContext.render(
+            output, toBitmap: data, rowBytes: bitmap.bytesPerRow, bounds: extent,
+            format: .BGRA8, colorSpace: wideGamut)
+        return bitmap.makeImage()
     }
 
     /// One context for every T4 develop.
@@ -1678,6 +1716,13 @@ final class DecodeEngine: @unchecked Sendable {
         [kCGImageSourceShouldCache: false] as CFDictionary
     }
 
+    /// The space to read `image`'s values in for a histogram or a clipping test: its own, when that
+    /// is one the cache keeps. A Display P3 develop read through sRGB would pile every out-of-sRGB
+    /// colour into the top bin and report clipping the sensor data does not have.
+    static func analysisSpace(for image: CGImage) -> CGColorSpace {
+        image.colorSpace == wideGamut ? wideGamut : deviceRGB
+    }
+
     /// 64 bins per channel off a 256-pixel reduction. Small enough to compute inline and to cache
     /// for the life of the session.
     static func histogram(of image: CGImage) -> CullHistogram {
@@ -1693,7 +1738,7 @@ final class DecodeEngine: @unchecked Sendable {
         guard
             let context = CGContext(
                 data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
+                space: analysisSpace(for: image),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return empty }
         context.interpolationQuality = .low
