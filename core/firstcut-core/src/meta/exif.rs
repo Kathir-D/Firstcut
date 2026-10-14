@@ -59,7 +59,12 @@ fn read_from<R: Read + Seek>(
     label: &str,
 ) -> Result<Cr3, String> {
     let mut head: Vec<u8> = Vec::new();
-    let mut want = FIRST_READ;
+    // A CRW's record table is at the *end* of its heap, so it is read whole (CRWs are a few
+    // mebibytes) rather than climbing a ladder whose lower rungs can never find it.
+    let mut want = match kind {
+        FileKind::Raw(RawFormat::Crw) => MAX_READ,
+        _ => FIRST_READ,
+    };
     loop {
         let len = size.min(want) as usize;
         head.clear();
@@ -74,10 +79,48 @@ fn read_from<R: Read + Seek>(
             || size <= want
             || want >= MAX_READ
         {
-            return Ok(meta);
+            let far = match meta.date_time_original {
+                None if carries_a_date(kind) => read_far_ifd0(file, &head, kind, size, label)?,
+                _ => None,
+            };
+            return Ok(far.unwrap_or(meta));
         }
         want = (want * 8).min(MAX_READ);
     }
+}
+
+/// The largest file whose IFD0 is fetched from past [`MAX_READ`]. The buffer is the file's size but
+/// zero-filled by the allocator, so only the two windows actually read are ever touched.
+const MAX_SPARSE: u64 = 1 << 30;
+
+/// A TIFF-shaped file whose IFD0 is beyond everything the ladder read. Phase One and Leaf write the
+/// raw data first and the directories last, so a 22 MB IIQ keeps its IFD0 at byte 22,151,404.
+///
+/// The header is kept where it was and a window from IFD0 onward is read into a buffer laid out like
+/// the file, so every offset the directories name still means what it says.
+fn read_far_ifd0<R: Read + Seek>(
+    file: &mut R,
+    head: &[u8],
+    kind: FileKind,
+    size: u64,
+    label: &str,
+) -> Result<Option<Cr3>, String> {
+    if !matches!(kind, FileKind::Tiff | FileKind::Raw(_)) || size > MAX_SPARSE {
+        return Ok(None);
+    }
+    let Some(ifd0) = Tiff::new(head, 0).and_then(|t| t.u32_at(4)).map(u64::from) else {
+        return Ok(None);
+    };
+    if ifd0 < head.len() as u64 || ifd0 >= size {
+        return Ok(None);
+    }
+    let end = size.min(ifd0 + MAX_READ);
+    let mut sparse = vec![0u8; size as usize];
+    sparse[..head.len()].copy_from_slice(head);
+    file.seek(SeekFrom::Start(ifd0))
+        .and_then(|_| file.read_exact(&mut sparse[ifd0 as usize..end as usize]))
+        .map_err(|e| format!("reading {label}: {e}"))?;
+    Ok(Some(parse(&sparse, kind)))
 }
 
 /// Parses an in-memory header. Split from [`read`] so tests can hand it synthetic bytes.
@@ -96,13 +139,15 @@ pub(super) fn parse(head: &[u8], kind: FileKind) -> Cr3 {
             meta.warnings
                 .push("CR3 is read by the CR3 parser".to_string());
         }
-        FileKind::Raw(RawFormat::Crw) => {
-            meta.warnings
-                .push("CRW (CIFF) has no reader; capture time is the file's".to_string());
-        }
+        FileKind::Raw(RawFormat::Crw) => crw(head, &mut meta),
+        FileKind::Raw(RawFormat::Mrw) => mrw(head, &mut meta),
         FileKind::Raw(RawFormat::X3f) => {
             meta.warnings
                 .push("X3F has no reader; capture time is the file's".to_string());
+        }
+        // Some phones save a JPEG under a `.dng` name (a Galaxy S10's is JFIF, then the DNG).
+        FileKind::Raw(_) if head.starts_with(&[0xff, 0xd8]) => {
+            jpeg(head, 0, &mut meta);
         }
         FileKind::Raw(_) => tiff_file(head, 0, &mut meta),
     }
@@ -152,6 +197,27 @@ fn tiff_file(data: &[u8], base: usize, meta: &mut Cr3) {
         meta.warnings.push("no Exif IFD".to_string());
     }
 
+    // Older bodies (Kodak's DCS, Canon's D2000, Leica's M8 DNG) write the capture settings into
+    // IFD0 itself. Whatever the Exif IFD did not say is taken from there; the Exif IFD wins.
+    if let Some(entries) = tiff.ifd0() {
+        let mut from_ifd0 = Cr3::default();
+        cr3::apply_exif(&tiff, entries, &mut from_ifd0);
+        fill_missing(meta, from_ifd0);
+    }
+    // Panasonic's RW2 and RAW (TIFF magic 0x55 rather than 42) keep ISO in IFD0, tag 0x17.
+    let panasonic_ifd0 = match meta.iso {
+        None if tiff.u16_at(2) == Some(0x55) => tiff.ifd0(),
+        _ => None,
+    };
+    for entry in panasonic_ifd0.into_iter().flatten() {
+        if entry.tag == 0x0017 {
+            meta.iso = tiff
+                .first_int(&entry)
+                .filter(|&v| (1..=i64::from(u32::MAX)).contains(&v))
+                .map(|v| v as u32);
+        }
+    }
+
     // A RAW's IFD0 describes its embedded preview, which is smaller than the photo. The main
     // image is in a SubIFD (or is the Exif dimensions, read above); take the largest.
     for offset in sub_ifds {
@@ -177,6 +243,27 @@ fn tiff_file(data: &[u8], base: usize, meta: &mut Cr3) {
     if meta.width == 0 || meta.height == 0 {
         (meta.width, meta.height) = preview_size;
     }
+}
+
+/// Copies every capture setting `from` has and `meta` does not.
+fn fill_missing(meta: &mut Cr3, from: Cr3) {
+    meta.date_time_original = meta.date_time_original.take().or(from.date_time_original);
+    meta.subsec_time_original = meta
+        .subsec_time_original
+        .take()
+        .or(from.subsec_time_original);
+    meta.offset_time_original = meta
+        .offset_time_original
+        .take()
+        .or(from.offset_time_original);
+    meta.body_serial_number = meta.body_serial_number.take().or(from.body_serial_number);
+    meta.lens_model = meta.lens_model.take().or(from.lens_model);
+    meta.exposure_time_s = meta.exposure_time_s.or(from.exposure_time_s);
+    meta.f_number = meta.f_number.or(from.f_number);
+    meta.exposure_comp_ev = meta.exposure_comp_ev.or(from.exposure_comp_ev);
+    meta.focal_length_mm = meta.focal_length_mm.or(from.focal_length_mm);
+    meta.iso = meta.iso.or(from.iso);
+    meta.metering_mode = meta.metering_mode.take().or(from.metering_mode);
 }
 
 /// The Exif IFD at `offset`: capture settings, Exif dimensions, and the MakerNote.
@@ -388,6 +475,164 @@ fn raf(data: &[u8], meta: &mut Cr3) {
     };
     // RAF's SOF describes the JPEG preview, not the sensor, so it is only a fallback size.
     jpeg(data, offset, meta);
+}
+
+// ───────────────────────────────────────────────────────────────────────────────────── CRW
+
+/// How deep CIFF subdirectories are followed. A camera nests two levels; the cap is on the file.
+const MAX_CIFF_DEPTH: usize = 4;
+/// The most records one CIFF directory may claim (the count is a `u16` from the file).
+const MAX_CIFF_ENTRIES: usize = 256;
+
+/// Canon's CRW (CIFF, 1996–2004): `II`, the header length, `HEAPCCDR`, then a heap of records
+/// whose directory sits at the offset stored in the heap's last four bytes. Subdirectories are
+/// heaps of their own. Read as exiftool's `CanonRaw` module documents it.
+fn crw(data: &[u8], meta: &mut Cr3) {
+    if data.get(..2) != Some(b"II") || data.get(6..14) != Some(b"HEAPCCDR") {
+        meta.warnings.push("not a CRW (no CIFF header)".to_string());
+        return;
+    }
+    let start = le32(data, 2).unwrap_or(0) as usize;
+    ciff_heap(data, start, data.len(), 0, meta);
+    if meta.date_time_original.is_none() {
+        meta.warnings
+            .push("CRW has no readable timestamp; capture time is the file's".to_string());
+    }
+}
+
+fn ciff_heap(data: &[u8], start: usize, end: usize, depth: usize, meta: &mut Cr3) {
+    if depth > MAX_CIFF_DEPTH || end > data.len() || end < start.saturating_add(4) {
+        return;
+    }
+    let Some(table) = le32(data, end - 4).and_then(|t| start.checked_add(t as usize)) else {
+        return;
+    };
+    let Some(count) = le16(data, table) else {
+        return;
+    };
+    for i in 0..usize::from(count).min(MAX_CIFF_ENTRIES) {
+        let at = table + 2 + i * 10;
+        let (Some(tag), Some(size), Some(offset)) =
+            (le16(data, at), le32(data, at + 2), le32(data, at + 6))
+        else {
+            return;
+        };
+        let (size, offset) = (size as usize, offset as usize);
+        // Storage: a value of eight bytes or fewer can live in the record itself.
+        let in_record = tag & 0xc000 == 0x4000;
+        let value_at = if in_record {
+            at + 2
+        } else {
+            match start.checked_add(offset) {
+                Some(v) => v,
+                None => continue,
+            }
+        };
+        let value_len = if in_record { 8 } else { size };
+        let Some(value) = value_at
+            .checked_add(value_len)
+            .and_then(|e| data.get(value_at..e))
+        else {
+            continue;
+        };
+        // Data types 5 and 6 (0x2800, 0x3000) are subdirectories.
+        if !in_record && matches!((tag >> 11) & 7, 5 | 6) {
+            ciff_heap(data, value_at, value_at + size, depth + 1, meta);
+            continue;
+        }
+        match tag & 0x3fff {
+            // MakeModel: two NUL-terminated strings.
+            0x080a => {
+                let mut parts = value
+                    .split(|&b| b == 0)
+                    .map(|p| String::from_utf8_lossy(p).trim().to_string());
+                meta.make = parts.next().filter(|s| !s.is_empty());
+                meta.model = parts.next().filter(|s| !s.is_empty());
+            }
+            // TimeStamp: seconds since 1970 *in local time*, which is what DateTimeOriginal is.
+            0x180e => {
+                meta.date_time_original = le32(value, 0)
+                    .filter(|&s| s > 0)
+                    .map(|s| exif_stamp(i64::from(s)));
+            }
+            // ImageSpec: width and height first.
+            0x1810 => {
+                if let (Some(w), Some(h)) = (le32(value, 0), le32(value, 4)) {
+                    meta.width = w;
+                    meta.height = h;
+                }
+            }
+            // FocalLength: [type, focal length in mm, …] as u16.
+            0x1029 => {
+                meta.focal_length_mm = le16(value, 2).filter(|&f| f > 0).map(f32::from);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn le16(data: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(
+        data.get(at..at.checked_add(2)?)?.try_into().ok()?,
+    ))
+}
+
+fn le32(data: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(
+        data.get(at..at.checked_add(4)?)?.try_into().ok()?,
+    ))
+}
+
+/// `YYYY:MM:DD hh:mm:ss` for seconds since 1970, the shape `DateTimeOriginal` is written in.
+fn exif_stamp(secs: i64) -> String {
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    // Howard Hinnant's civil_from_days, the inverse of `meta::days_from_civil`.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}:{month:02}:{day:02} {:02}:{:02}:{:02}",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+// ───────────────────────────────────────────────────────────────────────────────────── MRW
+
+/// Minolta's MRW (Dimage, Dynax, and Sony's A100): `\0MRM`, the header length, then blocks of
+/// `\0` + three letters + a big-endian length. `\0TTW` is a TIFF stream with IFD0 and the Exif IFD.
+fn mrw(data: &[u8], meta: &mut Cr3) {
+    if data.get(..4) != Some(b"\0MRM") {
+        meta.warnings.push("not an MRW (bad magic)".to_string());
+        return;
+    }
+    let header_end = data
+        .get(4..8)
+        .map(|b| 8 + u32::from_be_bytes(b.try_into().expect("four bytes")) as usize)
+        .unwrap_or(0)
+        .min(data.len());
+    let mut pos = 8;
+    while pos + 8 <= header_end {
+        let name = &data[pos..pos + 4];
+        let len = u32::from_be_bytes(data[pos + 4..pos + 8].try_into().expect("four bytes"));
+        let body = pos + 8;
+        if name == b"\0TTW" {
+            tiff_file(data, body, meta);
+            return;
+        }
+        pos = match body.checked_add(len as usize) {
+            Some(next) => next,
+            None => break,
+        };
+    }
+    meta.warnings.push("MRW has no TTW block".to_string());
 }
 
 // ──────────────────────────────────────────────────────────────────────────────────── HEIF
@@ -1200,5 +1445,205 @@ mod tests {
             Some("2026:08:27 19:54:49")
         );
         assert_eq!(meta.iso, Some(1600));
+    }
+
+    #[test]
+    fn capture_settings_written_into_ifd0_are_read_from_there() {
+        // A Kodak DCS or Leica M8 layout: no Exif IFD, the settings sit in IFD0 itself.
+        let mut raw = b"II\x2a\x00".to_vec();
+        raw.extend_from_slice(&8u32.to_le_bytes());
+        raw.extend(fixtures::ifd(
+            8,
+            &[
+                (0x010f, 2, fixtures::ascii("Kodak")),
+                (0x8827, 3, 80u16.to_le_bytes().to_vec()),
+                (0x9003, 2, fixtures::ascii("2017:04:14 12:34:50")),
+            ],
+        ));
+        let meta = parse(&raw, FileKind::Raw(RawFormat::Dcr));
+        assert_eq!(
+            meta.date_time_original.as_deref(),
+            Some("2017:04:14 12:34:50")
+        );
+        assert_eq!(meta.iso, Some(80));
+        assert_eq!(meta.make.as_deref(), Some("Kodak"));
+
+        // Where both say something, the Exif IFD wins.
+        let exif_at = 8 + 2 + 2 * 12 + 4;
+        let mut both = b"II\x2a\x00".to_vec();
+        both.extend_from_slice(&8u32.to_le_bytes());
+        both.extend(fixtures::ifd(
+            8,
+            &[
+                (0x8769, 4, (exif_at as u32).to_le_bytes().to_vec()),
+                (0x8827, 3, 25u16.to_le_bytes().to_vec()),
+            ],
+        ));
+        assert_eq!(both.len(), exif_at);
+        both.extend(fixtures::ifd(
+            exif_at,
+            &[(0x8827, 3, 1600u16.to_le_bytes().to_vec())],
+        ));
+        assert_eq!(parse(&both, FileKind::Raw(RawFormat::Dng)).iso, Some(1600));
+    }
+
+    #[test]
+    fn a_panasonic_rw2_reads_iso_from_ifd0() {
+        let mut raw = b"IIU\x00".to_vec();
+        raw.extend_from_slice(&8u32.to_le_bytes());
+        raw.extend(fixtures::ifd(
+            8,
+            &[
+                (0x0017, 3, 800u16.to_le_bytes().to_vec()),
+                (0x010f, 2, fixtures::ascii("Panasonic")),
+            ],
+        ));
+        assert_eq!(parse(&raw, FileKind::Raw(RawFormat::Rw2)).iso, Some(800));
+        // Tag 0x17 means something else in an ordinary TIFF.
+        raw[2] = 0x2a;
+        assert_eq!(parse(&raw, FileKind::Raw(RawFormat::Dng)).iso, None);
+    }
+
+    #[test]
+    fn an_ifd0_past_the_read_limit_is_fetched_from_where_it_is() {
+        // Phase One's layout: the raw data first, the directories at the end of a big file.
+        let ifd0_at = (MAX_READ as usize) + (3 << 20);
+        let exif_at = ifd0_at + 2 + 12 + 4;
+        let mut whole = b"II\x2a\x00".to_vec();
+        whole.extend_from_slice(&(ifd0_at as u32).to_le_bytes());
+        whole.resize(ifd0_at, 0);
+        whole.extend(fixtures::ifd(
+            ifd0_at,
+            &[(0x8769, 4, (exif_at as u32).to_le_bytes().to_vec())],
+        ));
+        whole.extend(fixtures::ifd(
+            exif_at,
+            &[(0x9003, 2, fixtures::ascii("2017:12:02 20:25:16"))],
+        ));
+        let size = whole.len() as u64;
+        let mut reader = std::io::Cursor::new(whole);
+        let meta =
+            read_from(&mut reader, FileKind::Raw(RawFormat::Iiq), size, "the iiq").expect("a read");
+        assert_eq!(
+            meta.date_time_original.as_deref(),
+            Some("2017:12:02 20:25:16")
+        );
+
+        // An IFD0 offset past the end of the file is a warning, not a read error.
+        let mut short = b"II\x2a\x00".to_vec();
+        short.extend_from_slice(&u32::MAX.to_le_bytes());
+        let size = short.len() as u64;
+        let meta = read_from(
+            &mut std::io::Cursor::new(short),
+            FileKind::Raw(RawFormat::Iiq),
+            size,
+            "the iiq",
+        )
+        .expect("not an error");
+        assert!(meta.date_time_original.is_none());
+    }
+
+    #[test]
+    fn a_jpeg_saved_as_a_dng_is_read_as_a_jpeg() {
+        let jpeg = fixtures::jpeg(&tiff_bytes(), 4032, 3024);
+        let meta = parse(&jpeg, FileKind::Raw(RawFormat::Dng));
+        assert_read(&meta);
+        assert_eq!((meta.width, meta.height), (4032, 3024));
+    }
+
+    /// A CRW: header, then a heap whose last four bytes point at its record table. One record is
+    /// a subdirectory (type 5), the way a camera nests ImageProps.
+    fn crw_bytes() -> Vec<u8> {
+        let mut out = b"II".to_vec();
+        out.extend_from_slice(&26u32.to_le_bytes());
+        out.extend_from_slice(b"HEAPCCDR");
+        out.resize(26, 0);
+        let heap = out.len();
+
+        // The subdirectory heap: a TimeStamp in the heap, and the focal length, which (storage
+        // bits 0x4000) lives in the record's own eight bytes: [type 0, 44 mm, …] as u16.
+        let mut sub = Vec::new();
+        sub.extend_from_slice(&1_000_000_000u32.to_le_bytes()); // 2001-09-09 01:46:40
+        sub.extend_from_slice(&[0; 8]);
+        let table = sub.len();
+        sub.extend_from_slice(&2u16.to_le_bytes());
+        sub.extend_from_slice(&0x180eu16.to_le_bytes());
+        sub.extend_from_slice(&12u32.to_le_bytes());
+        sub.extend_from_slice(&0u32.to_le_bytes());
+        sub.extend_from_slice(&0x5029u16.to_le_bytes());
+        sub.extend_from_slice(&[0, 0, 0x2c, 0x00, 0, 0, 0, 0]);
+        sub.extend_from_slice(&(table as u32).to_le_bytes());
+
+        let mut root = Vec::new();
+        let make_at = root.len();
+        root.extend_from_slice(b"Canon\0Canon PowerShot Pro70\0");
+        let sub_at = root.len();
+        root.extend_from_slice(&sub);
+        let table = root.len();
+        root.extend_from_slice(&2u16.to_le_bytes());
+        for (tag, size, offset) in [
+            (0x080au16, 28u32, make_at),
+            (0x300a, sub.len() as u32, sub_at),
+        ] {
+            root.extend_from_slice(&tag.to_le_bytes());
+            root.extend_from_slice(&size.to_le_bytes());
+            root.extend_from_slice(&(offset as u32).to_le_bytes());
+        }
+        root.extend_from_slice(&(table as u32).to_le_bytes());
+        assert_eq!(heap, 26);
+        out.extend(root);
+        out
+    }
+
+    #[test]
+    fn a_crw_is_read_through_its_ciff_heap() {
+        let meta = parse(&crw_bytes(), FileKind::Raw(RawFormat::Crw));
+        assert_eq!(meta.make.as_deref(), Some("Canon"));
+        assert_eq!(meta.model.as_deref(), Some("Canon PowerShot Pro70"));
+        assert_eq!(
+            meta.date_time_original.as_deref(),
+            Some("2001:09:09 01:46:40")
+        );
+        assert_eq!(meta.focal_length_mm, Some(44.0));
+    }
+
+    #[test]
+    fn a_damaged_crw_is_a_warning() {
+        // Every truncation parses without a panic; what it finds in the remains is not the point.
+        let whole = crw_bytes();
+        for cut in 0..whole.len() {
+            let _ = parse(&whole[..cut], FileKind::Raw(RawFormat::Crw));
+        }
+        let mut wrong = crw_bytes();
+        let end = wrong.len();
+        wrong[end - 4..].copy_from_slice(&u32::MAX.to_le_bytes());
+        let meta = parse(&wrong, FileKind::Raw(RawFormat::Crw));
+        assert!(!meta.warnings.is_empty());
+    }
+
+    #[test]
+    fn an_mrw_is_read_through_its_ttw_block() {
+        let tiff = tiff_bytes();
+        let mut out = b"\0MRM".to_vec();
+        let blocks_len = 8 + 4 + 8 + tiff.len();
+        out.extend_from_slice(&(blocks_len as u32).to_be_bytes());
+        out.extend_from_slice(b"\0PRD");
+        out.extend_from_slice(&4u32.to_be_bytes());
+        out.extend_from_slice(&[1, 2, 3, 4]);
+        out.extend_from_slice(b"\0TTW");
+        out.extend_from_slice(&(tiff.len() as u32).to_be_bytes());
+        out.extend_from_slice(&tiff);
+        assert_read(&parse(&out, FileKind::Raw(RawFormat::Mrw)));
+        assert!(
+            !parse(b"\0MRM\0\0\0\x08\0PRD", FileKind::Raw(RawFormat::Mrw))
+                .warnings
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_exif_stamp_is_civil_time() {
+        assert_eq!(exif_stamp(0), "1970:01:01 00:00:00");
+        assert_eq!(exif_stamp(951_782_400), "2000:02:29 00:00:00");
     }
 }
