@@ -55,6 +55,11 @@ final class FilmstripScrollView: NSScrollView {
         set { strip.onSelect = newValue }
     }
 
+    var ratingMode: RatingMode {
+        get { strip.ratingMode }
+        set { strip.ratingMode = newValue }
+    }
+
     func apply(frames: [FilmstripFrame], selectedID: PhotoID?) {
         strip.apply(frames: frames, selectedID: selectedID)
         DispatchQueue.main.async { [weak self] in self?.revealSelection(animated: false) }
@@ -97,7 +102,15 @@ final class FilmstripContentView: NSView {
     private var frames: [FilmstripFrame] = []
     private var items: [FrameLayers] = []
     private(set) var selectedID: PhotoID?
-    private var ratingMode: RatingMode = .stars
+    private var ratingModeValue: RatingMode = .stars
+
+    var ratingMode: RatingMode {
+        get { ratingModeValue }
+        set {
+            ratingModeValue = newValue
+            needsLayout = true
+        }
+    }
     private var needsThumbnailPass = true
     private var pressedIndex: Int?
     private var thumbnailRetryScheduled = false
