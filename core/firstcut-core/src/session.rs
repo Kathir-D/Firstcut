@@ -503,7 +503,55 @@ impl Session {
         if label.is_some() {
             rating.label = label;
         }
+        let (change, values, _) = Self::record_rating(&mut state, photo, rating, None)?;
+        drop(state);
 
+        // A rating that clears everything removes the sidecar's values rather than leaving a
+        // stale rating behind, so the queued write still happens.
+        self.queue_sidecar(photo, &values);
+        Ok(change)
+    }
+
+    /// Rates several photos as **one** change: one undo puts every one of them back.
+    ///
+    /// This is what "Reject whole batch" (an opt-in setting, off by default) writes. Each photo is
+    /// still its own rating, sidecar and history row; the rows share a group so that undo and redo
+    /// treat them as the single action the user took. A photo whose rating would not change is
+    /// left out, so undoing never "restores" a value that was never replaced.
+    pub fn set_ratings(&self, ratings: &[(PhotoId, Rating)]) -> Result<Vec<Change>> {
+        let mut state = self.state();
+        let mut changes = Vec::with_capacity(ratings.len());
+        let mut sidecars = Vec::with_capacity(ratings.len());
+        let mut group = None;
+        for &(photo, rating) in ratings {
+            let before = records::rating_of(&state.db, photo.0)?
+                .map_or_else(Rating::neutral, |row| row.rating);
+            if before == rating {
+                continue;
+            }
+            let (change, values, seq) = Self::record_rating(&mut state, photo, rating, group)?;
+            if group.is_none() {
+                records::start_history_group(&state.db, seq)?;
+                group = Some(seq);
+            }
+            changes.push(change);
+            sidecars.push((photo, values));
+        }
+        drop(state);
+        for (photo, values) in &sidecars {
+            self.queue_sidecar(*photo, values);
+        }
+        Ok(changes)
+    }
+
+    /// Writes one rating and its history row, and returns the change, the sidecar values and the
+    /// row's `seq`. The caller queues the sidecar once the state lock is released.
+    fn record_rating(
+        state: &mut State,
+        photo: PhotoId,
+        rating: Rating,
+        group_id: Option<i64>,
+    ) -> Result<(Change, crate::xmp::document::XmpValues, i64)> {
         let before =
             records::rating_of(&state.db, photo.0)?.map_or_else(Rating::neutral, |row| row.rating);
         let (batch, batch_index) = state.batch_of(photo);
@@ -518,7 +566,7 @@ impl Session {
         let shown =
             crate::store::rating::display_rating_at(&rating, state.rating_mode, state.keep_stars);
         let values = state.mapping.values_for(shown, state.rating_mode);
-        let row = records::write_rating(
+        records::write_rating(
             &state.db,
             &RatingWrite {
                 photo_id: photo.0,
@@ -537,7 +585,7 @@ impl Session {
             before,
             after: rating,
         };
-        records::push_history(
+        let seq = records::push_history(
             &state.db,
             &HistoryEntry {
                 seq: 0,
@@ -548,34 +596,58 @@ impl Session {
                 after: rating,
                 at_ms: crate::store::now_ms(),
                 undone: false,
+                group_id,
             },
         )?;
-        drop(state);
-
-        // A rating that clears everything removes the sidecar's values rather than leaving a
-        // stale rating behind, so the queued write still happens.
-        self.queue_sidecar(photo, &values);
-        let _ = row;
-        Ok(change)
+        Ok((change, values, seq))
     }
 
     /// Reverts the newest change, or `None` when there is nothing to undo.
+    ///
+    /// A grouped change ([`Self::set_ratings`]) is reverted whole; this reports the last photo of
+    /// it. Callers that show ratings should use [`Self::undo_step`], which reports every photo.
     pub fn undo(&self) -> Option<Change> {
-        self.apply_history(crate::store::records::last_undoable, true)
+        self.undo_step().pop()
     }
 
-    /// Re-applies the newest undone change, or `None` when there is nothing to redo.
+    /// Re-applies the newest undone change, or `None` when there is nothing to redo. Grouped
+    /// changes as in [`Self::undo`].
     pub fn redo(&self) -> Option<Change> {
-        self.apply_history(crate::store::records::last_redoable, false)
+        self.redo_step().pop()
+    }
+
+    /// Reverts one step — a single rating, or every rating of one grouped change — and reports
+    /// each photo it put back, in the order it did so. Empty when there is nothing to undo.
+    pub fn undo_step(&self) -> Vec<Change> {
+        self.apply_history(crate::store::records::next_undo_step, true)
+    }
+
+    /// Re-applies one undone step, as [`Self::undo_step`].
+    pub fn redo_step(&self) -> Vec<Change> {
+        self.apply_history(crate::store::records::next_redo_step, false)
     }
 
     fn apply_history(
         &self,
-        pick: fn(&Db) -> crate::store::Result<Option<HistoryEntry>>,
+        pick: fn(&Db) -> crate::store::Result<Vec<HistoryEntry>>,
         undoing: bool,
-    ) -> Option<Change> {
+    ) -> Vec<Change> {
+        let entries = {
+            let state = self.state();
+            pick(&state.db).unwrap_or_default()
+        };
+        let mut changes = Vec::with_capacity(entries.len());
+        for entry in entries {
+            match self.apply_history_entry(entry, undoing) {
+                Some(change) => changes.push(change),
+                None => break,
+            }
+        }
+        changes
+    }
+
+    fn apply_history_entry(&self, entry: HistoryEntry, undoing: bool) -> Option<Change> {
         let mut state = self.state();
-        let entry = pick(&state.db).ok().flatten()?;
         // Undo puts the "before" value back; redo puts the "after" value back. The change reports
         // what the rating was when this call found it, which is the other end of the same pair.
         let after = if undoing { entry.before } else { entry.after };
@@ -1819,6 +1891,109 @@ mod tests {
         assert_eq!(undone.photo, target.id);
         assert_eq!(undone.batch, change.batch);
         assert_eq!(undone.batch_index, change.batch_index);
+    }
+
+    /// "Reject whole batch": every frame of a burst rejected in one call, and one undo puts every
+    /// one of them back — not just the last frame, which is what a log of single changes would do.
+    #[test]
+    fn a_batch_rejected_at_once_is_undone_and_redone_at_once() {
+        let (_s, folder, session) = session_with(photo_run());
+        let snapshot = session.snapshot();
+        let batch = &snapshot.batches[1];
+        let frames: Vec<PhotoId> = batch.photo_ids.clone();
+        assert!(frames.len() > 1, "the fixture's bursts have several frames");
+
+        // One frame was rated before: undo must put that rating back, not clear it.
+        session.set_rating(frames[0], Rating::stars(3)).unwrap();
+        let reject = Rating {
+            flag: Flag::Reject,
+            ..Rating::neutral()
+        };
+        let ratings: Vec<_> = frames.iter().map(|&p| (p, reject)).collect();
+        let changes = session.set_ratings(&ratings).unwrap();
+        assert_eq!(changes.len(), frames.len());
+        assert!(
+            frames
+                .iter()
+                .all(|p| session.snapshot().ratings.get(&p.0) == Some(&reject))
+        );
+
+        let undone = session.undo_step();
+        assert_eq!(undone.len(), frames.len(), "the whole batch is one step");
+        let after_undo = session.snapshot().ratings;
+        assert_eq!(after_undo.get(&frames[0].0), Some(&Rating::stars(3)));
+        for frame in &frames[1..] {
+            assert_eq!(
+                after_undo
+                    .get(&frame.0)
+                    .copied()
+                    .unwrap_or_else(Rating::neutral),
+                Rating::neutral()
+            );
+        }
+        // The single rating made before the batch is the next step, on its own.
+        let earlier = session.undo_step();
+        assert_eq!(earlier.len(), 1);
+        assert_eq!(earlier[0].photo, frames[0]);
+
+        assert_eq!(session.redo_step().len(), 1);
+        let redone = session.redo_step();
+        assert_eq!(redone.len(), frames.len());
+        assert!(
+            frames
+                .iter()
+                .all(|p| session.snapshot().ratings.get(&p.0) == Some(&reject))
+        );
+
+        // Every sidecar follows, so Lightroom sees each frame rejected.
+        session.flush();
+        for frame in &frames {
+            let meta = snapshot.photos.iter().find(|m| m.id == *frame).unwrap();
+            let sidecar = folder.path().join(crate::xmp::sidecar_path(&meta.rel_path));
+            assert_eq!(
+                crate::xmp::read_sidecar(&sidecar).unwrap().unwrap().rating,
+                Some(-1)
+            );
+        }
+    }
+
+    /// A frame already rejected is left out of the step, so undo cannot "restore" it to the value
+    /// it already had — and a batch with nothing left to reject records nothing at all.
+    #[test]
+    fn rejecting_a_batch_skips_frames_already_rejected() {
+        let (_s, _f, session) = session_with(photo_run());
+        let frames = session.snapshot().batches[0].photo_ids.clone();
+        let reject = Rating {
+            flag: Flag::Reject,
+            ..Rating::neutral()
+        };
+        session.set_rating(frames[0], reject).unwrap();
+        let ratings: Vec<_> = frames.iter().map(|&p| (p, reject)).collect();
+        assert_eq!(
+            session.set_ratings(&ratings).unwrap().len(),
+            frames.len() - 1
+        );
+        assert!(session.set_ratings(&ratings).unwrap().is_empty());
+        assert_eq!(session.undo_step().len(), frames.len() - 1);
+        assert_eq!(session.undo_step().len(), 1);
+        assert!(session.undo_step().is_empty());
+    }
+
+    /// `undo()` still works over a grouped change, and reverts all of it.
+    #[test]
+    fn plain_undo_reverts_a_whole_group_too() {
+        let (_s, _f, session) = session_with(photo_run());
+        let frames = session.snapshot().batches[2].photo_ids.clone();
+        let ratings: Vec<_> = frames.iter().map(|&p| (p, Rating::stars(1))).collect();
+        session.set_ratings(&ratings).unwrap();
+        assert!(session.undo().is_some());
+        let now = session.snapshot().ratings;
+        assert!(
+            frames.iter().all(
+                |p| now.get(&p.0).copied().unwrap_or_else(Rating::neutral) == Rating::neutral()
+            )
+        );
+        assert!(session.undo().is_none());
     }
 
     /// Twelve bursts three seconds apart: a shoot with real boundaries between them.

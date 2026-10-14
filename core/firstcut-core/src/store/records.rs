@@ -76,6 +76,9 @@ pub struct HistoryEntry {
     pub at_ms: i64,
     /// True once undone: those rows are the redo stack.
     pub undone: bool,
+    /// Rows written by one action ("Reject whole batch") share a group, and undo and redo take the
+    /// group as one step. The group's id is its first row's `seq`; `None` is a change of its own.
+    pub group_id: Option<i64>,
 }
 
 /// One physical file operation from the Finish step (todo.md §9.7).
@@ -625,8 +628,8 @@ pub fn push_history(db: &Db, entry: &HistoryEntry) -> Result<i64> {
     conn.execute(
         "INSERT INTO history (photo_id, batch_id, batch_index, before_stars, before_flag,
                               before_label, before_keep, after_stars, after_flag, after_label,
-                              after_keep, at_ms, undone)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                              after_keep, at_ms, undone, group_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         rusqlite::params![
             id_to_i64(entry.photo_id),
             id_to_i64(entry.batch_id),
@@ -641,9 +644,20 @@ pub fn push_history(db: &Db, entry: &HistoryEntry) -> Result<i64> {
             entry.after.keep as i64,
             entry.at_ms,
             entry.undone as i64,
+            entry.group_id,
         ],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Makes the row at `seq` the first of a group whose id is its own `seq`, so the rows that follow
+/// can join it with `group_id: Some(seq)`.
+pub fn start_history_group(db: &Db, seq: i64) -> Result<()> {
+    db.conn().execute(
+        "UPDATE history SET group_id = ?1 WHERE seq = ?1",
+        rusqlite::params![seq],
+    )?;
+    Ok(())
 }
 
 /// Reads a history row by column name, for the same reason as [`rating_from_row`].
@@ -677,12 +691,13 @@ fn history_from_row(row: &Row<'_>) -> rusqlite::Result<HistoryEntry> {
         },
         at_ms: row.get("at_ms")?,
         undone: row.get::<_, i64>("undone")? != 0,
+        group_id: row.get("group_id")?,
     })
 }
 
 const HISTORY_COLUMNS: &str = "seq, photo_id, batch_id, batch_index, before_stars, before_flag, \
                                before_label, before_keep, after_stars, after_flag, after_label, \
-                               after_keep, at_ms, undone";
+                               after_keep, at_ms, undone, group_id";
 
 /// The newest change that has not been undone: the next `undo()`.
 pub fn last_undoable(db: &Db) -> Result<Option<HistoryEntry>> {
@@ -703,6 +718,44 @@ pub fn last_redoable(db: &Db) -> Result<Option<HistoryEntry>> {
         db,
         "SELECT {HISTORY_COLUMNS} FROM history WHERE undone = 1 ORDER BY seq ASC LIMIT 1",
     )
+}
+
+/// The next undo step: the newest change and, when it belongs to a group, the rest of that group
+/// that has not been undone, newest first (the order they are put back in).
+pub fn next_undo_step(db: &Db) -> Result<Vec<HistoryEntry>> {
+    history_step(
+        db,
+        last_undoable(db)?,
+        "SELECT {HISTORY_COLUMNS} FROM history WHERE group_id = ?1 AND undone = 0 ORDER BY seq DESC",
+    )
+}
+
+/// The next redo step: the oldest undone change and the rest of its group, oldest first.
+pub fn next_redo_step(db: &Db) -> Result<Vec<HistoryEntry>> {
+    history_step(
+        db,
+        last_redoable(db)?,
+        "SELECT {HISTORY_COLUMNS} FROM history WHERE group_id = ?1 AND undone = 1 ORDER BY seq ASC",
+    )
+}
+
+fn history_step(
+    db: &Db,
+    first: Option<HistoryEntry>,
+    group_sql: &str,
+) -> Result<Vec<HistoryEntry>> {
+    let Some(first) = first else {
+        return Ok(Vec::new());
+    };
+    let Some(group) = first.group_id else {
+        return Ok(vec![first]);
+    };
+    let conn = db.conn();
+    let mut stmt = conn.prepare(&group_sql.replace("{HISTORY_COLUMNS}", HISTORY_COLUMNS))?;
+    let rows = stmt
+        .query_map([group], history_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
 }
 
 fn history_one(db: &Db, sql: &str) -> Result<Option<HistoryEntry>> {
@@ -1186,6 +1239,7 @@ mod tests {
                 after,
                 at_ms: crate::store::now_ms(),
                 undone: false,
+                group_id: None,
             },
         )
         .unwrap();
@@ -1464,6 +1518,7 @@ mod tests {
                     after: Rating::stars(4),
                     at_ms: 1,
                     undone: false,
+                    group_id: None,
                 },
             )
             .unwrap();

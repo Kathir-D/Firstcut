@@ -657,6 +657,13 @@ impl From<crate::session::Change> for FfiChange {
     }
 }
 
+/// One photo's new rating, for `set_ratings`.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiPhotoRating {
+    pub photo: u64,
+    pub rating: FfiRating,
+}
+
 /// How the opened database relates to the folder (docs/contracts/session-api.md).
 #[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
 pub enum FfiMatchKind {
@@ -953,6 +960,41 @@ impl Session {
     /// Re-applies the newest undone change, or `nil` when there is nothing to redo.
     pub fn redo(&self) -> Option<FfiChange> {
         self.inner.redo().map(FfiChange::from)
+    }
+
+    /// Rates several photos as one change that one undo reverts whole ("Reject whole batch", an
+    /// opt-in setting). Photos whose rating is already the one asked for are left out of the
+    /// result and of the undo step.
+    pub fn set_ratings(&self, ratings: Vec<FfiPhotoRating>) -> Result<Vec<FfiChange>, FfiError> {
+        let ratings: Vec<_> = ratings
+            .into_iter()
+            .map(|r| (crate::batch::PhotoId(r.photo), r.rating.into()))
+            .collect();
+        self.inner
+            .set_ratings(&ratings)
+            .map(|changes| changes.into_iter().map(FfiChange::from).collect())
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
+    /// Reverts one undo step and reports every photo it put back: one for a single rating, the
+    /// whole group for a `set_ratings` call. Empty when there is nothing to undo.
+    pub fn undo_step(&self) -> Vec<FfiChange> {
+        self.inner
+            .undo_step()
+            .into_iter()
+            .map(FfiChange::from)
+            .collect()
+    }
+
+    /// Re-applies one undone step, as `undo_step`.
+    pub fn redo_step(&self) -> Vec<FfiChange> {
+        self.inner
+            .redo_step()
+            .into_iter()
+            .map(FfiChange::from)
+            .collect()
     }
 
     /// Records where the user is, so reopening the shoot lands in the same place. Also marks the

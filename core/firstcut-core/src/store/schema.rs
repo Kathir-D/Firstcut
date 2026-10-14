@@ -15,10 +15,11 @@ use rusqlite::Connection;
 use super::error::{Result, StoreError};
 
 /// The schema version this build expects.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 const V1: &str = include_str!("schema_v1.sql");
 const V2: &str = include_str!("schema_v2.sql");
+const V3: &str = include_str!("schema_v3.sql");
 
 /// One forward-only step.
 pub struct Migration {
@@ -35,6 +36,10 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 2,
         sql: V2,
+    },
+    Migration {
+        version: 3,
+        sql: V3,
     },
 ];
 
@@ -403,5 +408,32 @@ mod tests {
             crate::store::db::default_sessions_dir(home),
             "and a home directory gives the documented layout under it"
         );
+    }
+
+    /// Version 3 against a database written by version 2: an undo log written before groups
+    /// existed reads back as single changes, which is what every one of them was.
+    #[test]
+    fn version_three_adds_history_groups_and_old_rows_stay_single_changes() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        conn.execute_batch(MIGRATIONS[1].sql).unwrap();
+        set_user_version(&conn, 2).unwrap();
+        conn.execute(
+            "INSERT INTO history (photo_id, batch_id, batch_index, before_stars, before_flag,
+                                  before_keep, after_stars, after_flag, after_keep, at_ms, undone)
+             VALUES (1, 1, 0, 0, 0, 0, 3, 0, 0, 1, 0)",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&conn).unwrap(), SCHEMA_VERSION);
+        let group: Option<i64> = conn
+            .query_row("SELECT group_id FROM history", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(group, None);
+        let stars: i64 = conn
+            .query_row("SELECT after_stars FROM history", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stars, 3);
     }
 }
