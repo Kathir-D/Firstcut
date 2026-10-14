@@ -62,26 +62,35 @@ struct BatchNavigationCapsule: View {
     let environment: AppEnvironment
 
     var body: some View {
-        GlassCapsule {
-            HStack(spacing: 0) {
-                capsuleButton(
-                    systemName: "chevron.left",
-                    label: "Previous batch",
-                    isEnabled: environment.state.currentBatchIndex > 0,
-                    action: .batchPrevious
-                )
-                Divider().frame(height: 14).overlay(Appearance.separator)
-                capsuleButton(
-                    systemName: "chevron.right",
-                    label: "Next batch",
-                    isEnabled: environment.state.currentBatchIndex + 1 < environment.state.batches.count,
-                    action: .batchNext
-                )
+        if #available(macOS 26, *) {
+            innerContent
+                .fixedSize()
+        } else {
+            GlassCapsule {
+                innerContent
             }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 2)
+            .fixedSize()
         }
-        .fixedSize()
+    }
+
+    private var innerContent: some View {
+        HStack(spacing: 0) {
+            capsuleButton(
+                systemName: "chevron.left",
+                label: "Previous batch",
+                isEnabled: environment.state.currentBatchIndex > 0,
+                action: .batchPrevious
+            )
+            Divider().frame(height: 14).overlay(Appearance.separator)
+            capsuleButton(
+                systemName: "chevron.right",
+                label: "Next batch",
+                isEnabled: environment.state.currentBatchIndex + 1 < environment.state.batches.count,
+                action: .batchNext
+            )
+        }
+        .padding(.horizontal, 2)
+        .padding(.vertical, 2)
     }
 
     private func capsuleButton(systemName: String, label: String, isEnabled: Bool, action: CullAction)
@@ -131,6 +140,8 @@ struct BatchTitle: View {
                     .help("This batch is provisional and may still be refined")
             }
         }
+        .padding(.horizontal, 12)
+        .frame(minWidth: 160)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(titleAccessibility)
     }
