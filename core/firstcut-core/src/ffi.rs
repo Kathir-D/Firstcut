@@ -35,7 +35,7 @@ pub fn core_version() -> String {
 // ─────────────────────────────────────────────────────────────────────────────
 // core-meta exports (docs/contracts/photo-meta.md)
 
-/// Mirrors `crate::meta::RawFormat` and `CoreTypes.swift`'s `RawFormat`. The same 24 spellings,
+/// Mirrors `crate::meta::RawFormat` and `CoreTypes.swift`'s `RawFormat`. The same 38 spellings,
 /// so the Swift `case .cr3` pattern-matches the generated enum.
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiRawFormat {
@@ -64,6 +64,19 @@ pub enum FfiRawFormat {
     Mos,
     Gpr,
     X3f,
+    Ori,
+    Raw,
+    Mrw,
+    Arq,
+    Cap,
+    Bay,
+    K25,
+    Kc2,
+    Dcs,
+    Mdc,
+    Ari,
+    Cs1,
+    Sti,
 }
 
 impl From<FfiRawFormat> for crate::meta::RawFormat {
@@ -95,6 +108,19 @@ impl From<FfiRawFormat> for crate::meta::RawFormat {
             FfiRawFormat::Mos => Raw::Mos,
             FfiRawFormat::Gpr => Raw::Gpr,
             FfiRawFormat::X3f => Raw::X3f,
+            FfiRawFormat::Ori => Raw::Ori,
+            FfiRawFormat::Raw => Raw::Raw,
+            FfiRawFormat::Mrw => Raw::Mrw,
+            FfiRawFormat::Arq => Raw::Arq,
+            FfiRawFormat::Cap => Raw::Cap,
+            FfiRawFormat::Bay => Raw::Bay,
+            FfiRawFormat::K25 => Raw::K25,
+            FfiRawFormat::Kc2 => Raw::Kc2,
+            FfiRawFormat::Dcs => Raw::Dcs,
+            FfiRawFormat::Mdc => Raw::Mdc,
+            FfiRawFormat::Ari => Raw::Ari,
+            FfiRawFormat::Cs1 => Raw::Cs1,
+            FfiRawFormat::Sti => Raw::Sti,
         }
     }
 }
@@ -128,6 +154,19 @@ impl From<crate::meta::RawFormat> for FfiRawFormat {
             Raw::Mos => FfiRawFormat::Mos,
             Raw::Gpr => FfiRawFormat::Gpr,
             Raw::X3f => FfiRawFormat::X3f,
+            Raw::Ori => FfiRawFormat::Ori,
+            Raw::Raw => FfiRawFormat::Raw,
+            Raw::Mrw => FfiRawFormat::Mrw,
+            Raw::Arq => FfiRawFormat::Arq,
+            Raw::Cap => FfiRawFormat::Cap,
+            Raw::Bay => FfiRawFormat::Bay,
+            Raw::K25 => FfiRawFormat::K25,
+            Raw::Kc2 => FfiRawFormat::Kc2,
+            Raw::Dcs => FfiRawFormat::Dcs,
+            Raw::Mdc => FfiRawFormat::Mdc,
+            Raw::Ari => FfiRawFormat::Ari,
+            Raw::Cs1 => FfiRawFormat::Cs1,
+            Raw::Sti => FfiRawFormat::Sti,
         }
     }
 }

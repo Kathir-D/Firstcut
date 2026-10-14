@@ -49,9 +49,11 @@ public enum PhotoFolderScanner {
     /// Extensions Firstcut treats as a photo. Same list `MockSession.isPhotoExtension` used, kept
     /// here so the scanner and the mock can never disagree about what a photo is.
     public static let photoExtensions: Set<String> = [
-        "cr3", "cr2", "crw", "arw", "sr2", "srf", "nef", "nrw", "raf", "rw2", "orf", "pef", "dng",
-        "rwl", "3fr", "fff", "iiq", "srw", "dcr", "kdc", "erf", "mef", "mos", "gpr", "x3f", "jpg",
-        "jpeg", "heic", "heif", "hif", "tif", "tiff", "png",
+        "3fr", "ari", "arq", "arw", "bay", "cap", "cr2", "cr3", "crw", "cs1", "dcr", "dcs", "dng",
+        "erf", "fff", "gpr", "heic", "heif", "hif", "iiq", "jpeg", "jpg", "k25", "kc2", "kdc",
+        "mdc", "mef", "mos", "mrw", "nef", "nrw", "orf", "ori", "pef", "png", "raf", "raw", "rw2",
+        "rwl", "sr2", "srf", "srw", "sti", "tif", "tiff", "x3f",
+
     ]
 
     // MARK: - Scanning

@@ -62,6 +62,19 @@ pub enum RawFormat {
     Mos,
     Gpr,
     X3f,
+    Ori,
+    Raw,
+    Mrw,
+    Arq,
+    Cap,
+    Bay,
+    K25,
+    Kc2,
+    Dcs,
+    Mdc,
+    Ari,
+    Cs1,
+    Sti,
 }
 
 /// Where a capture time came from. `FileModified` has to be flagged, because it is a guess and
@@ -195,19 +208,21 @@ pub const FINISH_MARKER: &str = ".firstcut-finished";
 /// something to iterate over. `raw_format_of` is the authority on which are which.
 #[cfg(test)]
 const RAW_EXTENSIONS: &[&str] = &[
-    "3fr", "arw", "cr2", "cr3", "crw", "dcr", "dng", "erf", "fff", "gpr", "iiq", "kdc", "mef",
-    "mos", "nef", "nrw", "orf", "pef", "raf", "rw2", "rwl", "sr2", "srf", "srw", "x3f",
+    "3fr", "ari", "arq", "arw", "bay", "cap", "cr2", "cr3", "crw", "cs1", "dcr", "dcs", "dng",
+    "erf", "fff", "gpr", "iiq", "k25", "kc2", "kdc", "mdc", "mef", "mos", "mrw", "nef", "nrw",
+    "orf", "ori", "pef", "raf", "raw", "rw2", "rwl", "sr2", "srf", "srw", "sti", "x3f",
 ];
 const JPEG_EXTENSIONS: &[&str] = &["jpg", "jpeg"];
-const HEIF_EXTENSIONS: &[&str] = &["heic", "heif"];
+const HEIF_EXTENSIONS: &[&str] = &["heic", "heif", "hif"];
 const TIFF_EXTENSIONS: &[&str] = &["tif", "tiff"];
 const PNG_EXTENSIONS: &[&str] = &["png"];
 
 /// Every extension the scanner will open, for the store's fingerprint to agree with.
 pub const IMAGE_EXTENSIONS: &[&str] = &[
-    "3fr", "arw", "cr2", "cr3", "crw", "dcr", "dng", "erf", "fff", "gpr", "heic", "heif", "iiq",
-    "jpeg", "jpg", "kdc", "mef", "mos", "nef", "nrw", "orf", "pef", "png", "raf", "rw2", "rwl",
-    "sr2", "srf", "srw", "tif", "tiff", "x3f",
+    "3fr", "ari", "arq", "arw", "bay", "cap", "cr2", "cr3", "crw", "cs1", "dcr", "dcs", "dng",
+    "erf", "fff", "gpr", "heic", "heif", "hif", "iiq", "jpeg", "jpg", "k25", "kc2", "kdc", "mdc",
+    "mef", "mos", "mrw", "nef", "nrw", "orf", "ori", "pef", "png", "raf", "raw", "rw2", "rwl",
+    "sr2", "srf", "srw", "sti", "tif", "tiff", "x3f",
 ];
 
 /// The RAW formats this build can name. A RAW we cannot name is still a photo; it is reported with
@@ -239,6 +254,19 @@ fn raw_format_of(extension: &str) -> Option<RawFormat> {
         "mos" => RawFormat::Mos,
         "gpr" => RawFormat::Gpr,
         "x3f" => RawFormat::X3f,
+        "ori" => RawFormat::Ori,
+        "raw" => RawFormat::Raw,
+        "mrw" => RawFormat::Mrw,
+        "arq" => RawFormat::Arq,
+        "cap" => RawFormat::Cap,
+        "bay" => RawFormat::Bay,
+        "k25" => RawFormat::K25,
+        "kc2" => RawFormat::Kc2,
+        "dcs" => RawFormat::Dcs,
+        "mdc" => RawFormat::Mdc,
+        "ari" => RawFormat::Ari,
+        "cs1" => RawFormat::Cs1,
+        "sti" => RawFormat::Sti,
         _ => return None,
     })
 }

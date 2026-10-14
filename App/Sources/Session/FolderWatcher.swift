@@ -16,9 +16,11 @@ final class FolderWatcher {
     /// What counts as a photo for the purposes of "did the shoot change". Mirrors the core's
     /// `IMAGE_EXTENSIONS`; a photo type missing here only means a delayed refresh, never a wrong one.
     static let photoExtensions: Set<String> = [
-        "3fr", "arw", "cr2", "cr3", "crw", "dcr", "dng", "erf", "fff", "gpr", "heic", "heif", "iiq",
-        "jpeg", "jpg", "kdc", "mef", "mos", "nef", "nrw", "orf", "pef", "png", "raf", "rw2", "rwl",
-        "sr2", "srf", "srw", "tif", "tiff", "x3f",
+        "3fr", "ari", "arq", "arw", "bay", "cap", "cr2", "cr3", "crw", "cs1", "dcr", "dcs", "dng",
+        "erf", "fff", "gpr", "heic", "heif", "hif", "iiq", "jpeg", "jpg", "k25", "kc2", "kdc",
+        "mdc", "mef", "mos", "mrw", "nef", "nrw", "orf", "ori", "pef", "png", "raf", "raw", "rw2",
+        "rwl", "sr2", "srf", "srw", "sti", "tif", "tiff", "x3f",
+
     ]
 
     /// True when one of `paths` is a photo file.

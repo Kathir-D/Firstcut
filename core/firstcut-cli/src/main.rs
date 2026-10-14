@@ -8,6 +8,7 @@
 //! - `batch`      print the batches for a folder's metadata
 //! - `gaps`       the Δt histogram and every ambiguous-zone boundary, for tuning thresholds
 //! - `bench`      time `order()` + `batch()` on a dump, or the whole pipeline with `--folder <dir>`
+//! - `verify`     the metadata reader against `exiftool` on a folder of real files
 //!
 //! Wave 2 adds `contact-sheet` (visual review of every boundary) and `eval` (boundary F1 against
 //! `tests/fixtures/ground-truth/<game>.json`).
@@ -20,6 +21,8 @@ use firstcut_core::batch::fixture::Folder;
 use firstcut_core::batch::signals::Decision;
 use firstcut_core::batch::{BatchParams, PhotoId, batch_with};
 use firstcut_core::order;
+
+mod verify;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -50,6 +53,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "gaps" => cmd_gaps(rest),
         "bench" => cmd_bench(rest),
         "ground-truth" => cmd_ground_truth(rest),
+        "verify" => verify::cmd_verify(rest),
         other => Err(format!("unknown subcommand `{other}`")),
     }
 }
@@ -91,6 +95,11 @@ COMMANDS
         Time the phases that need real files: the header scan, then order() + batch(), then
         the whole thing end to end. Cold and warm are reported separately and scaled to 1,500
         files against the todo.md §7.3 targets. No metadata fixture is needed.
+
+  verify <folder> [--quiet]
+        Scan the folder as the app does and compare every photo's capture time, camera and
+        exposure with `exiftool`. Lists each disagreement, the files the scanner did not pick up
+        at all, and a per-extension summary (todo.md §8).
 "
     );
 }

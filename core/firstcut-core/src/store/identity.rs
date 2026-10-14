@@ -26,9 +26,10 @@ use super::error::{Result, StoreError};
 /// changes which files take part in the hash, never whether a folder matches itself.
 pub const IMAGE_EXTENSIONS: &[&str] = &[
     // RAW
-    "3fr", "arw", "cr2", "cr3", "crw", "dcr", "dng", "erf", "fff", "gpr", "heic", "heif", "iiq",
-    "jpeg", "jpg", "kdc", "mef", "mos", "nef", "nrw", "orf", "pef", "png", "raf", "rw2", "rwl",
-    "sr2", "srf", "srw", "tif", "tiff", "x3f",
+    "3fr", "ari", "arq", "arw", "bay", "cap", "cr2", "cr3", "crw", "cs1", "dcr", "dcs", "dng",
+    "erf", "fff", "gpr", "heic", "heif", "hif", "iiq", "jpeg", "jpg", "k25", "kc2", "kdc", "mdc",
+    "mef", "mos", "mrw", "nef", "nrw", "orf", "ori", "pef", "png", "raf", "raw", "rw2", "rwl",
+    "sr2", "srf", "srw", "sti", "tif", "tiff", "x3f",
 ];
 
 /// FNV-1a, 64 bit. Stable across runs, platforms and Firstcut versions, and dependency-free: this

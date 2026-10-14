@@ -127,7 +127,8 @@ import Foundation
         switch (name as NSString).pathExtension.lowercased() {
         case "cr3", "cr2", "crw", "arw", "sr2", "srf", "nef", "nrw", "raf", "rw2", "orf", "pef",
             "dng", "rwl", "3fr", "fff", "iiq", "srw", "dcr", "kdc", "erf", "mef", "mos", "gpr",
-            "x3f", "jpg", "jpeg", "heic", "heif", "hif", "tif", "tiff", "png":
+            "x3f", "jpg", "jpeg", "heic", "heif", "hif", "tif", "tiff", "png", "mrw", "ori", "raw", "arq",
+            "cap", "bay", "k25", "kc2", "dcs", "mdc", "ari", "cs1", "sti":
             true
         default:
             false

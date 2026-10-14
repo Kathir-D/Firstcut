@@ -332,6 +332,19 @@ struct ExifRow: Decodable {
         case "mos": .raw(.mos)
         case "gpr": .raw(.gpr)
         case "x3f": .raw(.x3f)
+        case "ori": .raw(.ori)
+        case "raw": .raw(.raw)
+        case "mrw": .raw(.mrw)
+        case "arq": .raw(.arq)
+        case "cap": .raw(.cap)
+        case "bay": .raw(.bay)
+        case "k25": .raw(.k25)
+        case "kc2": .raw(.kc2)
+        case "dcs": .raw(.dcs)
+        case "mdc": .raw(.mdc)
+        case "ari": .raw(.ari)
+        case "cs1": .raw(.cs1)
+        case "sti": .raw(.sti)
         case "jpg", "jpeg": .jpeg
         case "heic", "heif", "hif": .heif
         case "tif", "tiff": .tiff
