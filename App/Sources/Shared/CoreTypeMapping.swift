@@ -45,6 +45,22 @@ extension RatingMode {
     }
 }
 
+extension BatchingMode {
+    init(_ ffi: FfiBatchingMode) {
+        switch ffi {
+        case .plays: self = .plays
+        case .bursts: self = .bursts
+        }
+    }
+
+    var ffi: FfiBatchingMode {
+        switch self {
+        case .plays: .plays
+        case .bursts: .bursts
+        }
+    }
+}
+
 // MARK: - Photo metadata
 
 extension AfInfo {

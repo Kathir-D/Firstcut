@@ -38,6 +38,10 @@ public struct VisualSig: Sendable, Equatable {
 /// string is `"keep"` on both sides, so this is vocabulary only (see `CoreTypeMapping`).
 public enum RatingMode: String, Sendable, Codable { case stars, keep }
 
+/// How photos are grouped into batches (`FfiBatchingMode`): Plays merges neighbouring bursts of the
+/// same moment into one batch, Bursts keeps each burst as its own batch.
+public enum BatchingMode: String, Sendable, Codable { case plays, bursts }
+
 /// The app's rating. The four fields are the generated `FfiRating`'s, but this stays a struct: the
 /// app writes `Rating()` and `Rating(stars: 4)` in dozens of places and the generated initializer has
 /// no defaults, and a defaulted one cannot be added in an extension (delegating to the generated

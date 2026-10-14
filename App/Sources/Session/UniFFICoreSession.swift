@@ -107,6 +107,10 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
         session.setKeepThreshold(stars: UInt8(clamping: stars))
     }
 
+    public func setBatchingMode(_ mode: BatchingMode) {
+        try? session.setBatchingMode(mode: mode.ffi)
+    }
+
     public func setRating(photo: PhotoID, _ rating: Rating) throws -> RatingChange {
         RatingChange(try session.setRating(photo: photo, rating: rating.ffi))
     }

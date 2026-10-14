@@ -292,6 +292,8 @@ public final class AppModel: SessionListener, KeyRouterSource {
         // filmstrip while Finish still keeps every 4-star photo, and the summary sheet disagrees
         // with the ratings the user just made.
         session.setKeepThreshold(settings.keepThreshold)
+        // The core saves the mode per folder; the setting is what a folder opens with.
+        session.setBatchingMode(settings.general.batchingMode)
         self.folderName = folderName ?? (data.folder as NSString).lastPathComponent
         skippedFiles = data.skipped
         allPhotos = data.photos.map {
@@ -1073,6 +1075,9 @@ public final class AppModel: SessionListener, KeyRouterSource {
             applyRatingModeChange(from: before.general.ratingMode)
         } else if thresholdChanged {
             recomputeTiers()
+        }
+        if settings.general.batchingMode != before.general.batchingMode {
+            backend.setBatchingMode(settings.general.batchingMode)
         }
         if thresholdChanged {
             // The core holds the threshold in memory rather than in the database (the app's

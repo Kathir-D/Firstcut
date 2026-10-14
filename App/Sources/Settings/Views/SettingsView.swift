@@ -60,6 +60,17 @@ private struct GeneralSettingsTab: View {
 
     var body: some View {
         Form {
+            Section("Batches") {
+                Picker("Batch by", selection: settingBinding(model, \.general.batchingMode)) {
+                    Text("Plays").tag(BatchingMode.plays)
+                    Text("Bursts").tag(BatchingMode.bursts)
+                }
+                Text(
+                    "Plays join bursts of the same moment into one batch. Bursts keeps every burst "
+                        + "as its own batch. Batches you have already visited stay as they are."
+                )
+                .font(.footnote).foregroundStyle(.secondary)
+            }
             Section("Rating") {
                 Picker("Rating mode", selection: settingBinding(model, \.general.ratingMode)) {
                     Text("Stars").tag(RatingMode.stars)

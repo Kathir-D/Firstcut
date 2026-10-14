@@ -92,6 +92,7 @@ public protocol CoreSessionAPI: AnyObject, Sendable {
 
     /// `Session::set_keep_stars`. Clamped to 4…5 by the core, so a bogus value is harmless.
     func setKeepThreshold(_ stars: Int)
+    func setBatchingMode(_ mode: BatchingMode)
 
     /// Force the debounced XMP queue out. On batch change and on quit (todo.md §6.3).
     func flush()
@@ -305,6 +306,10 @@ public final class CoreSessionBackend: SessionBackend {
 
     public func setKeepThreshold(_ stars: Int) {
         core.setKeepThreshold(stars)
+    }
+
+    public func setBatchingMode(_ mode: BatchingMode) {
+        core.setBatchingMode(mode)
     }
 
     public var canRescan: Bool { true }

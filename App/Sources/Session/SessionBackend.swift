@@ -64,6 +64,9 @@ import Foundation
     /// `keep_stars` in memory for the same reason).
     func setKeepThreshold(_ stars: Int)
 
+    /// `Session::set_batching_mode`. Saved per folder by the core, which re-cuts the unvisited batches.
+    func setBatchingMode(_ mode: BatchingMode)
+
     /// Thumbnails finished for some photos; may re-batch unvisited batches.
     func submitVisualSigs(_ sigs: [(PhotoID, VisualSig)])
 
@@ -101,6 +104,7 @@ extension SessionBackend {
 
     public func applyMetadataSettings(_ settings: MetadataSettings) {}
     public func setKeepThreshold(_ stars: Int) {}
+    public func setBatchingMode(_ mode: BatchingMode) {}
     public var canRescan: Bool { false }
     public func rescan() -> SessionData? { nil }
 }

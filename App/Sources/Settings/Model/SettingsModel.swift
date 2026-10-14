@@ -43,6 +43,8 @@ public enum EnteringBatchBehavior: String, Codable, Equatable, Sendable, CaseIte
 
 public struct GeneralSettings: Codable, Equatable, Sendable {
     public var ratingMode: RatingMode = .stars
+    /// Settings → General → Batch by. Plays by default; the core also saves the mode per folder.
+    public var batchingMode: BatchingMode = .plays
     /// Off by default (todo.md §6.3); Caps Lock toggles it for a session.
     public var autoAdvance: Bool = false
     public var arrowBehaviorAtBatchEnd: ArrowBehavior = .continueIntoNextBatch
@@ -72,7 +74,8 @@ public struct GeneralSettings: Codable, Equatable, Sendable {
 
 extension GeneralSettings {
     private enum CodingKeys: String, CodingKey {
-        case ratingMode, autoAdvance, arrowBehaviorAtBatchEnd, enteringBatchBehavior, finishUnkept,
+        case ratingMode, batchingMode, autoAdvance, arrowBehaviorAtBatchEnd, enteringBatchBehavior,
+            finishUnkept,
             finishKept, confirmBeforeFinish, confirmPermanentDelete, keepThreshold, rejectWholeBatch
     }
 
@@ -83,6 +86,8 @@ extension GeneralSettings {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = GeneralSettings()
         ratingMode = try c.decodeIfPresent(RatingMode.self, forKey: .ratingMode) ?? d.ratingMode
+        batchingMode =
+            try c.decodeIfPresent(BatchingMode.self, forKey: .batchingMode) ?? d.batchingMode
         autoAdvance = try c.decodeIfPresent(Bool.self, forKey: .autoAdvance) ?? d.autoAdvance
         arrowBehaviorAtBatchEnd =
             try c.decodeIfPresent(ArrowBehavior.self, forKey: .arrowBehaviorAtBatchEnd)

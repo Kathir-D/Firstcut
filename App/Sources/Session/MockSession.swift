@@ -233,6 +233,12 @@ import Foundation
         keepThreshold = stars
     }
 
+    public private(set) var batchingMode: BatchingMode?
+
+    public func setBatchingMode(_ mode: BatchingMode) {
+        batchingMode = mode
+    }
+
     public func flush() {
         flushCount += 1
         xmpWrites.removeAll()

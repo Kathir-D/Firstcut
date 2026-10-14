@@ -31,6 +31,7 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
     var visited: [BatchID] = []
     var ratingModeSets: [RatingMode] = []
     var keepThresholdSets: [Int] = []
+    var batchingModeSets: [BatchingMode] = []
     var submittedSigBatches = 0
     var flushed = 0
     var closed = 0
@@ -67,6 +68,12 @@ final class ScriptedCoreSession: CoreSessionAPI, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         keepThresholdSets.append(stars)
+    }
+
+    func setBatchingMode(_ mode: BatchingMode) {
+        lock.lock()
+        defer { lock.unlock() }
+        batchingModeSets.append(mode)
     }
 
     func setRating(photo: PhotoID, _ rating: Rating) throws -> RatingChange {

@@ -1510,3 +1510,26 @@ struct RejectWholeBatchTests {
         #expect(decoded.general.rejectWholeBatch == false)
     }
 }
+
+// MARK: - Batch by setting
+
+@MainActor
+@Suite("Batch by setting")
+struct BatchingModeSettingTests {
+    @Test("Plays is the default, and an old settings file without the key still reads")
+    func defaultsToPlays() throws {
+        #expect(GeneralSettings().batchingMode == .plays)
+        let old = Data(#"{"autoAdvance": true}"#.utf8)
+        let decoded = try JSONDecoder().decode(GeneralSettings.self, from: old)
+        #expect(decoded.batchingMode == .plays)
+        #expect(decoded.autoAdvance)
+    }
+
+    @Test("The mode survives an encode and decode")
+    func roundTrips() throws {
+        var general = GeneralSettings()
+        general.batchingMode = .bursts
+        let data = try JSONEncoder().encode(general)
+        #expect(try JSONDecoder().decode(GeneralSettings.self, from: data).batchingMode == .bursts)
+    }
+}
