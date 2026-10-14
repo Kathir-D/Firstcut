@@ -27,6 +27,9 @@ struct FirstcutCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("Open Folder…") { environment.send(.openFolder) }
                 .keyboardShortcut(shortcut(.openFolder))
+            Button("Close Folder") { environment.send(.closeFolder) }
+                .keyboardShortcut(shortcut(.closeFolder))
+                .disabled(!isCulling)
         }
 
         CommandGroup(replacing: .saveItem) {

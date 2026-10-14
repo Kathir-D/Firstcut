@@ -233,7 +233,7 @@ struct ModelCullViewStateTests {
             .setViewMode(.loupe), .toggleInfoPanel, .toggleHUD, .toggleAFOverlay,
             .toggleClippingOverlay, .toggleAutoAdvance, .setRating(stars: 3), .setFlag(.pick),
             .setFlag(.reject), .setFlag(.none), .setLabel(.green), .setLabel(nil), .toggleKeep,
-            .undo, .redo, .openFolder, .finishCull,
+            .undo, .redo, .openFolder, .closeFolder, .finishCull,
         ]
         for action in actions { state.send(action) }
         #expect(state.phase == .welcome, "nothing above can open a folder or start a cull")

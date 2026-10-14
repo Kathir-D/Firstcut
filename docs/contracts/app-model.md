@@ -109,6 +109,7 @@ Every action is a `Command`. Keys, menus, toolbar buttons, and gestures all call
 | `zoom.lock.toggle` | — | No default binding; View menu / setting |
 | `edit.undo` / `edit.redo` | ⌘Z / ⇧⌘Z | Undo in another batch navigates there first |
 | `file.open` | ⌘O | |
+| `file.close` | ⌘W | |
 | `cull.finish` | ⌘↩ | Also ⌘⌤ on the keypad |
 | `app.fullScreen` | ⌃⌘F | |
 

@@ -866,6 +866,14 @@ struct AppModelRatingTests {
         #expect(model.currentPhoto == nil)
         #expect(model.phase == .welcome)
     }
+
+    @Test("Close Folder returns a preview session to the Welcome screen")
+    func closeFolderReturnsToWelcome() throws {
+        let model = AppModel(.preview(game: nil))
+        #expect(model.phase == .welcome)
+        model.perform(.closeFolder)
+        #expect(model.phase == .welcome)
+    }
 }
 
 // MARK: - Undo

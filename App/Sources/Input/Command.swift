@@ -90,6 +90,7 @@ public enum Command: Hashable, Sendable {
     case undo
     case redo
     case openFolder
+    case closeFolder
     case finishCull
     case toggleFullScreen
 }
@@ -129,6 +130,7 @@ extension Command {
         case .undo: "edit.undo"
         case .redo: "edit.redo"
         case .openFolder: "file.open"
+        case .closeFolder: "file.close"
         case .finishCull: "cull.finish"
         case .toggleFullScreen: "app.fullScreen"
         }
@@ -188,6 +190,7 @@ extension Command {
         case "edit.undo": self = .undo
         case "edit.redo": self = .redo
         case "file.open": self = .openFolder
+        case "file.close": self = .closeFolder
         case "cull.finish": self = .finishCull
         case "app.fullScreen": self = .toggleFullScreen
         default: return nil
@@ -206,7 +209,7 @@ extension Command {
             .rejectFlag, .unflag, .toggleFlag, .setLabel:
             true
         // A whole batch at a time: holding the key would reject the next batch, and the one after.
-        case .openFolder, .finishCull, .undo, .redo, .toggleFullScreen, .rejectBatch,
+        case .openFolder, .closeFolder, .finishCull, .undo, .redo, .toggleFullScreen, .rejectBatch,
             .toggleAutoAdvance, .showLoupe, .showGrid, .showCompare:
             false
         case .toggleInfoPanel, .toggleClippingOverlay, .toggleAFOverlay, .toggleHUD,

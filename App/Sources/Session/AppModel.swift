@@ -740,6 +740,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         case .undo: undo()
         case .redo: redo()
         case .openFolder: onRequestOpenFolder?()
+        case .closeFolder: closeSession()
         case .finishCull: startFinish()
         case .toggleFullScreen: onRequestToggleFullScreen?(true)
         }
