@@ -181,6 +181,21 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
+> **As of 2026-10-14 (RAW formats + optional batch reject).** Both suites green: Rust (fmt, clippy,
+> 409 unit + integration), **Swift 314 tests in 40 suites**.
+>
+> - **Every raw.pixls.us format opens** (§8): 13 new `RawFormat`s, CRW and MRW readers, and
+>   `firstcut verify <folder> [--previews]` against exiftool — 98 of 105 sample files agree. The
+>   samples were downloaded to `/tmp/fcall` (not committed; raw.pixls.us, one per camera family).
+> - **Embedded-JPEG fallback** (`App/Sources/Pipeline/EmbeddedPreviewFallback.swift`): a RAW ImageIO
+>   cannot open is drawn from `PhotoMeta.preview`. Only after ImageIO fails, never instead of it.
+> - **Reject Whole Batch** (§6.3): opt-in and **off by default** — the owner was explicit that the
+>   Canon burst-group erase was context for what a batch *is*, not how Firstcut should delete. It
+>   only flags, and undoes as one step (schema v3 `history.group_id`).
+> - **Next:** check the fallback and the batch reject by hand in the app on a real folder; the CR3
+>   burst "roll" (several frames per file) is still one photo; X3F / Leaf MOS / Kodak MakerNote
+>   metadata are still missing (§8).
+
 > **As of 2026-10-05 (full codebase audit).** A systematic audit of `core/` and `App/` — every
 > module read in full, findings triaged by what they would cost a user — landed in `ccff25a` and the
 > commit after it. Both suites are green: **Rust 391 unit + 16 integration** (fmt and clippy clean),
@@ -873,6 +888,13 @@ XMP (`Rating::KEEP_DISPLAY_STARS = 1`, owner decision 2026-10-02) — so in Keep
       in the current batch" still holds visibly).
 - [x] Each change writes to the DB immediately and to XMP on a debounced background queue
       (≤ 1 s), flushed on batch change and on quit. A crash never loses more than ~1 s.
+- [x] **Reject Whole Batch** (⇧X, Photo → Flag, a HUD button): **opt-in, off by default** (owner
+      decision, 2026-10-14 — Firstcut rates photo by photo; this is an extra, not how culling or
+      deleting works). Settings → General → "Offer Reject Whole Batch". Sets the reject flag on every
+      frame of the current batch as **one** change — one ⌘Z puts every frame back, the history rows
+      share a `group_id` (schema v3) — then moves to the next batch. It only flags: nothing is
+      deleted before Finish. The idea is a Canon body's burst-group erase, for a burst that is all
+      bad takes. With the setting off the command is a no-op even if a custom keymap binds it.
 
 ---
 
@@ -1174,6 +1196,9 @@ README states that only Canon has been tested.
 | Kodak / Epson / Mamiya / Leaf | `.DCR`, `.KDC`, `.ERF`, `.MEF`, `.MOS` | Rust: TIFF | ImageIO |
 | GoPro | `.GPR` | Rust: TIFF/DNG | ImageIO |
 | Sigma | `.X3F` | Rust: X3F directory + embedded JPEG | **Embedded JPEG only** — Apple doesn't decode Foveon and LibRaw dropped X3F; true RAW decode unavailable |
+| Minolta / Konica Minolta | `.MRW` | Rust: `\0MRM` blocks → TIFF block | ImageIO |
+| Olympus (E-M1 III …) | `.ORI` | Rust: TIFF (same as ORF) | ImageIO |
+| Older / rarer RAWs | `.ARQ` (Sony pixel shift), `.CAP` `.IIQ` (Phase One), `.BAY` (Casio), `.K25` `.KC2` `.DCS` (Kodak), `.MDC` (Minolta), `.ARI` (ARRI), `.CS1` (Sinar), `.STI` (Sinar), `.RAW` (Panasonic/Leica) | Rust: TIFF where the file is TIFF; otherwise file date | ImageIO, else the embedded JPEG |
 | Non-RAW | `.JPG/.JPEG`, `.HEIC/.HEIF`, `.HIF` (Canon HEIF), `.TIF/.TIFF`, `.PNG` | Rust: EXIF (JPEG APP1, HEIF `meta`) | ImageIO |
 
 - [x] **RAW + JPEG/HEIF pairs** with the same base name are treated as **one photo** (RAW is the
@@ -1186,6 +1211,20 @@ README states that only Canon has been tested.
 - [x] Validate every Canon parser field against `exiftool` output on the test games
       (`firstcut-cli verify <folder>` diff report). Non-Canon parsers are checked with unit tests on
       hand-built header byte fixtures only.
+- [x] **Every format [raw.pixls.us](https://raw.pixls.us) lists is opened** (2026-10-14). On one
+      sample per camera family (105 files, mirrorless and popular DSLRs first), `firstcut verify`
+      agrees with exiftool on **98 of 105**, none unscanned. The 7 left: ARI and MDC (exiftool cannot
+      read them either), two X3F, Leaf MOS (data in Leaf's private tags), Kodak DCR and the Canon
+      D2000 TIF (ISO only in Kodak's MakerNote).
+- [x] CRW (CIFF) reader, MRW reader, IFD0 settings for bodies that keep them there, Panasonic ISO
+      (tag 0x0017), and an IFD0 far past the first megabyte (IIQ).
+- [x] **Embedded-JPEG fallback.** `PhotoMeta.preview` is filled for every RAW with a JPEG inside
+      (largest colour JPEG found in IFDs, SubIFDs, RAF header, CIFF, or by a scan). The app draws a
+      RAW from it **only when ImageIO cannot open the file** (`EmbeddedPreviewFallback`). Of the 25
+      samples ImageIO cannot decode, the 6 that carry a JPEG now show.
+- [ ] RAWs that macOS cannot decode and that carry no JPEG (most of those 25: old Kodak, Leaf,
+      Sinar, ARRI) show a placeholder. Showing them needs a demosaicing decoder — out of scope.
+- [ ] Canon CR3 burst "roll" files (several frames in one file) still show as one photo.
 
 ---
 

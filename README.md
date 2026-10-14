@@ -71,6 +71,10 @@ Firstcut does **not** use AI to rate or reject photos. You make every call; it j
 - ℹ️ **Lightroom-style info panel**, histogram, clipping warnings, grid, and 2–4-up compare views.
 - ⌨️ **Lightroom keyboard shortcuts** out of the box, every one remappable.
 - 🔁 **Undo everything and resume anytime** — your progress is saved as you go.
+- 🗑️ **Optional: reject a whole batch at once** — off by default. Turn on *Settings → General →
+  Offer Reject Whole Batch* and `⇧X` flags every frame of a burst that is all bad takes, like
+  erasing a burst group on a Canon camera. It only flags (nothing is deleted before Finish), and one
+  `⌘Z` puts the whole batch back.
 - 🤝 **Plays well with Lightroom and Capture One** — ratings are written to standard `.xmp` sidecars.
 - 🧹 **Finish step** — once every batch is done, choose what happens to the photos you didn't keep:
   move them to Trash or a subfolder, mark them rejected, copy your keepers somewhere else, and more.
@@ -97,6 +101,7 @@ uses the mouse or trackpad instead of a key: pinch, or click a spot to view it a
 | Rate 1–5 stars / clear | `1`–`5` / `0` |
 | Keep (Keep mode) · Pick flag | `P` |
 | Reject / unflag | `X` / `U` |
+| Reject whole batch (opt-in, off by default) | `⇧X` |
 | Color labels | `6` `7` `8` `9` |
 | Info panel | `I` |
 | Grid / Loupe / Compare | `G` / `E` / `C` |
@@ -115,15 +120,23 @@ filmstrip, ordered by its file date, with a warning.
 | --- | --- | --- |
 | Canon | `.CR3` (including C-RAW) | Full: EXIF, MakerNote, shutter count, autofocus points. Verified against `exiftool` on 2,880 files |
 | Canon | `.CR2` | EXIF, plus the MakerNote (drive mode, autofocus points) |
-| Canon | `.CRW` | File date only (no reader for the old CIFF format) |
+| Canon | `.CRW` | Capture time, camera, size and focal length from the CIFF directory; embedded JPEG |
 | Nikon | `.NEF`, `.NRW` | EXIF, plus shutter count where the camera stores it in the clear |
 | Sony · Panasonic · Olympus · Pentax · Leica · Hasselblad · Phase One · Samsung · Kodak and others | `.ARW` `.SR2` `.SRF` · `.RW2` · `.ORF` · `.PEF` `.DNG` · `.RWL` · `.3FR` `.FFF` · `.IIQ` · `.SRW` · `.DCR` `.KDC` `.ERF` `.MEF` `.MOS` `.GPR` | EXIF (TIFF-based files) |
 | Fujifilm | `.RAF` | EXIF from the embedded JPEG |
+| Minolta | `.MRW` | EXIF from the TIFF block |
 | Sigma | `.X3F` | File date only; embedded preview |
+| Older and rarer RAWs | `.ORI` `.ARQ` `.CAP` `.BAY` `.K25` `.KC2` `.DCS` `.MDC` `.ARI` `.CS1` `.STI` `.RAW` | EXIF where the file is TIFF-based, otherwise the file date |
 | Non-RAW | `.JPG`, `.HEIC`, `.HIF`, `.TIFF`, `.PNG` | EXIF |
 
 Displaying a photo goes through macOS itself (ImageIO), so anything Preview can open, Firstcut can
-show. RAW + JPEG/HEIF pairs are treated as a single photo.
+show. When macOS can't decode a RAW (Phase One IIQ, Leaf MOS, Sigma X3F, Canon CRW, some older
+Olympus, Kodak and Samsung files), Firstcut shows the full JPEG the camera stored inside it instead.
+RAW + JPEG/HEIF pairs are treated as a single photo.
+
+Every format listed on [raw.pixls.us](https://raw.pixls.us) is opened. On one sample per camera
+family, `firstcut verify` (which compares the metadata reader with `exiftool`) agrees on 98 of 105
+files.
 
 > [!WARNING]
 > Firstcut has **only been tested with Canon cameras** (CR3, including C-RAW). Every other reader is
@@ -220,6 +233,9 @@ Firstcut v0.1 is deliberately small, and honest about what it hasn't proven yet.
   work, but hasn't been run.
 - **Apple Silicon only**, and the app is ad-hoc signed rather than notarized (there is no paid Apple
   Developer account), so a browser download needs a one-time approval; Homebrew and `curl` don't.
+- **RAWs macOS can't decode and that have no JPEG inside** (very old Kodak, Leaf, Sinar, ARRI
+  files) show a placeholder. Canon CR3 burst "roll" files, which hold several frames in one file,
+  show as one photo.
 - **No "exact RAW" decode.** Photos are shown from the full-size JPEG the camera embeds in every RAW.
   That is the same image the camera showed you, at full resolution, not a fresh RAW render.
 - **English only, one folder per session, no editing** — by design for v0.1 (see [`todo.md`](todo.md); manual batch split/merge and preset-based batch edits are planned for later, §16).

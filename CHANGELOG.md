@@ -31,6 +31,12 @@ The first release.
 - Metadata for JPEG, HEIC, PNG, TIFF and the TIFF-based RAW formats, and never skipping a photo that
   macOS can open.
 - Homebrew cask and GitHub release, ad-hoc signed.
+- Every RAW format listed on raw.pixls.us is opened, including Canon CRW, Minolta MRW, Olympus ORI
+  and older Kodak, Phase One, Sinar, Casio and ARRI files. `firstcut verify <folder>` compares the
+  metadata reader with `exiftool` file by file.
+- A RAW that macOS cannot decode is shown from the JPEG the camera stored inside it.
+- Optional **Reject Whole Batch** (`⇧X`), off by default: flags every frame of a burst as rejected
+  in one step, which one undo takes back. Turn it on in Settings → General.
 
 ### Fixed
 

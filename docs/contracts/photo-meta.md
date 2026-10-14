@@ -185,3 +185,10 @@ The app types that stayed, and the reason each one stays, are listed in
   `exiftool/` and `meta/` sets exist and are committed. **Swift types**: replaced "use the Swift types
   in `CoreTypes.swift`" with the `CoreTypeAliases.swift` wording session-api.md uses — most app types
   are the generated `Ffi*` types under plain names.
+- v0.3 (2026-10-14): `RawFormat` gained `Ori`, `Raw`, `Mrw`, `Arq`, `Cap`, `Bay`, `K25`, `Kc2`,
+  `Dcs`, `Mdc`, `Ari`, `Cs1`, `Sti` (every format raw.pixls.us lists), and `hif` is a HEIF
+  extension. **`preview` is now filled for every RAW that carries a JPEG**, not only CR3: the largest
+  colour (3-component, SOF0–2) JPEG found in IFD0 / the IFD chain / SubIFDs, the RAF header, the CIFF
+  heap, or by a bounded byte scan. `full_preview` stays CR3-only. The app reads `preview` only when
+  ImageIO cannot open the file. New readers: CRW (CIFF) and MRW, IFD0 exposure settings for bodies
+  that keep them there, Panasonic ISO (0x0017), and an IFD0 beyond the first read (IIQ).

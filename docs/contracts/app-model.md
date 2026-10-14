@@ -180,3 +180,9 @@ core's own tests use; Swift's mock still decodes the exiftool dumps.
   configurable keep threshold rather than fixed 5–4/3/2–1. Commands: `batch.previous/next` also have
   `[` / `]`, compare has ⌥C and ⌥⇧C, finish has ⌘⌤, purple has no default key, and rating-mode
   restrictions are declared in the keymap's `"modes"`.
+- v0.3 (2026-10-14): `Command.rejectBatch` (`batch.reject`, ⇧X, not repeatable) and
+  `GeneralSettings.rejectWholeBatch` (**false by default**); the command is a no-op while the setting
+  is off. `CullViewState.isRejectBatchEnabled` gates the menu item and the HUD button.
+  `SessionBackend` gained `setRatings` / `undoStep` / `redoStep` (with per-photo defaults), and
+  `AppModel.undo` / `redo` apply one whole step. `GeneralSettings` decodes with every key optional,
+  so a settings file from before a setting existed keeps its other values.

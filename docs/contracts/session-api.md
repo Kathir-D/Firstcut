@@ -226,4 +226,11 @@ does not:
   aliased away (`SessionData`, `RatingChange`, `FinishSettings`, `FinishReportData`, `RatingMode`,
   `FileOpKind`), each with the reason it stays. No signature changed; the rest are still on their way
   to being `typealias`es of the generated types.
+- v0.5 (2026-10-14): **grouped changes.** `Session::set_ratings(&[(PhotoId, Rating)]) -> Vec<Change>`
+  rates several photos as one change (what the opt-in "Reject Whole Batch" writes; photos already at
+  the asked-for rating are left out). `undo_step()` / `redo_step() -> Vec<Change>` take one step back
+  or forward — one change, or every change of one `set_ratings` — and report every photo they
+  touched; `undo()` / `redo()` still return one `Change` and now revert a whole group too. Schema v3
+  adds `history.group_id` (the group's first `seq`; NULL for a change of its own, which every row
+  written before v3 reads as). FFI: `set_ratings(Vec<FfiPhotoRating>)`, `undo_step`, `redo_step`.
 
