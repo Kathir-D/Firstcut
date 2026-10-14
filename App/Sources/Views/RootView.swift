@@ -38,6 +38,13 @@ struct RootView: View {
         ) {
             FinishSheet(state: state)
         }
+        .sheet(
+            isPresented: Binding(
+                get: { state.isGoToBatchPresented },
+                set: { if !$0 { state.dismissGoToBatch() } })
+        ) {
+            GoToBatchSheet(state: state)
+        }
         .alert(
             "Something went wrong",
             isPresented: Binding(
