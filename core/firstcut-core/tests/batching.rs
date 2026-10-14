@@ -16,7 +16,10 @@ use std::path::{Path, PathBuf};
 
 use firstcut_core::batch::fixture::PhotoMeta;
 use firstcut_core::batch::view::Photo;
-use firstcut_core::batch::{BatchParams, GroundTruth, PhotoId, batch_with, evaluate_names};
+use firstcut_core::batch::{
+    BatchParams, BatchingMode, GroundTruth, PhotoId, PlayParams, batch_mode, batch_with,
+    evaluate_names,
+};
 use serde_json::Value;
 
 const GAMES: [&str; 4] = ["Game1JENKS", "Gane2NC", "Game3KC", "Game4VRE"];
@@ -44,8 +47,19 @@ fn load_photos(game: &str) -> Vec<PhotoMeta> {
 }
 
 fn batch_names(game: &str) -> Vec<Vec<String>> {
+    batch_names_in(game, BatchingMode::Bursts)
+}
+
+fn batch_names_in(game: &str, mode: BatchingMode) -> Vec<Vec<String>> {
     let photos = load_photos(game);
-    let out = batch_with(&photos, &HashMap::new(), &[], BatchParams::default());
+    let out = batch_mode(
+        &photos,
+        &HashMap::new(),
+        &[],
+        BatchParams::default(),
+        PlayParams::default(),
+        mode,
+    );
     // One pass to map id → name. Searching the whole folder per photo is 8.4M string-free
     // comparisons per game, in a test that runs for four games, twice.
     let by_id: HashMap<_, &str> = photos.iter().map(|p| (p.id, p.rel_path.as_str())).collect();
@@ -388,6 +402,15 @@ fn boundary_f1_matches_the_visual_ground_truth() {
         );
         let predicted = batch_names(game);
         let m = evaluate_names(&predicted, &truth);
+        // Plays is the default mode; print it beside Bursts so the two can be compared per game.
+        let plays = evaluate_names(&batch_names_in(game, BatchingMode::Plays), &truth);
+        println!(
+            "{game}: Plays F1 {:.1}% vs Bursts F1 {:.1}% ({} vs {} batches)",
+            plays.f1_percent(),
+            m.f1_percent(),
+            batch_names_in(game, BatchingMode::Plays).len(),
+            predicted.len()
+        );
 
         assert!(
             m.unusable_truth_names.is_empty(),
