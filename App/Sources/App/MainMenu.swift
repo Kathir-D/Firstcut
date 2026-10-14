@@ -27,6 +27,18 @@ struct FirstcutCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("Open Folder…") { environment.send(.openFolder) }
                 .keyboardShortcut(shortcut(.openFolder))
+            Menu("Open Recent") {
+                if !environment.state.recentFolders.isEmpty {
+                    ForEach(environment.state.recentFolders.prefix(10)) { folder in
+                        Button(Self.openRecentTitle(folder)) {
+                            environment.state.openRecent(folder)
+                        }
+                    }
+                } else {
+                    Button("No Recent Folders") {}
+                        .disabled(true)
+                }
+            }
             Button("Close Folder") { environment.send(.closeFolder) }
                 .keyboardShortcut(shortcut(.closeFolder))
                 .disabled(!isCulling)
@@ -180,6 +192,12 @@ struct FirstcutCommands: Commands {
                 }
             }
         }
+    }
+
+    /// The label for one "Open Recent" row: "Wedding — 412 of 708 rated". Internal, not private, so
+    /// a unit test can assert the wording without a menu.
+    static func openRecentTitle(_ folder: RecentFolder) -> String {
+        "\(folder.name) — \(folder.ratedPhotos) of \(folder.totalPhotos) rated"
     }
 
     /// A menu checkmark that shows a state and flips it through the model, never set directly.
