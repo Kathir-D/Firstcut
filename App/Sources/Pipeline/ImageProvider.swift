@@ -296,6 +296,7 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
                 return (meta.id, (url, preview.range))
             },
             uniquingKeysWith: { first, _ in first })
+        EmbeddedPreviewFallback.shared.replace(folder: folder, photos: photos, previous: self.folder)
         self.folder = folder
         generation &+= 1
     }
@@ -306,6 +307,7 @@ public final class ImageProvider: ImageProviding, CullImageSource, @unchecked Se
         orientations = [:]
         longestEdges = [:]
         fullPreviewRanges = [:]
+        if let folder { EmbeddedPreviewFallback.shared.remove(folder: folder) }
         rawPhotos = []
         exactRawEnabled = false
         folder = nil
@@ -1363,7 +1365,17 @@ final class DecodeEngine: @unchecked Sendable {
     /// The embedded-preview read. `kCGImageSourceCreateThumbnailFromImageAlways` plus
     /// `kCGImageSourceThumbnailMaxPixelSize` is the pair that makes ImageIO subsample *during*
     /// decode instead of decoding 24 MP and discarding most of it.
+    ///
+    /// A RAW ImageIO cannot open at all is drawn from the camera's own JPEG instead, when the core
+    /// found one (`EmbeddedPreviewFallback`).
     static func decodeThumbnail(url: URL, maxPixel: Int) -> CGImage? {
+        if let image = decodeThumbnailFromContainer(url: url, maxPixel: maxPixel) { return image }
+        guard let fallback = EmbeddedPreviewFallback.shared.entry(for: url) else { return nil }
+        return decodeDisplay(
+            byteRange: fallback.range, in: url, orientation: fallback.orientation, maxPixel: maxPixel)
+    }
+
+    private static func decodeThumbnailFromContainer(url: URL, maxPixel: Int) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
         guard
             let raw = CGImageSourceCreateThumbnailAtIndex(
@@ -1405,10 +1417,14 @@ final class DecodeEngine: @unchecked Sendable {
     /// thumbnail *pass* does set it, because that image is never rotated twice and the filmstrip
     /// needs it right way up.
     static func decodeDisplay(url: URL, orientation: UInt8 = 1, maxPixel: Int) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
-        guard
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions),
             let raw = displayImage(at: source, maxPixel: maxPixel)
-        else { return nil }
+        else {
+            // A RAW ImageIO cannot open: the camera's own JPEG, if the core found one.
+            guard let fallback = EmbeddedPreviewFallback.shared.entry(for: url) else { return nil }
+            return decodeDisplay(
+                byteRange: fallback.range, in: url, orientation: orientation, maxPixel: maxPixel)
+        }
         return inDisplayLayout(applying(orientation: orientation, to: raw))
     }
 
