@@ -1386,21 +1386,29 @@ struct RejectWholeBatchTests {
     @Test("When on, every frame is rejected, the cursor moves on, and one ⌘Z puts them all back")
     func rejectsTheBatchAsOneStep() throws {
         let (model, _) = Self.makeModel(enabled: true)
-        model.perform(.setStars(3))
+        model.perform(.setStars(3))  // rate the first photo; the new rule leaves it alone
         model.perform(.rejectBatch)
         let frames = model.photos(inBatch: 0)
         #expect(frames.count > 1)
-        #expect(frames.allSatisfy { $0.rating.flag == .reject && $0.tier == .rejected })
+        #expect(frames[0].rating.stars == 3, "the already-rated photo keeps its rating")
+        #expect(frames[0].rating.flag == .none, "the rated photo is not flagged")
+        #expect(
+            frames.dropFirst().allSatisfy { $0.rating.flag == .reject },
+            "the unrated frames are flagged reject")
         #expect(model.currentBatchIndex == 1)
 
         model.perform(.undo)
         #expect(model.currentBatchIndex == 0, "undo goes back to the batch it reverts")
         let restored = model.photos(inBatch: 0)
-        #expect(restored.allSatisfy { $0.rating.flag == .none })
+        #expect(
+            restored.allSatisfy { $0.rating.flag == .none },
+            "undo reverts the reject on every frame")
         #expect(restored[0].rating.stars == 3, "the rating made before is not part of the step")
 
         model.perform(.redo)
-        #expect(model.photos(inBatch: 0).allSatisfy { $0.rating.flag == .reject })
+        let redone = model.photos(inBatch: 0)
+        #expect(redone[0].rating.flag == .none, "redo leaves the rated photo alone")
+        #expect(redone.dropFirst().allSatisfy { $0.rating.flag == .reject })
     }
 
     @Test("It only flags: no file is touched, and the photos are still in the shoot")
@@ -1409,6 +1417,25 @@ struct RejectWholeBatchTests {
         let before = model.photos(inBatch: 0).map(\.id)
         model.perform(.rejectBatch)
         #expect(model.photos(inBatch: 0).map(\.id) == before)
+    }
+
+    @Test("A batch with a rated and an unrated photo only rejects the unrated one")
+    func ratedPhotosAreLeftAlone() throws {
+        let session = MockSession(photos: FixturePhotos.syntheticPhotos(count: 2, burstSize: 2))
+        let model = AppModel(.testing(backend: session))
+        model.open(session, folderName: "Test")
+        model.updateSettings { $0.general.rejectWholeBatch = true }
+
+        model.perform(.setStars(4))  // rate the first photo
+        model.perform(.photoNext)  // move onto the second, still-unrated photo
+        model.perform(.rejectBatch)
+
+        let frames = model.photos(inBatch: 0)
+        #expect(frames.count == 2)
+        #expect(frames[0].rating.stars == 4, "the already-rated photo keeps its rating")
+        #expect(frames[0].rating.flag == .none, "the rated photo is not flagged")
+        #expect(frames[1].rating.flag == .reject, "the unrated photo gets the reject flag")
+        #expect(frames[1].rating.stars == 0)
     }
 
     @Test("⇧X is its default key, and its name round-trips through the keymap")

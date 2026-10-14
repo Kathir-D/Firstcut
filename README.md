@@ -74,7 +74,8 @@ Firstcut does **not** use AI to rate or reject photos. You make every call; it j
 - 🗑️ **Optional: reject a whole batch at once** — off by default. Turn on *Settings → General →
   Offer Reject Whole Batch* and `⇧X` flags every frame of a burst that is all bad takes, like
   erasing a burst group on a Canon camera. It only flags (nothing is deleted before Finish), and one
-  `⌘Z` puts the whole batch back.
+  `⌘Z` puts the whole batch back. It flags every *unrated* photo in the batch; photos you already
+  rated are left alone.
 - 🤝 **Plays well with Lightroom and Capture One** — ratings are written to standard `.xmp` sidecars.
 - 🧹 **Finish step** — once every batch is done, choose what happens to the photos you didn't keep:
   move them to Trash or a subfolder, mark them rejected, copy your keepers somewhere else, and more.

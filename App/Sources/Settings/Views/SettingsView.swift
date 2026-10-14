@@ -82,8 +82,9 @@ private struct GeneralSettingsTab: View {
                     "Offer Reject Whole Batch (⇧X)",
                     isOn: settingBinding(model, \.general.rejectWholeBatch))
                 Text(
-                    "Rejects every photo in the current batch at once, for a burst that is all bad takes. "
-                        + "It only sets the reject flag, one ⌘Z undoes it, and nothing is deleted before Finish."
+                    "Flags every unrated photo in the current batch as rejected; photos you already "
+                        + "rated are left alone. It only sets the reject flag, one ⌘Z undoes it, and "
+                        + "nothing is deleted before Finish."
                 )
                 .font(.footnote).foregroundStyle(.secondary)
             }
