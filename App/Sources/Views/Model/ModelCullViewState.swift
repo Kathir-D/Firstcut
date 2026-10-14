@@ -192,6 +192,7 @@ extension CullAction {
         case .redo: .redo
         case .openFolder: .openFolder
         case .closeFolder: .closeFolder
+        case .cycleCompare: .cycleCompare
         case .finishCull: .finishCull
         case .selectPhoto: nil
         }

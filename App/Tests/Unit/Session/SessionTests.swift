@@ -378,6 +378,18 @@ struct AppModelNavigationTests {
         #expect(model.clippingOverlay)
     }
 
+    @Test("C cycles single, 2-up, 3-up compare (task.md §2.6)")
+    func cycleCompare() throws {
+        let (model, _) = Self.makeModel()
+        #expect(model.viewMode == .loupe, "starts on the single photo")
+        model.perform(.cycleCompare)
+        #expect(model.viewMode == .compare(2), "single → 2-up")
+        model.perform(.cycleCompare)
+        #expect(model.viewMode == .compare(3), "2-up → 3-up")
+        model.perform(.cycleCompare)
+        #expect(model.viewMode == .loupe, "3-up → single")
+    }
+
     @Test("Click zooms to 100% at that spot, clicking again returns to fit (todo.md §9.2)")
     func clickToZoom() throws {
         let (model, _) = Self.makeModel()

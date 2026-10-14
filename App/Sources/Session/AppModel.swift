@@ -712,6 +712,13 @@ public final class AppModel: SessionListener, KeyRouterSource {
         case .showLoupe: setViewMode(.loupe)
         case .showGrid: setViewMode(.grid)
         case .showCompare(let count): setViewMode(.compare(min(max(count, 2), 4)))
+        case .cycleCompare:
+            // single → 2-up → 3-up → single
+            switch viewMode {
+            case .compare(2): setViewMode(.compare(3))
+            case .compare(3): setViewMode(.loupe)
+            default: setViewMode(.compare(2))
+            }
 
         case .toggleZoom(let point):
             // Click: 100% at that spot, click again: back to fit (task.md §9.2).

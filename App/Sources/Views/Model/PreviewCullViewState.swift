@@ -132,7 +132,7 @@ final class PreviewCullViewState: CullViewState {
             break
         case .openFolder, .finishCull:
             phase = .finishing
-        case .closeFolder:
+        case .closeFolder, .cycleCompare:
             break
         }
     }

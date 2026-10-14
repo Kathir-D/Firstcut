@@ -145,6 +145,9 @@ struct FirstcutCommands: Commands {
             Button("as Grid") { environment.send(.setViewMode(.grid)) }
                 .keyboardShortcut(shortcut(.showGrid))
                 .disabled(!isCulling)
+            Button("Cycle Compare") { environment.send(.cycleCompare) }
+                .keyboardShortcut(shortcut(.cycleCompare))
+                .disabled(!isCulling)
             Button("as Compare (2-up)") { environment.send(.setViewMode(.compare(count: 2))) }
                 .keyboardShortcut(shortcut(.showCompare(2)))
                 .disabled(!isCulling)

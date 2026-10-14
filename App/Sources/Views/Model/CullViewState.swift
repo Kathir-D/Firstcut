@@ -181,6 +181,7 @@ struct CullHistogram: Equatable, Sendable {
 enum CullAction {
     case openFolder
     case closeFolder
+    case cycleCompare
     case finishCull
     case photoPrevious
     case photoNext
