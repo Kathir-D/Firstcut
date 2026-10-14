@@ -59,6 +59,12 @@ struct FirstcutCommands: Commands {
                 .disabled(!isCulling)
         }
 
+        CommandGroup(after: .toolbar) {
+            Button("Go to Batch…") { environment.send(.goToBatch) }
+                .keyboardShortcut(shortcut(.goToBatch))
+                .disabled(!isCulling)
+        }
+
         // Find and spelling have nothing to act on here; Auto-Advance lives in the View menu.
         CommandGroup(replacing: .textEditing) {}
 

@@ -182,6 +182,7 @@ struct KeymapTests {
             .redo: KeyChord(.z, [.command, .shift]),
             .openFolder: KeyChord(.o, [.command]),
             .closeFolder: KeyChord(.w, [.command]),
+            .goToBatch: KeyChord(.l, [.command]),
             .finishCull: KeyChord(.return, [.command]),
             .toggleFullScreen: KeyChord(.f, [.control, .command]),
         ]

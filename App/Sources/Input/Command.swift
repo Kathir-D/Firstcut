@@ -93,6 +93,9 @@ public enum Command: Hashable, Sendable {
     case redo
     case openFolder
     case closeFolder
+    /// Jump to a batch by number from the Go to Batch prompt (1-based). Not repeatable: one batch per
+    /// press, like opening or closing a folder.
+    case goToBatch
     case finishCull
     case toggleFullScreen
 }
@@ -134,6 +137,7 @@ extension Command {
         case .redo: "edit.redo"
         case .openFolder: "file.open"
         case .closeFolder: "file.close"
+        case .goToBatch: "batch.goto"
         case .finishCull: "cull.finish"
         case .toggleFullScreen: "app.fullScreen"
         }
@@ -195,6 +199,7 @@ extension Command {
         case "edit.redo": self = .redo
         case "file.open": self = .openFolder
         case "file.close": self = .closeFolder
+        case "batch.goto": self = .goToBatch
         case "cull.finish": self = .finishCull
         case "app.fullScreen": self = .toggleFullScreen
         default: return nil
@@ -212,9 +217,10 @@ extension Command {
             .jumpBatch,
             .rejectFlag, .unflag, .toggleFlag, .setLabel:
             true
-        // A whole batch at a time: holding the key would reject the next batch, and the one after.
-        case .openFolder, .closeFolder, .finishCull, .undo, .redo, .toggleFullScreen, .rejectBatch,
-            .toggleAutoAdvance, .showLoupe, .showGrid, .showCompare, .cycleCompare:
+        // A whole batch at a time: holding the key would jump several batches, and the one after.
+        case .openFolder, .closeFolder, .goToBatch, .finishCull, .undo, .redo,
+            .toggleFullScreen, .rejectBatch, .toggleAutoAdvance, .showLoupe, .showGrid,
+            .showCompare, .cycleCompare:
             false
         case .toggleInfoPanel, .toggleClippingOverlay, .toggleAFOverlay, .toggleHUD,
             .toggleZoomLock, .toggleZoom, .magnify, .setRatingMode:

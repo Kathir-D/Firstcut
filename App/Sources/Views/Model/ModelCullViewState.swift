@@ -125,6 +125,10 @@ final class ModelCullViewState: CullViewState {
 
     func openFolder(at url: URL) { model.open(folder: url) }
 
+    var isGoToBatchPresented: Bool { model.isGoToBatchPresented }
+    func goToBatch(number: Int) -> Bool { model.goToBatch(number: number) }
+    func dismissGoToBatch() { model.dismissGoToBatch() }
+
     func finish(_ action: FinishAction) {
         switch action {
         case .confirm: model.confirmFinish()
@@ -194,6 +198,7 @@ extension CullAction {
         case .redo: .redo
         case .openFolder: .openFolder
         case .closeFolder: .closeFolder
+        case .goToBatch: .goToBatch
         case .cycleCompare: .cycleCompare
         case .finishCull: .finishCull
         case .selectPhoto: nil
