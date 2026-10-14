@@ -15,11 +15,12 @@ use rusqlite::Connection;
 use super::error::{Result, StoreError};
 
 /// The schema version this build expects.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 const V1: &str = include_str!("schema_v1.sql");
 const V2: &str = include_str!("schema_v2.sql");
 const V3: &str = include_str!("schema_v3.sql");
+const V4: &str = include_str!("schema_v4.sql");
 
 /// One forward-only step.
 pub struct Migration {
@@ -40,6 +41,10 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 3,
         sql: V3,
+    },
+    Migration {
+        version: 4,
+        sql: V4,
     },
 ];
 
@@ -250,7 +255,10 @@ mod tests {
             ),
             ("cursor", &["batch_id", "photo_id"]),
             ("visited", &["batch_id", "batch_index"]),
-            ("session", &["folder_path", "fingerprint", "rating_mode"]),
+            (
+                "session",
+                &["folder_path", "fingerprint", "rating_mode", "batching_mode"],
+            ),
         ];
         for (table, columns) in expected {
             let found = column_names(&conn, table);

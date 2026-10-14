@@ -305,6 +305,35 @@ impl Db {
         Ok(())
     }
 
+    /// How this folder is batched. Anything unrecognised reads as Plays, the default.
+    pub fn batching_mode(&self) -> Result<crate::batch::BatchingMode> {
+        let mode: String = self
+            .conn()
+            .query_row(
+                "SELECT batching_mode FROM session WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "plays".to_string());
+        Ok(if mode == "bursts" {
+            crate::batch::BatchingMode::Bursts
+        } else {
+            crate::batch::BatchingMode::Plays
+        })
+    }
+
+    pub fn set_batching_mode(&self, mode: crate::batch::BatchingMode) -> Result<()> {
+        let text = match mode {
+            crate::batch::BatchingMode::Plays => "plays",
+            crate::batch::BatchingMode::Bursts => "bursts",
+        };
+        self.conn().execute(
+            "UPDATE session SET batching_mode = ?1, updated_at_ms = ?2 WHERE id = 1",
+            rusqlite::params![text, super::now_ms()],
+        )?;
+        Ok(())
+    }
+
     pub fn photo_count(&self) -> Result<i64> {
         Ok(self
             .conn()

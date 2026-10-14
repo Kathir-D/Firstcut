@@ -538,6 +538,31 @@ impl From<crate::store::Rating> for FfiRating {
     }
 }
 
+/// How photos are grouped into batches: Plays merges neighbouring bursts, Bursts does not.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiBatchingMode {
+    Plays,
+    Bursts,
+}
+
+impl From<FfiBatchingMode> for crate::batch::BatchingMode {
+    fn from(mode: FfiBatchingMode) -> Self {
+        match mode {
+            FfiBatchingMode::Plays => Self::Plays,
+            FfiBatchingMode::Bursts => Self::Bursts,
+        }
+    }
+}
+
+impl From<crate::batch::BatchingMode> for FfiBatchingMode {
+    fn from(mode: crate::batch::BatchingMode) -> Self {
+        match mode {
+            crate::batch::BatchingMode::Plays => Self::Plays,
+            crate::batch::BatchingMode::Bursts => Self::Bursts,
+        }
+    }
+}
+
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiRatingMode {
     Stars,
@@ -930,6 +955,20 @@ impl Session {
     pub fn set_rating_mode(&self, mode: FfiRatingMode) -> Result<(), FfiError> {
         self.inner
             .set_rating_mode(mode.into())
+            .map_err(|err| FfiError::Session {
+                message: err.to_string(),
+            })
+    }
+
+    /// How this folder is batched. Saved per folder; Plays until the user picks Bursts.
+    pub fn batching_mode(&self) -> FfiBatchingMode {
+        self.inner.batching_mode().into()
+    }
+
+    /// Sets and saves the batching mode, then re-cuts the batches that have not been visited.
+    pub fn set_batching_mode(&self, mode: FfiBatchingMode) -> Result<(), FfiError> {
+        self.inner
+            .set_batching_mode(mode.into())
             .map_err(|err| FfiError::Session {
                 message: err.to_string(),
             })

@@ -158,3 +158,12 @@ file-system timestamp is a guess and must never merge anything (REV-63, `singles
   decision; a backwards time always splits; unavailable evidence is excluded from the score's
   denominator rather than counting as zero.
 
+
+- **Plays mode (2026-10-14).** `batch::plays` adds `BatchingMode { Plays (default), Bursts }`,
+  `PlayParams` and `batch_mode`. `Bursts` is `batch_with` unchanged; `Plays` merges neighbouring
+  bursts whose weighted score (time gap, focal change, orientation change, visual distance when both
+  signatures exist) is under `merge_threshold`. A gap over 60 s or a focal change of a full stop never
+  merges, and visited (frozen) batches never merge. The mode is saved per folder (schema v4,
+  `session.batching_mode`, default `plays`) and set through `Session::set_batching_mode` /
+  `FfiSession.setBatchingMode`, which re-cuts the unvisited batches. Only visited batches are passed
+  to the batcher as frozen; an unvisited stored batch is no longer a lock.

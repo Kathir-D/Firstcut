@@ -234,3 +234,6 @@ does not:
   adds `history.group_id` (the group's first `seq`; NULL for a change of its own, which every row
   written before v3 reads as). FFI: `set_ratings(Vec<FfiPhotoRating>)`, `undo_step`, `redo_step`.
 
+
+- **Batching mode (2026-10-14).** `FfiBatchingMode { Plays, Bursts }`, `FfiSession.batchingMode()` and
+  `setBatchingMode(_:)`. Saved per folder in the session database (schema version 4).

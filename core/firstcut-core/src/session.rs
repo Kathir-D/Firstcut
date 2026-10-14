@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::batch::{Batch, BatchId, PhotoId, VisualSig, batch_with};
+use crate::batch::{Batch, BatchId, BatchingMode, PhotoId, PlayParams, VisualSig, batch_mode};
 use crate::meta::{PhotoMeta, ScanResult, scan_folder};
 use crate::store::rating::{Rating, RatingMode, Tier};
 use crate::store::records::{BatchRow, HistoryEntry, PhotoRow, RatingRow, RatingWrite, VisitedRow};
@@ -206,6 +206,7 @@ struct State {
     /// One `Change` per rating call, handed out in order so the app can detect a stale one.
     change_seq: u64,
     rating_mode: RatingMode,
+    batching_mode: BatchingMode,
     /// Stars that make a keep in stars mode (4 or 5). Set by the app from Settings on open and on
     /// every change; not persisted, the app's setting is the record.
     keep_stars: u8,
@@ -285,6 +286,7 @@ impl Session {
         )))));
         let mut state = State {
             rating_mode: db.rating_mode()?,
+            batching_mode: db.batching_mode()?,
             keep_stars: crate::store::rating::KEEP_STARS,
             db,
             photos: HashMap::new(),
@@ -355,6 +357,33 @@ impl Session {
     /// Sets the keep threshold; clamped to 4…5.
     pub fn set_keep_stars(&self, stars: u8) {
         self.state().keep_stars = crate::store::rating::clamp_keep_stars(stars);
+    }
+
+    /// How this folder's photos are grouped into batches.
+    #[must_use]
+    pub fn batching_mode(&self) -> BatchingMode {
+        self.state().batching_mode
+    }
+
+    /// Saves the mode for this folder and re-cuts the batches under it. Visited batches stay
+    /// frozen, so only the part the user has not been through changes.
+    pub fn set_batching_mode(&self, mode: BatchingMode) -> Result<()> {
+        let mut state = self.state();
+        if state.batching_mode == mode {
+            return Ok(());
+        }
+        state.db.set_batching_mode(mode)?;
+        state.batching_mode = mode;
+        let Some(batches) = state.rebatch() else {
+            return Ok(());
+        };
+        if batches == state.batches {
+            return Ok(());
+        }
+        state.batches = batches;
+        drop(state);
+        self.listener.batches_changed(self.state().batches.clone());
+        Ok(())
     }
 
     /// Switches modes. Existing data is preserved and mapped, never rewritten
@@ -1072,9 +1101,13 @@ impl State {
         if self.photos.is_empty() {
             return None;
         }
+        // Only the batches the user has been in are frozen. An unvisited stored batch is just last
+        // run's answer, and holding it fixed would stop a change of batching mode from re-cutting it.
+        let visited = records::visited_batch_ids(&self.db).ok()?;
         let frozen: Vec<Batch> = records::batches(&self.db)
             .ok()?
             .into_iter()
+            .filter(|row| visited.contains(&row.id))
             .map(batch_from_row)
             .collect();
         let ordered: Vec<&PhotoMeta> = self
@@ -1082,7 +1115,14 @@ impl State {
             .iter()
             .filter_map(|id| self.photos.get(&id.0))
             .collect();
-        let outcome = batch_with(&ordered, &self.sigs, &frozen, Default::default());
+        let outcome = batch_mode(
+            &ordered,
+            &self.sigs,
+            &frozen,
+            Default::default(),
+            PlayParams::default(),
+            self.batching_mode,
+        );
 
         let rows: Vec<BatchRow> = outcome
             .batches
@@ -1721,6 +1761,16 @@ mod tests {
             .build()
     }
 
+    /// A session batched as bursts, for tests whose fixture is a run of separate bursts that Plays
+    /// would merge. The mode is saved with the folder, so a re-open keeps it.
+    fn bursts_session_with(
+        photos: Vec<PhotoMeta>,
+    ) -> (tempfile::TempDir, tempfile::TempDir, Session) {
+        let out = session_with(photos);
+        out.2.set_batching_mode(BatchingMode::Bursts).unwrap();
+        out
+    }
+
     fn empty_session() -> (tempfile::TempDir, tempfile::TempDir, Session) {
         session_with(burst(12, 90))
     }
@@ -1879,7 +1929,7 @@ mod tests {
     #[test]
     fn undo_carries_the_batch_it_was_made_in() {
         // §6.3: a change records the batch position so undo can navigate back across batches.
-        let (_s, _f, session) = session_with(photo_run());
+        let (_s, _f, session) = bursts_session_with(photo_run());
         let snapshot = session.snapshot();
         assert!(
             snapshot.batches.len() > 2,
@@ -1897,7 +1947,7 @@ mod tests {
     /// one of them back — not just the last frame, which is what a log of single changes would do.
     #[test]
     fn a_batch_rejected_at_once_is_undone_and_redone_at_once() {
-        let (_s, folder, session) = session_with(photo_run());
+        let (_s, folder, session) = bursts_session_with(photo_run());
         let snapshot = session.snapshot();
         let batch = &snapshot.batches[1];
         let frames: Vec<PhotoId> = batch.photo_ids.clone();
@@ -1961,7 +2011,7 @@ mod tests {
     /// it already had — and a batch with nothing left to reject records nothing at all.
     #[test]
     fn rejecting_a_batch_skips_frames_already_rejected() {
-        let (_s, _f, session) = session_with(photo_run());
+        let (_s, _f, session) = bursts_session_with(photo_run());
         let frames = session.snapshot().batches[0].photo_ids.clone();
         let reject = Rating {
             flag: Flag::Reject,
@@ -1982,7 +2032,7 @@ mod tests {
     /// `undo()` still works over a grouped change, and reverts all of it.
     #[test]
     fn plain_undo_reverts_a_whole_group_too() {
-        let (_s, _f, session) = session_with(photo_run());
+        let (_s, _f, session) = bursts_session_with(photo_run());
         let frames = session.snapshot().batches[2].photo_ids.clone();
         let ratings: Vec<_> = frames.iter().map(|&p| (p, Rating::stars(1))).collect();
         session.set_ratings(&ratings).unwrap();
@@ -2034,7 +2084,7 @@ mod tests {
     fn a_visited_batch_is_frozen_against_re_batching() {
         // todo.md §5.4: a batch the user has been in is never re-cut under them. A signature that
         // would otherwise merge it into its neighbour must not.
-        let (_s, _f, session) = session_with(photo_run());
+        let (_s, _f, session) = bursts_session_with(photo_run());
         let before = session.snapshot().batches;
         let batch = before[0].clone();
         session.mark_visited(batch.id).unwrap();
@@ -2064,7 +2114,7 @@ mod tests {
 
     #[test]
     fn marking_a_batch_visited_does_not_invent_a_position() {
-        let (_s, _f, session) = session_with(photo_run());
+        let (_s, _f, session) = bursts_session_with(photo_run());
         let batch = session.snapshot().batches[1].clone();
         session.mark_visited(batch.id).unwrap();
         let snapshot = session.snapshot();
@@ -2080,7 +2130,7 @@ mod tests {
 
     #[test]
     fn setting_the_cursor_records_the_position_in_the_batch() {
-        let (sessions, folder, session) = session_with(photo_run());
+        let (sessions, folder, session) = bursts_session_with(photo_run());
         let batch = session.snapshot().batches[1].clone();
         let photo = batch.photo_ids[0];
         session
@@ -2112,7 +2162,7 @@ mod tests {
 
     #[test]
     fn the_cursor_survives_a_reopen() {
-        let (sessions, folder, session) = session_with(photo_run());
+        let (sessions, folder, session) = bursts_session_with(photo_run());
         let snapshot = session.snapshot();
         let batch = snapshot.batches[2].clone();
         let photo = batch.photo_ids[1];
@@ -2129,6 +2179,24 @@ mod tests {
         let cursor = reopened.snapshot().cursor.expect("the cursor");
         assert_eq!(cursor.batch, batch.id);
         assert_eq!(cursor.photo, photo);
+    }
+
+    #[test]
+    fn batching_mode_defaults_to_plays_and_is_saved_for_the_folder() {
+        let (_s, _f, session) = empty_session();
+        assert_eq!(session.batching_mode(), BatchingMode::Plays);
+        session.set_batching_mode(BatchingMode::Bursts).unwrap();
+        assert_eq!(session.batching_mode(), BatchingMode::Bursts);
+        // The database is what a re-open reads.
+        assert_eq!(
+            session.state().db.batching_mode().unwrap(),
+            BatchingMode::Bursts
+        );
+        session.set_batching_mode(BatchingMode::Plays).unwrap();
+        assert_eq!(
+            session.state().db.batching_mode().unwrap(),
+            BatchingMode::Plays
+        );
     }
 
     #[test]
