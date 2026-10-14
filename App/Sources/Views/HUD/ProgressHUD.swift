@@ -17,6 +17,10 @@ struct ProgressHUD: View {
     /// is on, which it is not by default.
     var onRejectBatch: (() -> Void)?
 
+    /// Accessibility label and tooltip for the compact, icon-only reject-batch button.
+    static let rejectBatchAccessibilityLabel = "Reject batch"
+    static let rejectBatchTooltip = "Reject every photo in this batch (⇧X). Undo puts them all back."
+
     var body: some View {
         GlassCapsule(isInteractive: false) {
             // `isInteractive: false` so the capsule *background* does not swallow clicks meant for
@@ -47,18 +51,19 @@ struct ProgressHUD: View {
                 if let onRejectBatch {
                     divider
                     Button(action: onRejectBatch) {
-                        Label("Reject batch", systemImage: "xmark.circle")
-                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "xmark.circle")
+                            .font(.system(size: 11))
                             .foregroundStyle(Appearance.rejectRed)
                     }
                     .buttonStyle(.plain)
-                    .help("Reject every photo in this batch (⇧X). Undo puts them all back.")
+                    .help(ProgressHUD.rejectBatchTooltip)
+                    .accessibilityLabel(ProgressHUD.rejectBatchAccessibilityLabel)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
         }
-        .frame(maxWidth: Appearance.hudMaxWidth)
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             (photo.map { "\(GridCell.accessibilityText(for: $0, mode: mode)). " } ?? "")
@@ -78,6 +83,7 @@ struct ProgressHUD: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Appearance.primaryLabel)
                 .monospacedDigit()
+                .lineLimit(1)
             Text(label)
                 .font(.system(size: 9))
                 .foregroundStyle(Appearance.secondaryLabel)
