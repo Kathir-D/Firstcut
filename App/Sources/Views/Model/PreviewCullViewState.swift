@@ -69,6 +69,8 @@ final class PreviewCullViewState: CullViewState {
     func openRecent(_ folder: RecentFolder) {}
     func forgetRecent(_ folder: RecentFolder) {}
 
+    func openFolder(at url: URL) {}
+
     func finish(_ action: FinishAction) {
         if case .cancel = action { finishStage = .hidden }
     }

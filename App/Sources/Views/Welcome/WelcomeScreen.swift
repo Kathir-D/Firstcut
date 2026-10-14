@@ -40,6 +40,10 @@ struct WelcomeScreen: View {
                 .padding(32)
                 .accessibilityElement(children: .contain)
 
+                PathField(state: state)
+                    .frame(maxWidth: 460)
+                    .padding(.horizontal, 32)
+
                 if !state.recentFolders.isEmpty {
                     RecentFoldersList(state: state)
                         .frame(maxWidth: 460)
@@ -50,6 +54,55 @@ struct WelcomeScreen: View {
             }
         }
         .accessibilityLabel("Welcome")
+    }
+}
+
+/// A text field for typing or pasting a folder path, with an Open button, an inline message for a
+/// failed check, and up to six folder-name suggestions under the parent of the text. Plan 2.9.
+private struct PathField: View {
+    let state: any CullViewState
+    @State private var text = ""
+    @State private var message: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                TextField("Type or paste a folder path", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: .infinity)
+                    .onChange(of: text) { _, _ in message = nil }
+                    .onSubmit { open() }
+                    .accessibilityLabel("Folder path")
+                Button("Open") { open() }
+            }
+            if let message {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Appearance.secondaryLabel)
+            }
+            if !text.isEmpty {
+                ForEach(PathInput.suggestions(for: text, limit: 6), id: \.self) { suggestion in
+                    Button {
+                        text = suggestion + "/"
+                    } label: {
+                        Text(suggestion)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Appearance.secondaryLabel)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func open() {
+        switch PathInput.check(text) {
+        case .folder(let url):
+            message = nil
+            state.openFolder(at: url)
+        case let other:
+            message = PathInput.message(for: other)
+        }
     }
 }
 

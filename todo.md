@@ -184,7 +184,7 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 ### 0.5 Handoff: where the last session stopped
 
 > **As of 2026-10-14 (RAW formats + optional batch reject).** Both suites green: Rust (fmt, clippy,
-> 409 unit + integration), **Swift 314 tests in 40 suites**.
+> 409 unit + integration), **Swift 335 tests in 48 suites**.
 >
 > - **Every raw.pixls.us format opens** (§8): 13 new `RawFormat`s, CRW and MRW readers, and
 >   `firstcut verify <folder> [--previews]` against exiftool — 98 of 105 sample files agree. The
@@ -194,6 +194,10 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - **Reject Whole Batch** (§6.3): opt-in and **off by default** — the owner was explicit that the
 >   Canon burst-group erase was context for what a batch *is*, not how Firstcut should delete. It
 >   only flags, and undoes as one step (schema v3 `history.group_id`).
+> - **Type a folder path** (plan 2.9): a `PathField` on the Welcome screen — a text field with an
+>   Open button, an inline check message, and up to six folder-name suggestions under the parent of
+>   the text. `func openFolder(at:)` on `CullViewState` reaches `AppModel.open(folder:)`. The seam is
+>   pinned in `WelcomePathTests`; `PathInput` itself is covered by its own tests.
 > - **Next:** check the fallback and the batch reject by hand in the app on a real folder; the CR3
 >   burst "roll" (several frames per file) is still one photo; X3F / Leaf MOS / Kodak MakerNote
 >   metadata are still missing (§8).
@@ -1314,6 +1318,10 @@ with Liquid Glass. It should be indistinguishable from an Apple app. Always dark
       capsule, auto-hides, toggle key.
 - [x] **Welcome window**: Open Folder…, recent sessions with progress (resume), drag-and-drop a
       folder onto the window/Dock icon.
+- [x] **Type or paste a folder path** (plan 2.9): a `PathField` on the Welcome screen — a text field
+      with an Open button and inline feedback (`PathInput.check`), plus up to six folder-name
+      suggestions under the parent of the text. `func openFolder(at:)` on `CullViewState` reaches
+      `AppModel.open(folder:)`. Tested in `WelcomePathTests`.
 
 ### 9.7 Finish Cull flow
 

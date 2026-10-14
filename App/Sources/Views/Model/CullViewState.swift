@@ -79,6 +79,7 @@ protocol CullViewState: AnyObject {
     func finish(_ action: FinishAction)
     func openRecent(_ folder: RecentFolder)
     func forgetRecent(_ folder: RecentFolder)
+    func openFolder(at url: URL)
 }
 
 extension CullViewState {
