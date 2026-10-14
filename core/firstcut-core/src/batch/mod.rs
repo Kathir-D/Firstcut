@@ -11,6 +11,7 @@
 
 pub mod eval;
 pub mod fixture;
+pub mod plays;
 pub mod signals;
 pub mod view;
 pub mod visual;
@@ -24,6 +25,7 @@ use crate::batch::view::{Photo, effective_time_ms};
 use crate::order;
 pub use eval::{BoundaryMetrics, GroundTruth, evaluate_boundaries, evaluate_names};
 pub use fixture::{FileKind, PhotoMeta, RawFormat, TimeSource};
+pub use plays::{BatchingMode, PlayParams, batch_mode};
 pub use visual::{VisualSig, distance, visual_sig};
 
 /// Stable across runs: hash of the photo's path relative to the session folder
