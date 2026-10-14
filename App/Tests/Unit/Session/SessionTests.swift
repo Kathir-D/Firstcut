@@ -1533,3 +1533,24 @@ struct BatchingModeSettingTests {
         #expect(try JSONDecoder().decode(GeneralSettings.self, from: data).batchingMode == .bursts)
     }
 }
+
+@MainActor
+@Suite("First open")
+struct FirstOpenTests {
+    @Test("The first-open answer is saved once and the sheet closes")
+    func completeFirstOpenSavesBothChoices() {
+        let (model, _) = AppModelNavigationTests.makeModel()
+        #expect(model.settings.general.hasCompletedFirstOpen == false)
+        model.completeFirstOpen(batchingMode: .bursts, ratingMode: .keep)
+        #expect(model.isFirstOpenPresented == false)
+        #expect(model.settings.general.batchingMode == .bursts)
+        #expect(model.settings.general.ratingMode == .keep)
+        #expect(model.settings.general.hasCompletedFirstOpen)
+    }
+
+    @Test("A settings file from before the sheet existed still reads, as not yet answered")
+    func oldSettingsReadAsUnanswered() throws {
+        let decoded = try JSONDecoder().decode(GeneralSettings.self, from: Data("{}".utf8))
+        #expect(decoded.hasCompletedFirstOpen == false)
+    }
+}

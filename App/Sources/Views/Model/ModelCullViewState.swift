@@ -129,6 +129,12 @@ final class ModelCullViewState: CullViewState {
     func goToBatch(number: Int) -> Bool { model.goToBatch(number: number) }
     func dismissGoToBatch() { model.dismissGoToBatch() }
 
+    var isFirstOpenPresented: Bool { model.isFirstOpenPresented }
+    var batchingMode: BatchingMode { model.settings.general.batchingMode }
+    func completeFirstOpen(batchingMode: BatchingMode, ratingMode: RatingMode) {
+        model.completeFirstOpen(batchingMode: batchingMode, ratingMode: ratingMode)
+    }
+
     func finish(_ action: FinishAction) {
         switch action {
         case .confirm: model.confirmFinish()

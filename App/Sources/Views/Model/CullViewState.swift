@@ -83,6 +83,9 @@ protocol CullViewState: AnyObject {
     var isGoToBatchPresented: Bool { get }
     func goToBatch(number: Int) -> Bool
     func dismissGoToBatch()
+    var isFirstOpenPresented: Bool { get }
+    var batchingMode: BatchingMode { get }
+    func completeFirstOpen(batchingMode: BatchingMode, ratingMode: RatingMode)
 }
 
 extension CullViewState {

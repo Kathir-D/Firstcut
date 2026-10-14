@@ -75,6 +75,10 @@ final class PreviewCullViewState: CullViewState {
     func goToBatch(number: Int) -> Bool { false }
     func dismissGoToBatch() {}
 
+    var isFirstOpenPresented: Bool { false }
+    var batchingMode: BatchingMode { .plays }
+    func completeFirstOpen(batchingMode: BatchingMode, ratingMode: RatingMode) {}
+
     func finish(_ action: FinishAction) {
         if case .cancel = action { finishStage = .hidden }
     }

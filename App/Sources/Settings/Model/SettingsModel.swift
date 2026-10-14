@@ -68,6 +68,8 @@ public struct GeneralSettings: Codable, Equatable, Sendable {
     /// nothing leaves the disk until Finish, exactly as with X. Since 2026-10-14 (T24) it only
     /// flags photos that have no rating yet; photos you already rated are left alone.
     public var rejectWholeBatch: Bool = false
+    /// The first-open sheet (Batch by, Rate with) has been answered. Plan 2.1.
+    public var hasCompletedFirstOpen: Bool = false
 
     public init() {}
 }
@@ -76,7 +78,8 @@ extension GeneralSettings {
     private enum CodingKeys: String, CodingKey {
         case ratingMode, batchingMode, autoAdvance, arrowBehaviorAtBatchEnd, enteringBatchBehavior,
             finishUnkept,
-            finishKept, confirmBeforeFinish, confirmPermanentDelete, keepThreshold, rejectWholeBatch
+            finishKept, confirmBeforeFinish, confirmPermanentDelete, keepThreshold, rejectWholeBatch,
+            hasCompletedFirstOpen
     }
 
     /// Every key is optional, so a settings file written before a setting existed still reads and
@@ -104,6 +107,9 @@ extension GeneralSettings {
         keepThreshold = try c.decodeIfPresent(Int.self, forKey: .keepThreshold) ?? d.keepThreshold
         rejectWholeBatch =
             try c.decodeIfPresent(Bool.self, forKey: .rejectWholeBatch) ?? d.rejectWholeBatch
+        hasCompletedFirstOpen =
+            try c.decodeIfPresent(Bool.self, forKey: .hasCompletedFirstOpen)
+            ?? d.hasCompletedFirstOpen
     }
 }
 

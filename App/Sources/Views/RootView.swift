@@ -45,6 +45,9 @@ struct RootView: View {
         ) {
             GoToBatchSheet(state: state)
         }
+        .sheet(isPresented: .constant(state.isFirstOpenPresented)) {
+            FirstOpenSheet(state: state)
+        }
         .alert(
             "Something went wrong",
             isPresented: Binding(

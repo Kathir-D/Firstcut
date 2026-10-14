@@ -46,6 +46,8 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// The Go to Batch prompt is shown. Set by `perform(.goToBatch)` while culling, and cleared by
     /// `goToBatch(number:)` or `dismissGoToBatch()`.
     public var isGoToBatchPresented = false
+    /// The one-time "Batch by / Rate with" question, shown over the first folder the user opens.
+    public private(set) var isFirstOpenPresented = false
 
     /// Caps Lock flips this for the session only; Settings → General owns the persistent value
     /// (Lightroom behaves the same way, and task.md §6.3 calls it "a setting, toggled also with
@@ -329,6 +331,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         }
         markCurrentBatchVisited()
         phase = .culling
+        if !settings.general.hasCompletedFirstOpen { isFirstOpenPresented = true }
         pushCursor()
         updatePipelineFocus()
         recordRecent()
@@ -600,6 +603,18 @@ public final class AppModel: SessionListener, KeyRouterSource {
         folderURL = nil
         finish = .hidden
         phase = .welcome
+    }
+
+    // MARK: - First open
+
+    /// Answers the first-open sheet: both choices become the settings, and the sheet never returns.
+    public func completeFirstOpen(batchingMode: BatchingMode, ratingMode: RatingMode) {
+        isFirstOpenPresented = false
+        updateSettings {
+            $0.general.batchingMode = batchingMode
+            $0.general.ratingMode = ratingMode
+            $0.general.hasCompletedFirstOpen = true
+        }
     }
 
     // MARK: - Go to Batch
