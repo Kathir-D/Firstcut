@@ -33,6 +33,8 @@ History of how it got here: `git log`. The retired multi-agent process: `git sho
 ### 0.2 Left for the owner
 
 Only a person with the Mac, the test photos, the apps or the repo settings can do these. In order:
+The owner works through them in `~/Documents/firstcut-review/review.html` (not in the repo: it holds
+thumbnails of the test photos), which saves its answers as `~/Downloads/firstcut-review-results.json`.
 
 1. **Look at the app.** `scripts/build-app.sh --open`, cull part of a real game in both rating modes,
    run Finish on a *copy* and undo it. Compare each screen with Finder's gallery view (§9) and write
