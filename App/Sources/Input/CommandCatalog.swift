@@ -86,7 +86,7 @@ public enum CommandCatalog {
 
         // View (todo.md §9.2, §9.3, §9.5, §9.6)
         list += [
-            CommandCatalogEntry(command: .showLoupe, menu: .view, title: "Loupe"),
+            CommandCatalogEntry(command: .showLoupe, menu: .view, title: "Single Photo"),
             CommandCatalogEntry(command: .showGrid, menu: .view, title: "Grid"),
             CommandCatalogEntry(command: .showCompare(2), menu: .view, title: "Compare 2-Up"),
             CommandCatalogEntry(command: .showCompare(3), menu: .view, title: "Compare 3-Up"),

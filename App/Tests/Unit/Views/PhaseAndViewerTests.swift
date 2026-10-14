@@ -135,3 +135,12 @@ struct ViewerPresentationTests {
         PhotoViewerHostView.register { _, _ in TestHost(frame: .zero) }
     }
 }
+
+// Owner: ui.
+@Suite("CullViewMode labels (plan 2.7)")
+struct CullViewModeLabelTests {
+    @Test("The E-key single-photo mode is labelled for users, not 'Loupe'")
+    func loupeIsSinglePhoto() {
+        #expect(CullViewMode.loupe.displayName == "Single Photo (E)")
+    }
+}

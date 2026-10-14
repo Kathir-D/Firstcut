@@ -139,7 +139,7 @@ struct FirstcutCommands: Commands {
         }
 
         CommandGroup(after: .toolbar) {
-            Button("as Loupe") { environment.send(.setViewMode(.loupe)) }
+            Button("as Single Photo (E)") { environment.send(.setViewMode(.loupe)) }
                 .keyboardShortcut(shortcut(.showLoupe))
                 .disabled(!isCulling)
             Button("as Grid") { environment.send(.setViewMode(.grid)) }

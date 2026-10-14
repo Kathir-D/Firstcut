@@ -139,7 +139,7 @@ enum CullViewMode: Hashable, Sendable, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .loupe: "Loupe"
+        case .loupe: "Single Photo (E)"
         case .grid: "Grid"
         case .compare: "Compare"
         }
