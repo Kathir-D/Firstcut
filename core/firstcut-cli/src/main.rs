@@ -357,6 +357,14 @@ fn cmd_ground_truth(args: &[String]) -> Result<(), String> {
         "{:>4}  {:<22} {:<22} {:>6}  batcher says",
         "i", "from", "to", "Δt ms"
     );
+    // What the batcher *outputs*, not the boundary's own verdict: single frames a few seconds apart
+    // are grouped after the boundaries are decided, so a boundary scored SPLIT can still end up
+    // inside one batch. The checklist has to describe the template it sits next to.
+    let starts: std::collections::HashSet<PhotoId> = outcome
+        .batches
+        .iter()
+        .filter_map(|b| b.photo_ids.first().copied())
+        .collect();
     for v in ambiguous {
         println!(
             "{:>4}  {:<22} {:<22} {:>6}  {}",
@@ -364,7 +372,7 @@ fn cmd_ground_truth(args: &[String]) -> Result<(), String> {
             name_of(&folder, outcome.order[v.index - 1]),
             name_of(&folder, outcome.order[v.index]),
             v.signals.dt_ms,
-            if v.split {
+            if starts.contains(&outcome.order[v.index]) {
                 "SPLIT (new batch starts at `to`)"
             } else {
                 "JOIN (same batch)"
