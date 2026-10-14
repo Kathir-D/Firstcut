@@ -212,9 +212,11 @@ private struct OptionsStage: View {
         .labelsHidden()
 
         if settings.unkept.folderName != nil {
-            TextField("Subfolder name", text: unkeptFolder)
-                .textFieldStyle(.roundedBorder)
-                .padding(.top, 6)
+            HStack {
+                TextField("Subfolder name", text: unkeptFolder).textFieldStyle(.roundedBorder)
+                FolderChooserButton(path: unkeptFolder)
+            }
+            .padding(.top, 6)
         }
         if settings.unkept.isDestructive {
             Warning(text: "Deleting permanently cannot be undone.", isSevere: true).padding(.top, 6)
@@ -232,9 +234,11 @@ private struct OptionsStage: View {
         .labelsHidden()
 
         if settings.kept.folderName != nil {
-            TextField(keptFieldLabel, text: keptFolder)
-                .textFieldStyle(.roundedBorder)
-                .padding(.top, 6)
+            HStack {
+                TextField(keptFieldLabel, text: keptFolder).textFieldStyle(.roundedBorder)
+                FolderChooserButton(path: keptFolder)
+            }
+            .padding(.top, 6)
         }
         if case .writeList = settings.kept {
             TextField("List file name", text: keptFolder)
