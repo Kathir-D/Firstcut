@@ -140,34 +140,59 @@ struct InfoRow: View {
 
 struct HistogramView: View {
     let histogram: CullHistogram
+    @State private var showsRGB = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Histogram")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Appearance.secondaryLabel)
+            HStack(spacing: 6) {
+                Text("Histogram")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Appearance.secondaryLabel)
+                Spacer(minLength: 0)
+                Text(Self.modeTitle(showsRGB: showsRGB))
+                    .font(.system(size: 10))
+                    .foregroundStyle(Appearance.secondaryLabel)
+            }
+            let peak = Self.sharedPeak(
+                showsRGB ? [histogram.red, histogram.green, histogram.blue] : [histogram.luminance])
             GeometryReader { geometry in
                 let width = geometry.size.width
                 let height = geometry.size.height
                 ZStack(alignment: .bottomLeading) {
-                    channel(histogram.luminance, .white.opacity(0.55), width: width, height: height)
-                    channel(histogram.red, Appearance.rejectRed, width: width, height: height)
-                    channel(histogram.green, .green, width: width, height: height)
-                    channel(histogram.blue, .blue, width: width, height: height)
+                    if showsRGB {
+                        channel(histogram.red, Appearance.rejectRed, peak: peak, width: width, height: height)
+                        channel(histogram.green, .green, peak: peak, width: width, height: height)
+                        channel(histogram.blue, .blue, peak: peak, width: width, height: height)
+                    } else {
+                        channel(
+                            histogram.luminance, .white.opacity(0.85), peak: peak, width: width,
+                            height: height)
+                    }
                 }
                 .background(Color.white.opacity(0.06))
                 .clipShape(.rect(cornerRadius: 3))
             }
             .frame(height: 74)
+            .contentShape(.rect)
+            .onTapGesture { showsRGB.toggle() }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Histogram")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("Histogram, \(Self.modeTitle(showsRGB: showsRGB))")
+        .help("Click to switch between Brightness and RGB")
     }
 
-    private func channel(_ values: [Double], _ color: Color, width: CGFloat, height: CGFloat)
+    static func sharedPeak(_ channels: [[Double]]) -> Double {
+        max(channels.flatMap { $0 }.max() ?? 0, 0.0001)
+    }
+
+    static func modeTitle(showsRGB: Bool) -> String {
+        showsRGB ? "RGB" : "Brightness"
+    }
+
+    private func channel(_ values: [Double], _ color: Color, peak: Double, width: CGFloat, height: CGFloat)
         -> some View
     {
-        let peak = max(values.max() ?? 0, 0.0001)
         return Path { path in
             guard values.count > 1 else { return }
             for (index, value) in values.enumerated() {
