@@ -40,6 +40,18 @@ struct ViewerArea: View {
                 photoID: state.currentPhoto?.id, aspectRatio: aspectRatio, presentation: presentation
             )
             .opacity(state.currentPhoto == nil ? 0 : 1)
+            if state.currentPhoto.map { LowResPreview.isLowRes($0.meta) } == true {
+                Text(LowResPreview.label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Appearance.primaryLabel)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Appearance.plateFill.opacity(0.7), in: Capsule())
+                    .padding(10)
+                    .accessibilityLabel("Low resolution preview")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
