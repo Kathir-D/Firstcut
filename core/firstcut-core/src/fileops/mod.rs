@@ -248,6 +248,9 @@ pub fn plan_finish(
     let mut kept_names: Vec<String> = Vec::new();
     let mut copy_bytes: u64 = 0;
     let mut copy_destinations: Vec<PathBuf> = Vec::new();
+    // Warn about a brand-new destination folder only once, no matter how many photos land there.
+    let mut announced_new_dirs: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::new();
 
     for photo in photos {
         let rating = ratings.get(&photo.id).copied().unwrap_or_default();
@@ -279,7 +282,7 @@ pub fn plan_finish(
                     };
                     let destination =
                         unique_destination(&root, &photo.rel_path, &files, &mut reserved);
-                    if !root.exists() {
+                    if !root.exists() && announced_new_dirs.insert(root.clone()) {
                         plan.warnings.push(format!(
                             "{} does not exist yet, it will be created",
                             root.display()
@@ -376,7 +379,7 @@ pub fn plan_finish(
                     };
                     let destination =
                         unique_destination(&root, &photo.rel_path, &files, &mut reserved);
-                    if !root.exists() {
+                    if !root.exists() && announced_new_dirs.insert(root.clone()) {
                         plan.warnings.push(format!(
                             "{} does not exist yet, it will be created",
                             root.display()
@@ -2034,6 +2037,78 @@ mod tests {
             "RAW, JPEG and the 4-byte sidecar"
         );
         assert_eq!(plan.count_of(FileOpKind::Copy), 3);
+    }
+
+    #[test]
+    fn the_new_folder_warning_is_shown_once_per_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ratings = HashMap::new();
+        for id in [1u64, 2, 3] {
+            let base = format!("IMG_{id:04}");
+            fs::write(dir.path().join(format!("{base}.CR3")), vec![0u8; 1000]).unwrap();
+            fs::write(dir.path().join(format!("{base}.JPG")), vec![0u8; 100]).unwrap();
+            fs::write(dir.path().join(format!("{base}.xmp")), b"<x/>").unwrap();
+            ratings.insert(id, Rating::stars(5));
+        }
+        let photos = [1u64, 2, 3]
+            .into_iter()
+            .map(|id| photo(id, &format!("IMG_{id:04}.CR3"), 1000, vec!["JPG", "xmp"]))
+            .collect::<Vec<_>>();
+
+        // Three photos kept into one brand-new folder: exactly one "does not exist yet" warning.
+        let kept = plan_finish(
+            dir.path(),
+            &photos,
+            &ratings,
+            &options(
+                UnkeptAction::Nothing,
+                KeptAction::CopyTo(dir.path().join("kept-out").to_string_lossy().into_owned()),
+            ),
+            0,
+        );
+        let new_dir_warnings: Vec<_> = kept
+            .warnings
+            .iter()
+            .filter(|w| w.contains("does not exist yet"))
+            .collect();
+        assert_eq!(new_dir_warnings.len(), 1, "{:?}", kept.warnings);
+        assert!(new_dir_warnings[0].contains("kept-out"));
+
+        // Three photos moved into one brand-new folder: still exactly one warning.
+        let dir2 = tempfile::tempdir().unwrap();
+        let ratings2 = HashMap::new();
+        for id in [1u64, 2, 3] {
+            let base = format!("IMG_{id:04}");
+            fs::write(dir2.path().join(format!("{base}.CR3")), vec![0u8; 1000]).unwrap();
+            fs::write(dir2.path().join(format!("{base}.JPG")), vec![0u8; 100]).unwrap();
+            fs::write(dir2.path().join(format!("{base}.xmp")), b"<x/>").unwrap();
+        }
+        let photos2 = [1u64, 2, 3]
+            .into_iter()
+            .map(|id| photo(id, &format!("IMG_{id:04}.CR3"), 1000, vec!["JPG", "xmp"]))
+            .collect::<Vec<_>>();
+        let moved = plan_finish(
+            dir2.path(),
+            &photos2,
+            &ratings2,
+            &options(
+                UnkeptAction::MoveToSubfolder(
+                    dir2.path()
+                        .join("unkept-out")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                KeptAction::None,
+            ),
+            0,
+        );
+        let new_dir_warnings2: Vec<_> = moved
+            .warnings
+            .iter()
+            .filter(|w| w.contains("does not exist yet"))
+            .collect();
+        assert_eq!(new_dir_warnings2.len(), 1, "{:?}", moved.warnings);
+        assert!(new_dir_warnings2[0].contains("unkept-out"));
     }
 
     #[test]
