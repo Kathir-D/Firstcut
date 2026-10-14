@@ -14,6 +14,7 @@ struct Filmstrip: NSViewRepresentable {
         let view = FilmstripScrollView()
         view.thumbnailProvider = thumbnailProvider
         view.onSelect = onSelect
+        view.ratingMode = ratingMode
         view.apply(frames: frames, selectedID: selectedID)
         return view
     }
@@ -21,6 +22,7 @@ struct Filmstrip: NSViewRepresentable {
     func updateNSView(_ view: FilmstripScrollView, context: Context) {
         view.thumbnailProvider = thumbnailProvider
         view.onSelect = onSelect
+        view.ratingMode = ratingMode
         view.apply(frames: frames, selectedID: selectedID)
     }
 

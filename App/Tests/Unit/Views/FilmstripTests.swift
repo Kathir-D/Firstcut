@@ -19,11 +19,16 @@ struct RatingVisualsTests {
         #expect(RatingVisuals.showsFlag(Rating(flag: .reject)) == true)
     }
 
-    @Test("Keep rings are green for keeps and red for not-keeps (todo.md §6.2)")
+    @Test("Keep rings are green for keeps, red for not-keeps, absent when unrated (todo.md §6.2)")
     func keepRings() {
         #expect(RatingVisuals.keepRingColor(Rating(keep: true), mode: .keep) == NSColor.systemGreen)
-        #expect(RatingVisuals.keepRingColor(Rating(), mode: .keep) == NSColor.systemRed)
+        // A 4-star photo is a keep in keep mode, not an unrated frame.
         #expect(RatingVisuals.keepRingColor(Rating(stars: 4), mode: .keep) == NSColor.systemGreen)
+        // A reviewed-but-not-kept photo still gets a ring, this one red.
+        #expect(RatingVisuals.keepRingColor(Rating(stars: 2), mode: .keep) == NSColor.systemRed)
+        // Unrated: no ring at all.
+        #expect(RatingVisuals.keepRingColor(Rating(), mode: .keep) == nil)
+        #expect(RatingVisuals.keepRingColor(Rating(stars: 3), mode: .keep) == NSColor.systemRed)
         #expect(RatingVisuals.isKeep(Rating(stars: 3), mode: .keep) == false)
         // 3 stars is a "Good", not a keep: the ring rule is mode-aware and threshold-driven, and the
         // old version here ignored both. A 3-star photo in keep mode must not claim to be a keep, or
@@ -115,5 +120,15 @@ struct FilmstripLayoutTests {
         #expect(strip.frame(for: 60) != nil)
         #expect(try! #require(strip.frame(for: 60)).maxY <= 104)
         #expect(strip.frame.width > 1200)
+    }
+
+    @Test("Filmstrip forwards its rating mode to the scroll view (todo.md §6.2)")
+    func modeReachesStrip() {
+        let strip = FilmstripScrollView()
+        strip.ratingMode = RatingMode.keep
+        #expect(strip.ratingMode == RatingMode.keep)
+        strip.apply(frames: frames(3), selectedID: nil)
+        strip.layout()
+        #expect(strip.ratingMode == RatingMode.keep)
     }
 }

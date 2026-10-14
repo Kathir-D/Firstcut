@@ -32,8 +32,14 @@ enum RatingVisuals {
         rating.flag != .none
     }
 
-    static func keepRingColor(_ rating: Rating, mode: RatingMode) -> NSColor {
-        isKeep(rating, mode: mode) ? .systemGreen : .systemRed
+    /// Keep ring colour, or nil when the photo is unrated (nothing has been said about it). An
+    /// unrated frame must not get a ring at all, so the caller draws nothing and the gray plate
+    /// behind stays the only mark. A reviewed-but-not-kept photo still gets a red ring.
+    static func keepRingColor(_ rating: Rating, mode: RatingMode) -> NSColor? {
+        if rating.isNeutral {
+            return nil
+        }
+        return isKeep(rating, mode: mode) ? NSColor.systemGreen : NSColor.systemRed
     }
 }
 
@@ -138,9 +144,10 @@ final class FilmstripBadgeLayer: CALayer {
     // MARK: - Keep mode
 
     private func drawKeepRing(in context: CGContext, bounds: CGRect) {
+        guard let color = RatingVisuals.keepRingColor(rating, mode: mode) else { return }
         let lineWidth: CGFloat = 2
         let rect = bounds.insetBy(dx: lineWidth / 2 + 1, dy: lineWidth / 2 + 1)
-        context.setStrokeColor(RatingVisuals.keepRingColor(rating, mode: mode).cgColor)
+        context.setStrokeColor(color.cgColor)
         context.setLineWidth(lineWidth)
         context.addPath(
             CGPath(
