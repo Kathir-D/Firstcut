@@ -30,6 +30,7 @@ struct FirstcutToolbar: ToolbarContent {
             BatchTitle(environment: environment)
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            OpenFolderButton(environment: environment)
             ViewModeControl(environment: environment)
             InfoToggleButton(environment: environment)
             FinishCullButton(environment: environment)
@@ -211,6 +212,26 @@ struct InfoToggleButton: View {
         .help("Info panel (I)")
         .accessibilityLabel("Info panel")
         .accessibilityValue(environment.state.isInfoPanelVisible ? "On" : "Off")
+    }
+}
+
+struct OpenFolderButton: View {
+    let environment: AppEnvironment
+
+    static let helpText = "Open another folder (⌘O). This one is saved first."
+
+    var body: some View {
+        Button {
+            environment.send(.openFolder)
+        } label: {
+            Image(systemName: "folder")
+                .frame(width: 20, height: 18)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Appearance.secondaryLabel)
+        .help(Self.helpText)
+        .accessibilityLabel("Open folder")
     }
 }
 
