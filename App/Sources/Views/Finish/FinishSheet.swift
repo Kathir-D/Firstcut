@@ -45,7 +45,7 @@ struct FinishSheet: View {
         }
         .padding(24)
         .frame(width: 560)
-        .frame(minHeight: 320)
+        .frame(minHeight: 320, maxHeight: 640)
         .onChange(of: state.finishStage) { _, stage in
             // Keyed on the *stage*, not on `isVisible`. `isVisible` is `self != .hidden`, so it stays
             // true across dryRun → options → dryRun: the user could type DELETE, press Back, change
@@ -322,8 +322,17 @@ private struct DryRunStage: View {
                 : "\(plan.opCount) file operation\(plan.opCount == 1 ? "" : "s"), copying \(plan.bytesToCopyDescription)"
         )
 
-        ForEach(plan.warnings, id: \.self) { warning in
-            Warning(text: warning, isSevere: warning.localizedCaseInsensitiveContains("cannot be undone"))
+        if !plan.warnings.isEmpty {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(plan.warnings, id: \.self) { warning in
+                        let isSevere = warning.localizedCaseInsensitiveContains("cannot be undone")
+                        Warning(text: warning, isSevere: isSevere)
+                    }
+                }
+            }
+            .frame(maxHeight: 140)
+            .accessibilityLabel("Warnings")
         }
 
         if !plan.ops.isEmpty {
