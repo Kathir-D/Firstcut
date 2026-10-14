@@ -866,6 +866,17 @@ struct AppModelRatingTests {
         #expect(model.currentPhoto == nil)
         #expect(model.phase == .welcome)
     }
+
+    @Test("Close Folder returns a preview session to the Welcome screen")
+    func closeFolderReturnsToWelcome() throws {
+        let session = MockSession(photos: FixturePhotos.syntheticPhotos(count: 2, burstSize: 2))
+        let model = AppModel(.testing(backend: session))
+        model.open(session, folderName: "Test")
+        #expect(model.phase != .welcome, "a folder is open before Close Folder")
+        model.perform(.closeFolder)
+        #expect(model.phase == .welcome)
+        #expect(model.currentPhoto == nil)
+    }
 }
 
 // MARK: - Undo

@@ -58,6 +58,7 @@ struct CommandTests {
         #expect(Command.finishCull.isRepeatable == false)
         #expect(Command.undo.isRepeatable == false)
         #expect(Command.openFolder.isRepeatable == false)
+        #expect(Command.closeFolder.isRepeatable == false)
         #expect(Command.toggleFullScreen.isRepeatable == false)
     }
 
@@ -178,6 +179,7 @@ struct KeymapTests {
             .undo: KeyChord(.z, [.command]),
             .redo: KeyChord(.z, [.command, .shift]),
             .openFolder: KeyChord(.o, [.command]),
+            .closeFolder: KeyChord(.w, [.command]),
             .finishCull: KeyChord(.return, [.command]),
             .toggleFullScreen: KeyChord(.f, [.control, .command]),
         ]

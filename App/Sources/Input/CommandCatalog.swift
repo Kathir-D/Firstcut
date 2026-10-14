@@ -102,6 +102,7 @@ public enum CommandCatalog {
         // File
         list += [
             CommandCatalogEntry(command: .openFolder, menu: .file, title: "Open Folder…"),
+            CommandCatalogEntry(command: .closeFolder, menu: .file, title: "Close Folder"),
             CommandCatalogEntry(command: .finishCull, menu: .file, title: "Finish Cull"),
         ]
 

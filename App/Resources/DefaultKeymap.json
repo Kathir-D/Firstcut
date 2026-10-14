@@ -48,6 +48,7 @@
     { "command": "edit.undo", "key": "z", "modifiers": ["command"] },
     { "command": "edit.redo", "key": "z", "modifiers": ["command", "shift"] },
     { "command": "file.open", "key": "o", "modifiers": ["command"] },
+    { "command": "file.close", "key": "w", "modifiers": ["command"] },
     { "command": "cull.finish", "key": "return", "modifiers": ["command"] },
     { "command": "cull.finish", "key": "keypadEnter", "modifiers": ["command"] },
     { "command": "app.fullScreen", "key": "f", "modifiers": ["control", "command"] }
