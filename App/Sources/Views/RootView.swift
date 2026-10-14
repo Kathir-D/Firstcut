@@ -66,7 +66,9 @@ struct RootView: View {
                             // the one place that stops being click-through. The rest of the capsule
                             // is a readout and nothing was ever meant to catch a click there.
                             onSetKeep: { state.send(.setKeep) },
-                            onSetNotKeep: { state.send(.setNotKeep) }
+                            onSetNotKeep: { state.send(.setNotKeep) },
+                            onRejectBatch: state.isRejectBatchEnabled
+                                ? { state.send(.rejectBatch) } : nil
                         )
                         .padding(.bottom, Appearance.filmstripHeight + 16)
                     }

@@ -27,6 +27,8 @@ final class PreviewCullViewState: CullViewState {
         }
     }
     var viewMode: CullViewMode = .loupe
+    /// The preview has no settings behind it, and the option is off by default.
+    var isRejectBatchEnabled: Bool { false }
     var isInfoPanelVisible = false
     var isHUDVisible = true
     var showsAFOverlay = false
@@ -126,7 +128,7 @@ final class PreviewCullViewState: CullViewState {
             rateCurrent { $0.keep = true }
         case .setNotKeep:
             rateCurrent { $0.keep = false }
-        case .undo, .redo:
+        case .undo, .redo, .rejectBatch:
             break
         case .openFolder, .finishCull:
             phase = .finishing

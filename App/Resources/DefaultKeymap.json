@@ -24,6 +24,7 @@
     { "command": "flag.pick", "key": "p", "modifiers": [], "modes": ["stars"] },
     { "command": "keep.toggle", "key": "p", "modifiers": [], "modes": ["keep"] },
     { "command": "flag.reject", "key": "x", "modifiers": [] },
+    { "command": "batch.reject", "key": "x", "modifiers": ["shift"] },
     { "command": "flag.unflag", "key": "u", "modifiers": [] },
     { "command": "flag.toggle", "key": "backtick", "modifiers": [] },
 

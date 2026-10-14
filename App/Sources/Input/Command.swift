@@ -61,6 +61,10 @@ public enum Command: Hashable, Sendable {
     case setKeep  // keep mode only; idempotent, unlike the toggle
     case setNotKeep  // keep mode only; idempotent
     case rejectFlag
+    /// Reject every frame of the current batch as one change (one ⌘Z undoes it), then move to the
+    /// next batch. **Opt-in**: does nothing unless Settings → General → "Reject Whole Batch" is on,
+    /// which it is not by default. Like X, it only flags; Finish decides what happens to the files.
+    case rejectBatch
     case unflag
     case toggleFlag
     case setLabel(ColorLabel?)
@@ -107,6 +111,7 @@ extension Command {
         case .setKeep: "keep.set"
         case .setNotKeep: "keep.clear"
         case .rejectFlag: "flag.reject"
+        case .rejectBatch: "batch.reject"
         case .unflag: "flag.unflag"
         case .toggleFlag: "flag.toggle"
         case .setLabel: "label"
@@ -165,6 +170,7 @@ extension Command {
         case "keep.set": self = .setKeep
         case "keep.clear": self = .setNotKeep
         case "flag.reject": self = .rejectFlag
+        case "batch.reject": self = .rejectBatch
         case "flag.unflag": self = .unflag
         case "flag.toggle": self = .toggleFlag
         case "label": self = .setLabel(argument.flatMap(ColorLabel.init(ordinal:)))
@@ -199,7 +205,8 @@ extension Command {
             .jumpBatch,
             .rejectFlag, .unflag, .toggleFlag, .setLabel:
             true
-        case .openFolder, .finishCull, .undo, .redo, .toggleFullScreen,
+        // A whole batch at a time: holding the key would reject the next batch, and the one after.
+        case .openFolder, .finishCull, .undo, .redo, .toggleFullScreen, .rejectBatch,
             .toggleAutoAdvance, .showLoupe, .showGrid, .showCompare:
             false
         case .toggleInfoPanel, .toggleClippingOverlay, .toggleAFOverlay, .toggleHUD,
@@ -214,7 +221,7 @@ extension Command {
     public var isRatingChange: Bool {
         switch self {
         case .setStars, .setStarsAndAdvance, .togglePickFlag, .toggleKeep,
-            .rejectFlag, .unflag, .toggleFlag, .setLabel:
+            .rejectFlag, .rejectBatch, .unflag, .toggleFlag, .setLabel:
             true
         default:
             false

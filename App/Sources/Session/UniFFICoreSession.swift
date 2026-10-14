@@ -126,6 +126,24 @@ public final class UniFFICoreSession: CoreSessionAPI, @unchecked Sendable {
 
     public func redo() -> RatingChange? { session.redo().map(RatingChange.init) }
 
+    public func setRatings(_ ratings: [(PhotoID, Rating)]) throws -> [RatingChange] {
+        try session.setRatings(
+            ratings: ratings.map { FfiPhotoRating(photo: $0.0, rating: $0.1.ffi) }
+        ).map(RatingChange.init)
+    }
+
+    /// Swapped for the same reason as `undo()`.
+    public func undoStep() -> [RatingChange] {
+        session.undoStep().map { ffi in
+            let transition = RatingChange(ffi)
+            return RatingChange(
+                id: transition.id, photo: transition.photo, batch: transition.batch,
+                before: transition.after, after: transition.before)
+        }
+    }
+
+    public func redoStep() -> [RatingChange] { session.redoStep().map(RatingChange.init) }
+
     public func setCursor(batch: BatchID, photo: PhotoID) {
         try? session.setCursor(cursor: SessionCursor(batch: batch, photo: photo))
     }

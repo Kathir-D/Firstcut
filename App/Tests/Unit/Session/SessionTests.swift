@@ -1357,3 +1357,82 @@ struct FixturePhotosTests {
 func currentFlag(_ model: AppModel) throws -> Flag {
     try #require(model.currentPhoto?.rating.flag)
 }
+
+// MARK: - Reject whole batch
+
+/// Settings → General → "Reject Whole Batch": an opt-in extra, off by default. Rating stays photo
+/// by photo unless the user turns it on.
+@MainActor
+@Suite("Reject whole batch")
+struct RejectWholeBatchTests {
+    static func makeModel(enabled: Bool) -> (AppModel, MockSession) {
+        let session = MockSession(photos: FixturePhotos.syntheticPhotos(count: 12, burstSize: 3))
+        let model = AppModel(.testing(backend: session))
+        model.open(session, folderName: "Test")
+        model.updateSettings { $0.general.rejectWholeBatch = enabled }
+        return (model, session)
+    }
+
+    @Test("It is off by default, and the command does nothing while it is off")
+    func offByDefault() {
+        #expect(AppSettings().general.rejectWholeBatch == false)
+        let (model, session) = Self.makeModel(enabled: false)
+        model.perform(.rejectBatch)
+        #expect(model.currentBatchIndex == 0)
+        #expect(model.photos(inBatch: 0).allSatisfy { $0.rating.flag == .none })
+        #expect(session.xmpWriteCount == 0)
+    }
+
+    @Test("When on, every frame is rejected, the cursor moves on, and one ⌘Z puts them all back")
+    func rejectsTheBatchAsOneStep() throws {
+        let (model, _) = Self.makeModel(enabled: true)
+        model.perform(.setStars(3))
+        model.perform(.rejectBatch)
+        let frames = model.photos(inBatch: 0)
+        #expect(frames.count > 1)
+        #expect(frames.allSatisfy { $0.rating.flag == .reject && $0.tier == .rejected })
+        #expect(model.currentBatchIndex == 1)
+
+        model.perform(.undo)
+        #expect(model.currentBatchIndex == 0, "undo goes back to the batch it reverts")
+        let restored = model.photos(inBatch: 0)
+        #expect(restored.allSatisfy { $0.rating.flag == .none })
+        #expect(restored[0].rating.stars == 3, "the rating made before is not part of the step")
+
+        model.perform(.redo)
+        #expect(model.photos(inBatch: 0).allSatisfy { $0.rating.flag == .reject })
+    }
+
+    @Test("It only flags: no file is touched, and the photos are still in the shoot")
+    func onlyFlags() {
+        let (model, _) = Self.makeModel(enabled: true)
+        let before = model.photos(inBatch: 0).map(\.id)
+        model.perform(.rejectBatch)
+        #expect(model.photos(inBatch: 0).map(\.id) == before)
+    }
+
+    @Test("⇧X is its default key, and its name round-trips through the keymap")
+    func keymap() {
+        #expect(Command.rejectBatch.id == "batch.reject")
+        #expect(Command(id: "batch.reject") == .rejectBatch)
+        #expect(Command.rejectBatch.isRepeatable == false)
+        #expect(CommandCatalog.entry(for: .rejectBatch) != nil)
+    }
+
+    @Test("A settings file written before the option existed still reads, option off")
+    func oldSettingsStillDecode() throws {
+        var settings = AppSettings()
+        settings.general.autoAdvance = true
+        settings.general.keepThreshold = 5
+        var json = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as? [String: Any])
+        var general = try #require(json["general"] as? [String: Any])
+        general["rejectWholeBatch"] = nil
+        json["general"] = general
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.general.autoAdvance == true)
+        #expect(decoded.general.keepThreshold == 5)
+        #expect(decoded.general.rejectWholeBatch == false)
+    }
+}

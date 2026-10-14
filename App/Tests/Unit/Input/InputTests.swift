@@ -162,6 +162,7 @@ struct KeymapTests {
             .setStarsAndAdvance(1): KeyChord(.one, [.shift]),
             .setStarsAndAdvance(5): KeyChord(.five, [.shift]),
             .rejectFlag: KeyChord(.x),
+            .rejectBatch: KeyChord(.x, [.shift]),
             .unflag: KeyChord(.u),
             .toggleFlag: KeyChord(.backtick),
             .setLabel(.red): KeyChord(.six),

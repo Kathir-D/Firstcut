@@ -13,6 +13,9 @@ struct ProgressHUD: View {
     /// a no-action form rather than the HUD being the only place it appears.
     var onSetKeep: (() -> Void)?
     var onSetNotKeep: (() -> Void)?
+    /// Sends `.rejectBatch`. Nil — and no button — unless Settings → General → "Reject Whole Batch"
+    /// is on, which it is not by default.
+    var onRejectBatch: (() -> Void)?
 
     var body: some View {
         GlassCapsule(isInteractive: false) {
@@ -41,6 +44,16 @@ struct ProgressHUD: View {
                 metric("\(progress.maybe)", "maybe")
                 divider
                 metric(PhotoFormatter.elapsed(progress.elapsed), "elapsed")
+                if let onRejectBatch {
+                    divider
+                    Button(action: onRejectBatch) {
+                        Label("Reject batch", systemImage: "xmark.circle")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Appearance.rejectRed)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reject every photo in this batch (⇧X). Undo puts them all back.")
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 9)

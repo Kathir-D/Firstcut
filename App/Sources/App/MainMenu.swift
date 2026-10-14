@@ -83,6 +83,11 @@ struct FirstcutCommands: Commands {
                     .keyboardShortcut(shortcut(.rejectFlag))
                 Button("Unflag") { environment.send(.setFlag(.none)) }
                     .keyboardShortcut(shortcut(.unflag))
+                if environment.state.isRejectBatchEnabled {
+                    Divider()
+                    Button("Reject Whole Batch") { environment.send(.rejectBatch) }
+                        .keyboardShortcut(shortcut(.rejectBatch))
+                }
             }
             .disabled(!isCulling)
 

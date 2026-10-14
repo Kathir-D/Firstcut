@@ -59,8 +59,46 @@ public struct GeneralSettings: Codable, Equatable, Sendable {
     public var confirmPermanentDelete: Bool = true
     /// 5 or 4 stars counts as a keep (todo.md §6.1).
     public var keepThreshold: Int = RatingRules.defaultKeepThreshold
+    /// Offers **Reject Whole Batch** (⇧X, the Photo menu and a HUD button): every frame of the
+    /// current batch gets the reject flag in one action, and one ⌘Z takes it back. Off by default
+    /// (owner decision, 2026-10-14): Firstcut rates photo by photo, and this is an extra for a
+    /// burst that is all bad takes, like erasing a burst group on a Canon body. It only flags —
+    /// nothing leaves the disk until Finish, exactly as with X.
+    public var rejectWholeBatch: Bool = false
 
     public init() {}
+}
+
+extension GeneralSettings {
+    private enum CodingKeys: String, CodingKey {
+        case ratingMode, autoAdvance, arrowBehaviorAtBatchEnd, enteringBatchBehavior, finishUnkept,
+            finishKept, confirmBeforeFinish, confirmPermanentDelete, keepThreshold, rejectWholeBatch
+    }
+
+    /// Every key is optional, so a settings file written before a setting existed still reads and
+    /// keeps everything it does say. The synthesized decoder required every key: adding one setting
+    /// would have reset all of a user's General settings on the first launch after the update.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = GeneralSettings()
+        ratingMode = try c.decodeIfPresent(RatingMode.self, forKey: .ratingMode) ?? d.ratingMode
+        autoAdvance = try c.decodeIfPresent(Bool.self, forKey: .autoAdvance) ?? d.autoAdvance
+        arrowBehaviorAtBatchEnd =
+            try c.decodeIfPresent(ArrowBehavior.self, forKey: .arrowBehaviorAtBatchEnd)
+            ?? d.arrowBehaviorAtBatchEnd
+        enteringBatchBehavior =
+            try c.decodeIfPresent(EnteringBatchBehavior.self, forKey: .enteringBatchBehavior)
+            ?? d.enteringBatchBehavior
+        finishUnkept = try c.decodeIfPresent(UnkeptAction.self, forKey: .finishUnkept) ?? d.finishUnkept
+        finishKept = try c.decodeIfPresent(KeptAction.self, forKey: .finishKept) ?? d.finishKept
+        confirmBeforeFinish =
+            try c.decodeIfPresent(Bool.self, forKey: .confirmBeforeFinish) ?? d.confirmBeforeFinish
+        confirmPermanentDelete =
+            try c.decodeIfPresent(Bool.self, forKey: .confirmPermanentDelete) ?? d.confirmPermanentDelete
+        keepThreshold = try c.decodeIfPresent(Int.self, forKey: .keepThreshold) ?? d.keepThreshold
+        rejectWholeBatch =
+            try c.decodeIfPresent(Bool.self, forKey: .rejectWholeBatch) ?? d.rejectWholeBatch
+    }
 }
 
 // MARK: - Viewer

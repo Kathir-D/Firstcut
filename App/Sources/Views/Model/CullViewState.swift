@@ -30,6 +30,9 @@ protocol CullViewState: AnyObject {
     var photosInCurrentBatch: [CullPhoto] { get }
     var currentPhoto: CullPhoto? { get }
     var ratingMode: RatingMode { get }
+    /// Settings → General → "Reject Whole Batch" (off by default). The menu item and the HUD button
+    /// only exist while it is on. A requirement for the same reason as `activeModel`.
+    var isRejectBatchEnabled: Bool { get }
     var viewMode: CullViewMode { get }
     var isInfoPanelVisible: Bool { get }
     var isHUDVisible: Bool { get }
@@ -198,6 +201,7 @@ enum CullAction {
     case toggleKeep
     case setKeep  // keep mode only; idempotent, unlike the toggle
     case setNotKeep  // keep mode only; idempotent
+    case rejectBatch  // only while Settings → General → "Reject Whole Batch" is on
     case undo
     case redo
 }

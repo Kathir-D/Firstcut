@@ -66,6 +66,12 @@ public protocol CoreSessionAPI: AnyObject, Sendable {
     func undo() -> RatingChange?
     func redo() -> RatingChange?
 
+    /// `Session::set_ratings`, `undo_step`, `redo_step`: a grouped change and the undo step that
+    /// takes it back whole. Changes read like `undo()`'s.
+    func setRatings(_ ratings: [(PhotoID, Rating)]) throws -> [RatingChange]
+    func undoStep() -> [RatingChange]
+    func redoStep() -> [RatingChange]
+
     /// `Session::set_cursor` / `mark_visited`.
     func setCursor(batch: BatchID, photo: PhotoID)
     func markVisited(batch: BatchID)
@@ -94,6 +100,14 @@ public protocol CoreSessionAPI: AnyObject, Sendable {
 
 extension CoreSessionAPI {
     public func applyMetadataSettings(_ settings: MetadataSettings) {}
+
+    /// A core with no grouped history rates one photo at a time, each its own undo step.
+    public func setRatings(_ ratings: [(PhotoID, Rating)]) throws -> [RatingChange] {
+        try ratings.map { photo, rating in try setRating(photo: photo, rating) }
+    }
+
+    public func undoStep() -> [RatingChange] { undo().map { [$0] } ?? [] }
+    public func redoStep() -> [RatingChange] { redo().map { [$0] } ?? [] }
 }
 
 /// The Rust `SessionListener` trait. **Every method may be called on any thread** — FSEvents fires
@@ -203,6 +217,32 @@ public final class CoreSessionBackend: SessionBackend {
         guard let change = core.redo() else { return nil }
         data.ratings[change.photo] = change.after
         return change
+    }
+
+    @discardableResult
+    public func setRatings(_ ratings: [(PhotoID, Rating)]) -> [RatingChange] {
+        do {
+            let changes = try core.setRatings(ratings)
+            for change in changes { data.ratings[change.photo] = change.after }
+            return changes
+        } catch {
+            listener?.sessionDidFailWritingXMP(
+                photo: ratings.first?.0 ?? 0,
+                message: "could not save the ratings: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    public func undoStep() -> [RatingChange] {
+        let changes = core.undoStep()
+        for change in changes { data.ratings[change.photo] = change.before }
+        return changes
+    }
+
+    public func redoStep() -> [RatingChange] {
+        let changes = core.redoStep()
+        for change in changes { data.ratings[change.photo] = change.after }
+        return changes
     }
 
     /// Stored **by id**. A re-batch changes indices and nothing else, so a cursor held as a

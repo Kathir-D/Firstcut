@@ -17,8 +17,9 @@ import Foundation
 
     private var ratings: [PhotoID: Rating]
     private var batchByPhoto: [PhotoID: BatchID] = [:]
-    private var undoStack: [RatingChange] = []
-    private var redoStack: [RatingChange] = []
+    /// One entry per undo step; a `setRatings` call is one step of several changes.
+    private var undoStack: [[RatingChange]] = []
+    private var redoStack: [[RatingChange]] = []
     private var nextChangeID: UInt64 = 1
     private var index = 0
 
@@ -165,31 +166,50 @@ import Foundation
         nextChangeID += 1
         ratings[photo] = rating
         data.ratings[photo] = rating
-        undoStack.append(change)
+        undoStack.append([change])
         redoStack.removeAll()
         xmpWrites.append(photo)  // stands in for the debounced ≤ 1 s XMP queue
         xmpWriteCount += 1
         return change
     }
 
-    public func undo() -> RatingChange? {
-        guard let change = undoStack.popLast() else { return nil }
-        ratings[change.photo] = change.before
-        data.ratings[change.photo] = change.before
-        redoStack.append(change)
-        xmpWrites.append(change.photo)
-        xmpWriteCount += 1
-        return change
+    @discardableResult
+    public func setRatings(_ ratings: [(PhotoID, Rating)]) -> [RatingChange] {
+        let changes = ratings.compactMap { photo, rating -> RatingChange? in
+            guard rating != self.rating(for: photo) else { return nil }
+            let change = setRating(photo: photo, rating)
+            undoStack.removeLast()
+            return change
+        }
+        if !changes.isEmpty { undoStack.append(changes) }
+        return changes
     }
 
-    public func redo() -> RatingChange? {
-        guard let change = redoStack.popLast() else { return nil }
-        ratings[change.photo] = change.after
-        data.ratings[change.photo] = change.after
-        undoStack.append(change)
-        xmpWrites.append(change.photo)
-        xmpWriteCount += 1
-        return change
+    public func undo() -> RatingChange? { undoStep().last }
+    public func redo() -> RatingChange? { redoStep().last }
+
+    public func undoStep() -> [RatingChange] {
+        guard let step = undoStack.popLast() else { return [] }
+        for change in step.reversed() {
+            ratings[change.photo] = change.before
+            data.ratings[change.photo] = change.before
+            xmpWrites.append(change.photo)
+            xmpWriteCount += 1
+        }
+        redoStack.append(step)
+        return step.reversed()
+    }
+
+    public func redoStep() -> [RatingChange] {
+        guard let step = redoStack.popLast() else { return [] }
+        for change in step {
+            ratings[change.photo] = change.after
+            data.ratings[change.photo] = change.after
+            xmpWrites.append(change.photo)
+            xmpWriteCount += 1
+        }
+        undoStack.append(step)
+        return step
     }
 
     public func setCursor(batch: BatchID, photo: PhotoID) {

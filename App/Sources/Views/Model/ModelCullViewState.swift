@@ -70,6 +70,8 @@ final class ModelCullViewState: CullViewState {
 
     var ratingMode: RatingMode { model.ratingMode }
 
+    var isRejectBatchEnabled: Bool { model.settings.general.rejectWholeBatch }
+
     var viewMode: CullViewMode {
         switch model.viewMode {
         case .loupe: .loupe
@@ -185,6 +187,7 @@ extension CullAction {
         case .toggleKeep: .toggleKeep
         case .setKeep: .setKeep
         case .setNotKeep: .setNotKeep
+        case .rejectBatch: .rejectBatch
         case .undo: .undo
         case .redo: .redo
         case .openFolder: .openFolder

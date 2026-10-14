@@ -40,6 +40,17 @@ import Foundation
     func undo() -> RatingChange?
     func redo() -> RatingChange?
 
+    /// Rates several photos as **one** change, which one `undoStep` takes back whole. What "Reject
+    /// whole batch" writes (opt-in, Settings → General). Photos already rated `rating` are left out,
+    /// so the result holds only the photos that changed.
+    @discardableResult
+    func setRatings(_ ratings: [(PhotoID, Rating)]) -> [RatingChange]
+
+    /// One undo step: a single change, or every change of one `setRatings` call. Empty when there
+    /// is nothing to undo. Each change reads like `undo()`'s: `before` is the value now in place.
+    func undoStep() -> [RatingChange]
+    func redoStep() -> [RatingChange]
+
     func setCursor(batch: BatchID, photo: PhotoID)
     func markVisited(batch: BatchID)
     func lastPhotoInBatch(_ batch: BatchID) -> PhotoID?
@@ -77,6 +88,17 @@ import Foundation
 }
 
 extension SessionBackend {
+    /// A backend with no grouped history rates one photo at a time; each is then its own undo.
+    @discardableResult
+    public func setRatings(_ ratings: [(PhotoID, Rating)]) -> [RatingChange] {
+        ratings.compactMap { photo, rating in
+            rating == self.rating(for: photo) ? nil : setRating(photo: photo, rating)
+        }
+    }
+
+    public func undoStep() -> [RatingChange] { undo().map { [$0] } ?? [] }
+    public func redoStep() -> [RatingChange] { redo().map { [$0] } ?? [] }
+
     public func applyMetadataSettings(_ settings: MetadataSettings) {}
     public func setKeepThreshold(_ stars: Int) {}
     public var canRescan: Bool { false }

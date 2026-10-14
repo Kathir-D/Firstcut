@@ -66,6 +66,7 @@ public enum CommandCatalog {
             CommandCatalogEntry(command: .setKeep, menu: .photo, title: "Keep"),
             CommandCatalogEntry(command: .setNotKeep, menu: .photo, title: "Not Keep"),
             CommandCatalogEntry(command: .rejectFlag, menu: .photo, title: "Reject Flag"),
+            CommandCatalogEntry(command: .rejectBatch, menu: .photo, title: "Reject Whole Batch"),
             CommandCatalogEntry(command: .unflag, menu: .photo, title: "Clear Flag"),
             CommandCatalogEntry(command: .toggleFlag, menu: .photo, title: "Toggle Flag"),
         ]

@@ -696,6 +696,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
         case .setKeep: rateCurrent { $0.keep = true }
         case .setNotKeep: rateCurrent { $0.keep = false }
         case .rejectFlag: rateCurrent { $0.flag = .reject }
+        case .rejectBatch: rejectCurrentBatch()
         case .unflag: rateCurrent { $0.flag = .none }
         case .toggleFlag: rateCurrent { $0.flag = $0.flag == .none ? .pick : .none }
         case .setLabel(let label): rateCurrent { $0.label = label }
@@ -948,30 +949,59 @@ public final class AppModel: SessionListener, KeyRouterSource {
         advance()
     }
 
+    /// Settings → General → "Reject Whole Batch", **off by default**: X for every frame of the
+    /// current batch, as one change that one ⌘Z takes back, then on to the next batch.
+    ///
+    /// The batch is the burst, so this is the camera's "erase this group" for a burst that is all
+    /// bad takes — except that, like X, it only flags. Nothing leaves the disk until Finish. With
+    /// the setting off the command does nothing, whichever way it arrives (a custom keymap can
+    /// still bind it), so the default behaviour is exactly photo-by-photo rating.
+    func rejectCurrentBatch() {
+        guard settings.general.rejectWholeBatch, canAct, let batch = currentBatch else { return }
+        let ratings: [(PhotoID, Rating)] = allPhotos[batch.range].compactMap { photo in
+            let updated = RatingRules.applying(
+                to: photo.rating, mode: ratingMode, keepThreshold: settings.keepThreshold
+            ) { $0.flag = .reject }
+            return updated == photo.rating ? nil : (photo.id, updated)
+        }
+        if !ratings.isEmpty {
+            let changes = backend.setRatings(ratings)
+            for change in changes {
+                applyRatingLocally(change.photo, change.after, advanceAfterwards: false)
+            }
+        }
+        moveBatch(by: 1)
+    }
+
     // MARK: - Undo
 
     /// Undo navigates to the batch and photo the change was made in, then reverts it, so the "only
     /// rate in the current batch" rule still holds visibly (task.md §6.3).
+    ///
+    /// One undo is one *step*: a single rating, or every frame of a "Reject Whole Batch". A step
+    /// lands on the last photo it put back — for a whole batch, its first frame.
     public func undo() {
         guard canAct else { return }
-        guard let change = backend.undo() else { return }
-        apply(change: change, using: change.before)
+        apply(backend.undoStep(), using: \.before)
     }
 
     public func redo() {
         guard canAct else { return }
-        guard let change = backend.redo() else { return }
-        apply(change: change, using: change.after)
+        apply(backend.redoStep(), using: \.after)
     }
 
-    private func apply(change: RatingChange, using rating: Rating) {
-        navigate(to: change.photo, in: change.batch)
-        if let index = photoIndex[change.photo] {
-            allPhotos[index].rating = rating
-            allPhotos[index].tier = RatingRules.tier(
-                of: rating, mode: ratingMode, keepThreshold: settings.keepThreshold)
-            allPhotos[index].isKeep = RatingRules.isKeep(
-                rating, mode: ratingMode, keepThreshold: settings.keepThreshold)
+    private func apply(_ changes: [RatingChange], using side: KeyPath<RatingChange, Rating>) {
+        guard !changes.isEmpty else { return }
+        for change in changes {
+            navigate(to: change.photo, in: change.batch)
+            let rating = change[keyPath: side]
+            if let index = photoIndex[change.photo] {
+                allPhotos[index].rating = rating
+                allPhotos[index].tier = RatingRules.tier(
+                    of: rating, mode: ratingMode, keepThreshold: settings.keepThreshold)
+                allPhotos[index].isKeep = RatingRules.isKeep(
+                    rating, mode: ratingMode, keepThreshold: settings.keepThreshold)
+            }
         }
         recomputeCounts()
         updatePipelineFocus()
