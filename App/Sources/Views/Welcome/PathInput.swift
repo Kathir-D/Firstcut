@@ -55,14 +55,18 @@ enum PathInput {
         guard !trimmed.isEmpty else { return [] }
         let fm = FileManager.default
         guard let slash = trimmed.lastIndex(of: "/") else { return [] }
-        let parent = String(trimmed[trimmed.startIndex..<slash])
+        let rawParent = String(trimmed[trimmed.startIndex..<slash])
+        let parent = rawParent.isEmpty ? "/" : rawParent
         let prefix = String(trimmed[trimmed.index(after: slash)...])
         let contents = (try? fm.contentsOfDirectory(atPath: parent)) ?? []
         let lower = prefix.lowercased()
         var result: [String] = []
         for name in contents where !name.hasPrefix(".") && name.lowercased().hasPrefix(lower) {
             let full = parent == "/" ? "/" + name : parent + "/" + name
-            result.append(full)
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: full, isDirectory: &isDir), isDir.boolValue {
+                result.append(full)
+            }
         }
         result.sort()
         if limit >= 0 {

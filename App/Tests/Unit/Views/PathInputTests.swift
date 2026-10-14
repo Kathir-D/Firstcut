@@ -56,11 +56,16 @@ struct PathInputTests {
             atPath: temp.appendingPathComponent("note.txt").path,
             contents: nil
         )
+        try? FileManager.default.createFile(
+            atPath: temp.appendingPathComponent("Alfile.txt").path,
+            contents: nil
+        )
 
         let expected = ["\(temp.path)/Alpha", "\(temp.path)/Albatross"].sorted()
         let actual = PathInput.suggestions(for: "\(temp.path)/Al")
         #expect(actual == expected)
         #expect(!actual.contains(where: { $0.hasSuffix("/Beta") }))
         #expect(!actual.contains(where: { $0.hasSuffix("/note.txt") }))
+        #expect(!actual.contains(where: { $0.hasSuffix("/Alfile.txt") }))
     }
 }
