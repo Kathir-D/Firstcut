@@ -25,6 +25,7 @@ struct GoToBatchSheet: View {
             Text("Batch 1 to \(state.batches.count). Currently in batch \(state.currentBatchIndex + 1).")
                 .font(.system(size: 11))
                 .foregroundStyle(Appearance.secondaryLabel)
+            BatchesOverview(state: state)
             TextField("Batch number", text: $text)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: text) { _, _ in message = nil }
@@ -44,7 +45,7 @@ struct GoToBatchSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 300)
+        .frame(width: 560)
     }
 
     private func go() {

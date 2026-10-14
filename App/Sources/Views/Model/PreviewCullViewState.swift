@@ -18,6 +18,10 @@ final class PreviewCullViewState: CullViewState {
     private(set) var currentPhotoIndex: Int = 0
     private(set) var photosInCurrentBatch: [CullPhoto] = []
     private(set) var currentPhoto: CullPhoto?
+
+    func photos(inBatch index: Int) -> [CullPhoto] {
+        index == currentBatchIndex ? photosInCurrentBatch : []
+    }
     var ratingMode: RatingMode = .stars {
         // Switching modes re-derives every photo's tier through the same mapping the finish summary
         // uses (REV-69), so the filmstrip, info panel and HUD cannot disagree with it.

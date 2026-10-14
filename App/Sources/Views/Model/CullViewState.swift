@@ -28,6 +28,8 @@ protocol CullViewState: AnyObject {
     var currentBatchIndex: Int { get }
     var currentPhotoIndex: Int { get }
     var photosInCurrentBatch: [CullPhoto] { get }
+    /// The photos of batch `index` (0-based), for the Batches overview. Empty when out of range.
+    func photos(inBatch index: Int) -> [CullPhoto]
     var currentPhoto: CullPhoto? { get }
     var ratingMode: RatingMode { get }
     /// Settings → General → "Reject Whole Batch" (off by default). The menu item and the HUD button

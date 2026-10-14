@@ -66,6 +66,10 @@ final class ModelCullViewState: CullViewState {
         model.photos(inBatch: model.currentBatchIndex).map(\.cullPhoto)
     }
 
+    func photos(inBatch index: Int) -> [CullPhoto] {
+        model.photos(inBatch: index).map(\.cullPhoto)
+    }
+
     var currentPhoto: CullPhoto? { model.currentPhoto?.cullPhoto }
 
     var ratingMode: RatingMode { model.ratingMode }
