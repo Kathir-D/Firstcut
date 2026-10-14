@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use super::cr3::{self, Cr3, Tiff};
+use super::cr3::{self, ByteRange, Cr3, EmbeddedPreview, Tiff};
 use super::{FileKind, RawFormat};
 
 /// First read. Enough for a JPEG's APP1, a HEIC's `meta` box and the IFDs of most RAW files.
@@ -83,7 +83,12 @@ fn read_from<R: Read + Seek>(
                 None if carries_a_date(kind) => read_far_ifd0(file, &head, kind, size, label)?,
                 _ => None,
             };
-            return Ok(far.unwrap_or(meta));
+            let mut meta = far.unwrap_or(meta);
+            if matches!(kind, FileKind::Raw(_)) {
+                meta.preview = best_preview(file, size, &head, &meta.preview_candidates)
+                    .or_else(|| scanned_preview(&head));
+            }
+            return Ok(meta);
         }
         want = (want * 8).min(MAX_READ);
     }
@@ -190,6 +195,10 @@ fn tiff_file(data: &[u8], base: usize, meta: &mut Cr3) {
         cr3::apply_ifd0(&tiff, entries, meta);
     }
     let preview_size = (meta.width, meta.height);
+    // Only a file's own IFDs hold previews; a JPEG's APP1 (base > 0) has a thumbnail at most.
+    if base == 0 {
+        collect_preview_candidates(&tiff, &sub_ifds, meta);
+    }
 
     if let Some(offset) = exif_ifd.and_then(|o| usize::try_from(o).ok()) {
         exif_ifd_at(&tiff, offset, meta);
@@ -243,6 +252,234 @@ fn tiff_file(data: &[u8], base: usize, meta: &mut Cr3) {
     if meta.width == 0 || meta.height == 0 {
         (meta.width, meta.height) = preview_size;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────── embedded JPEGs
+
+/// The most JPEG candidates opened per file. A RAW carries two or three.
+const MAX_PREVIEW_CANDIDATES: usize = 16;
+/// How much of a candidate is read to find its frame header. A preview's own Exif APP1 can be
+/// tens of kilobytes, so the SOF is not always in the first few hundred bytes.
+const PREVIEW_PROBE: u64 = 256 << 10;
+
+fn push_candidate(meta: &mut Cr3, offset: u64, len: u64) {
+    let range = ByteRange { offset, len };
+    if len >= 2
+        && meta.preview_candidates.len() < MAX_PREVIEW_CANDIDATES
+        && !meta.preview_candidates.contains(&range)
+    {
+        meta.preview_candidates.push(range);
+    }
+}
+
+/// The places a TIFF-shaped RAW keeps a JPEG: IFD0, the IFDs chained after it, and the SubIFDs.
+/// lightcraft's `extract_tiff_preview` reads the same tags (github.com/storytold/lightcraft).
+fn collect_preview_candidates(tiff: &Tiff<'_>, sub_ifds: &[i64], meta: &mut Cr3) {
+    let mut ifds: Vec<usize> = Vec::new();
+    let mut next = tiff.u32_at(4).map(|o| o as usize);
+    while let Some(at) = next {
+        if at == 0 || ifds.contains(&at) || ifds.len() >= MAX_SUB_IFDS {
+            break;
+        }
+        ifds.push(at);
+        next = tiff
+            .u16_at(at)
+            .and_then(|n| tiff.u32_at(at + 2 + usize::from(n) * 12))
+            .map(|o| o as usize);
+    }
+    ifds.extend(sub_ifds.iter().filter_map(|&o| usize::try_from(o).ok()));
+
+    for at in ifds {
+        let Some(entries) = tiff.entries_at(at) else {
+            continue;
+        };
+        let (mut interchange, mut interchange_len) = (None, None);
+        let (mut compression, mut strip, mut strip_len) = (None, None, None);
+        for entry in entries {
+            match entry.tag {
+                0x0201 => interchange = tiff.first_int(&entry),
+                0x0202 => interchange_len = tiff.first_int(&entry),
+                0x0103 => compression = tiff.first_int(&entry),
+                0x0111 if entry.count == 1 => strip = tiff.first_int(&entry),
+                0x0117 if entry.count == 1 => strip_len = tiff.first_int(&entry),
+                // An UNDEFINED blob that is itself a JPEG: Panasonic's JpgFromRaw (0x2e) and kin.
+                _ if entry.kind == 7
+                    && entry.count > 1024
+                    && tiff.bytes(entry.value_offset, 2) == Some(&[0xff, 0xd8][..]) =>
+                {
+                    push_candidate(meta, entry.value_offset as u64, u64::from(entry.count));
+                }
+                _ => {}
+            }
+        }
+        if let (Some(a), Some(l)) = (interchange, interchange_len) {
+            push_candidate(meta, a.max(0) as u64, l.max(0) as u64);
+        }
+        // 6 is old-style JPEG, 7 is JPEG. A 7 strip can also be the raw data in lossless JPEG,
+        // which `colour_jpeg_size` rejects by its frame type.
+        if let (Some(6 | 7), Some(a), Some(l)) = (compression, strip, strip_len) {
+            push_candidate(meta, a.max(0) as u64, l.max(0) as u64);
+        }
+    }
+}
+
+/// Opens each candidate and keeps the largest that is a colour, baseline or progressive JPEG.
+fn best_preview<R: Read + Seek>(
+    file: &mut R,
+    size: u64,
+    head: &[u8],
+    candidates: &[ByteRange],
+) -> Option<EmbeddedPreview> {
+    let mut best: Option<EmbeddedPreview> = None;
+    for &range in candidates {
+        if range
+            .offset
+            .checked_add(range.len)
+            .is_none_or(|end| end > size)
+        {
+            continue;
+        }
+        let probe = range.len.min(PREVIEW_PROBE) as usize;
+        let start = range.offset as usize;
+        let read;
+        let bytes = match start
+            .checked_add(probe)
+            .and_then(|end| head.get(start..end))
+        {
+            Some(bytes) => bytes,
+            None => {
+                let mut buf = vec![0u8; probe];
+                if file
+                    .seek(SeekFrom::Start(range.offset))
+                    .and_then(|_| file.read_exact(&mut buf))
+                    .is_err()
+                {
+                    continue;
+                }
+                read = buf;
+                &read[..]
+            }
+        };
+        let Some((width, height)) = colour_jpeg_size(bytes) else {
+            continue;
+        };
+        let area = |p: &EmbeddedPreview| u64::from(p.width) * u64::from(p.height);
+        let candidate = EmbeddedPreview {
+            range,
+            width,
+            height,
+        };
+        if best.as_ref().is_none_or(|b| area(&candidate) > area(b)) {
+            best = Some(candidate);
+        }
+    }
+    best
+}
+
+/// How many `FF D8 FF` starts the byte scan will try. Raw sensor data is noise, and noise contains
+/// that sequence; the frame-header check rejects those quickly, but not for free.
+const MAX_SCANNED_STARTS: usize = 64;
+
+/// The largest complete colour JPEG anywhere in `head`, for a RAW whose directories name none:
+/// Leaf's MOS and Olympus's older ORF keep theirs in maker-specific blocks. This is lightcraft's
+/// last resort too (github.com/storytold/lightcraft), limited here to bytes already read.
+fn scanned_preview(head: &[u8]) -> Option<EmbeddedPreview> {
+    let mut best: Option<EmbeddedPreview> = None;
+    let starts = head
+        .windows(3)
+        .enumerate()
+        .filter(|(_, w)| *w == [0xff, 0xd8, 0xff])
+        .map(|(i, _)| i)
+        .take(MAX_SCANNED_STARTS);
+    for start in starts {
+        let jpeg = &head[start..];
+        let Some((width, height)) = colour_jpeg_size(jpeg) else {
+            continue;
+        };
+        let Some(len) = jpeg_length(jpeg) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|b| {
+            u64::from(width) * u64::from(height) > u64::from(b.width) * u64::from(b.height)
+        }) {
+            best = Some(EmbeddedPreview {
+                range: ByteRange {
+                    offset: start as u64,
+                    len: len as u64,
+                },
+                width,
+                height,
+            });
+        }
+    }
+    best
+}
+
+/// Where a JPEG ends: its segments up to the scan, then the entropy-coded data up to `FF D9`.
+/// Inside the scan a literal `FF` is stuffed as `FF 00` and restarts are `FF D0`..`FF D7`, so the
+/// first other `FF xx` is a marker, and for a single-scan JPEG that marker is EOI.
+fn jpeg_length(jpeg: &[u8]) -> Option<usize> {
+    let mut at = 2usize;
+    loop {
+        if *jpeg.get(at)? != 0xff {
+            return None;
+        }
+        let marker = *jpeg.get(at + 1)?;
+        let length = usize::from(u16::from_be_bytes([*jpeg.get(at + 2)?, *jpeg.get(at + 3)?]));
+        at += 2 + length;
+        if marker == 0xda {
+            break;
+        }
+    }
+    while at + 1 < jpeg.len() {
+        if jpeg[at] == 0xff {
+            match jpeg[at + 1] {
+                0x00 | 0xd0..=0xd7 | 0xff => {}
+                0xd9 => return Some(at + 2),
+                // Another scan (progressive) or a table between scans: still the same image.
+                _ => {}
+            }
+        }
+        at += 1;
+    }
+    None
+}
+
+/// A JPEG's size, if it is one ImageIO will draw as a photo: SOF0, SOF1 or SOF2 with three
+/// components. Lossless JPEG (SOF3, how CR2 and DNG store raw data) and greyscale are refused.
+fn colour_jpeg_size(jpeg: &[u8]) -> Option<(u32, u32)> {
+    if !jpeg.starts_with(&[0xff, 0xd8]) {
+        return None;
+    }
+    let mut at = 2usize;
+    while at + 4 <= jpeg.len() {
+        if jpeg[at] != 0xff {
+            at += 1;
+            continue;
+        }
+        let marker = jpeg[at + 1];
+        if marker == 0xff {
+            at += 1;
+            continue;
+        }
+        if marker == 0xd8 || marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+            at += 2;
+            continue;
+        }
+        if marker == 0xda || marker == 0xd9 {
+            return None;
+        }
+        let length = usize::from(u16::from_be_bytes([jpeg[at + 2], jpeg[at + 3]]));
+        if (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+            let frame = jpeg.get(at + 5..at + 10)?;
+            let height = u32::from(u16::from_be_bytes([frame[0], frame[1]]));
+            let width = u32::from(u16::from_be_bytes([frame[2], frame[3]]));
+            let colour = frame[4] == 3 && matches!(marker, 0xc0..=0xc2);
+            return (colour && width > 0 && height > 0).then_some((width, height));
+        }
+        at += 2 + length.max(2);
+    }
+    None
 }
 
 /// Copies every capture setting `from` has and `meta` does not.
@@ -473,6 +710,12 @@ fn raf(data: &[u8], meta: &mut Cr3) {
         meta.warnings.push("RAF header is truncated".to_string());
         return;
     };
+    if let Some(len) = data
+        .get(88..92)
+        .map(|b| u32::from_be_bytes(b.try_into().expect("four bytes")))
+    {
+        push_candidate(meta, offset as u64, u64::from(len));
+    }
     // RAF's SOF describes the JPEG preview, not the sensor, so it is only a fallback size.
     jpeg(data, offset, meta);
 }
@@ -562,6 +805,8 @@ fn ciff_heap(data: &[u8], start: usize, end: usize, depth: usize, meta: &mut Cr3
                     meta.height = h;
                 }
             }
+            // JpgFromRaw: the camera's JPEG of the frame.
+            0x2007 => push_candidate(meta, value_at as u64, size as u64),
             // FocalLength: [type, focal length in mm, …] as u16.
             0x1029 => {
                 meta.focal_length_mm = le16(value, 2).filter(|&f| f > 0).map(f32::from);
@@ -1645,5 +1890,140 @@ mod tests {
     fn the_exif_stamp_is_civil_time() {
         assert_eq!(exif_stamp(0), "1970:01:01 00:00:00");
         assert_eq!(exif_stamp(951_782_400), "2000:02:29 00:00:00");
+    }
+
+    /// A bare JPEG of `width × height`: SOF of the given type and component count, a scan, EOI.
+    fn frame(sof: u8, components: u8, width: u16, height: u16) -> Vec<u8> {
+        let mut out = vec![0xff, 0xd8, 0xff, sof, 0x00, 0x11, 0x08];
+        out.extend_from_slice(&height.to_be_bytes());
+        out.extend_from_slice(&width.to_be_bytes());
+        out.extend_from_slice(&[components, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
+        out.extend_from_slice(&[0xff, 0xda, 0x00, 0x02]);
+        out.extend_from_slice(&[0x12, 0xff, 0x00, 0x34, 0xff, 0xd0, 0x56]); // stuffed FF, a restart
+        out.extend_from_slice(&[0xff, 0xd9]);
+        out
+    }
+
+    /// A RAW whose IFD0 points at `small` through 0x201/0x202 and whose IFD1 holds `large` as a
+    /// JPEG-compressed strip, the way a NEF or ARW lays out its previews.
+    fn raw_with_previews(small: &[u8], large: &[u8]) -> Vec<u8> {
+        let ifd0_len = 2 + 2 * 12 + 4;
+        let ifd1_at = 8 + ifd0_len;
+        let ifd1_len = 2 + 3 * 12 + 4;
+        let small_at = ifd1_at + ifd1_len;
+        let large_at = small_at + small.len();
+        let mut out = b"II\x2a\x00".to_vec();
+        out.extend_from_slice(&8u32.to_le_bytes());
+        let mut ifd0 = fixtures::ifd(
+            8,
+            &[
+                (0x0201, 4, (small_at as u32).to_le_bytes().to_vec()),
+                (0x0202, 4, (small.len() as u32).to_le_bytes().to_vec()),
+            ],
+        );
+        let next = ifd0.len() - 4;
+        ifd0[next..].copy_from_slice(&(ifd1_at as u32).to_le_bytes());
+        out.extend(ifd0);
+        out.extend(fixtures::ifd(
+            ifd1_at,
+            &[
+                (0x0103, 3, 7u16.to_le_bytes().to_vec()),
+                (0x0111, 4, (large_at as u32).to_le_bytes().to_vec()),
+                (0x0117, 4, (large.len() as u32).to_le_bytes().to_vec()),
+            ],
+        ));
+        assert_eq!(out.len(), small_at);
+        out.extend_from_slice(small);
+        out.extend_from_slice(large);
+        out
+    }
+
+    fn preview_of(whole: Vec<u8>, kind: FileKind) -> Option<EmbeddedPreview> {
+        let size = whole.len() as u64;
+        read_from(&mut std::io::Cursor::new(whole), kind, size, "the raw")
+            .expect("a read")
+            .preview
+    }
+
+    #[test]
+    fn a_raw_reports_its_largest_embedded_jpeg() {
+        let small = frame(0xc0, 3, 160, 120);
+        let large = frame(0xc0, 3, 1616, 1080);
+        let whole = raw_with_previews(&small, &large);
+        let preview = preview_of(whole.clone(), FileKind::Raw(RawFormat::Arw)).expect("a preview");
+        assert_eq!((preview.width, preview.height), (1616, 1080));
+        let at = preview.range.offset as usize;
+        assert_eq!(&whole[at..at + preview.range.len as usize], &large[..]);
+    }
+
+    #[test]
+    fn raw_data_in_lossless_jpeg_and_greyscale_jpegs_are_not_previews() {
+        let small = frame(0xc0, 3, 160, 120);
+        // A 7-compressed strip that is the sensor data (SOF3), as a CR2 or DNG stores it.
+        let lossless = frame(0xc3, 3, 6000, 4000);
+        let preview = preview_of(
+            raw_with_previews(&small, &lossless),
+            FileKind::Raw(RawFormat::Dng),
+        )
+        .expect("the thumbnail is still a preview");
+        assert_eq!((preview.width, preview.height), (160, 120));
+        let grey = frame(0xc0, 1, 6000, 4000);
+        let preview = preview_of(
+            raw_with_previews(&small, &grey),
+            FileKind::Raw(RawFormat::Nef),
+        )
+        .expect("the thumbnail is still a preview");
+        assert_eq!((preview.width, preview.height), (160, 120));
+    }
+
+    #[test]
+    fn a_preview_range_past_the_end_of_the_file_is_dropped() {
+        let small = frame(0xc0, 3, 160, 120);
+        let large = frame(0xc0, 3, 1616, 1080);
+        let mut whole = raw_with_previews(&small, &large);
+        whole.truncate(whole.len() - 4);
+        let preview = preview_of(whole, FileKind::Raw(RawFormat::Arw)).expect("the small one");
+        assert_eq!((preview.width, preview.height), (160, 120));
+    }
+
+    #[test]
+    fn a_tif_or_jpeg_does_not_report_a_preview() {
+        let whole = raw_with_previews(&frame(0xc0, 3, 160, 120), &frame(0xc0, 3, 1616, 1080));
+        assert!(preview_of(whole, FileKind::Tiff).is_none());
+    }
+
+    #[test]
+    fn a_raf_reports_its_jpeg() {
+        let jpeg = frame(0xc0, 3, 1280, 960);
+        let whole = fixtures::raf(&jpeg);
+        let preview = preview_of(whole, FileKind::Raw(RawFormat::Raf)).expect("a preview");
+        assert_eq!((preview.width, preview.height), (1280, 960));
+        assert_eq!(
+            preview.range,
+            ByteRange {
+                offset: 148,
+                len: jpeg.len() as u64
+            }
+        );
+    }
+
+    #[test]
+    fn a_jpeg_with_no_directory_pointing_at_it_is_found_by_scanning() {
+        // A Leaf MOS keeps its preview in a private block: noise, the JPEG, more noise.
+        let jpeg = frame(0xc0, 3, 332, 244);
+        let mut whole = b"MM\x00\x2a\x00\x00\x00\x08\x00\x00\x00\x00".to_vec();
+        whole.extend_from_slice(&[0xff, 0xd8, 0xff, 0x00, 0x13]); // a false start in the noise
+        let at = whole.len();
+        whole.extend_from_slice(&jpeg);
+        whole.extend_from_slice(&[0x55; 64]);
+        let preview = preview_of(whole, FileKind::Raw(RawFormat::Mos)).expect("a preview");
+        assert_eq!((preview.width, preview.height), (332, 244));
+        assert_eq!(
+            preview.range,
+            ByteRange {
+                offset: at as u64,
+                len: jpeg.len() as u64
+            }
+        );
     }
 }

@@ -96,10 +96,11 @@ COMMANDS
         the whole thing end to end. Cold and warm are reported separately and scaled to 1,500
         files against the todo.md §7.3 targets. No metadata fixture is needed.
 
-  verify <folder> [--quiet]
+  verify <folder> [--quiet] [--previews]
         Scan the folder as the app does and compare every photo's capture time, camera and
         exposure with `exiftool`. Lists each disagreement, the files the scanner did not pick up
-        at all, and a per-extension summary (todo.md §8).
+        at all, and a per-extension summary (todo.md §8). `--previews` also prints the size of
+        every embedded JPEG the scanner found.
 "
     );
 }

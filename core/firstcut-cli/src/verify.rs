@@ -20,9 +20,11 @@ use serde_json::Value;
 pub fn cmd_verify(args: &[String]) -> Result<(), String> {
     let mut folder = None;
     let mut quiet = false;
+    let mut previews = false;
     for arg in args {
         match arg.as_str() {
             "--quiet" => quiet = true,
+            "--previews" => previews = true,
             other if other.starts_with('-') => return Err(format!("unknown option `{other}`")),
             other => folder = Some(other.to_string()),
         }
@@ -46,6 +48,22 @@ pub fn cmd_verify(args: &[String]) -> Result<(), String> {
         }
         if photo.full_preview.is_some() || photo.preview.is_some() {
             tally.preview += 1;
+        }
+        if previews {
+            let size = |p: &Option<meta::EmbeddedPreview>| {
+                p.map_or("-".to_string(), |p| {
+                    format!(
+                        "{}x{}@{}+{}",
+                        p.width, p.height, p.range.offset, p.range.len
+                    )
+                })
+            };
+            println!(
+                "PREVIEW {} preview {} full {}",
+                photo.rel_path,
+                size(&photo.preview),
+                size(&photo.full_preview)
+            );
         }
         if problems.is_empty() {
             tally.clean += 1;

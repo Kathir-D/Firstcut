@@ -157,6 +157,10 @@ pub struct Cr3 {
     pub full_preview: Option<EmbeddedPreview>,
     /// The 160×120 thumbnail from `THMB`, if the file has one.
     pub thumbnail: Option<EmbeddedPreview>,
+    /// Where a non-CR3 RAW says it keeps a JPEG (JPEGInterchangeFormat, a JPEG-compressed strip,
+    /// Panasonic's JpgFromRaw, RAF's header, CRW's 0x2007). Unchecked: `exif::read` opens each,
+    /// keeps the largest colour JPEG as `preview`, and the rest is never seen outside the reader.
+    pub(crate) preview_candidates: Vec<ByteRange>,
     /// Non-fatal problems worth showing in the log.
     pub warnings: Vec<String>,
 }
