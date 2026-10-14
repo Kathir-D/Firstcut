@@ -85,6 +85,10 @@ struct InfoPanel: View {
             (.shutterMode, "Shutter mode", meta.shutterMode ?? "—"),
             (.shutterCount, "Shutter count", meta.shutterCount.map(String.init) ?? "—"),
             (.dimensions, "Dimensions", PhotoFormatter.dimensions(width: meta.width, height: meta.height)),
+            (
+                .dimensions, "Preview",
+                LowResPreview.isLowRes(meta) ? LowResPreview.label : "Full size"
+            ),
             (.fileSize, "File size", PhotoFormatter.fileSize(meta.fileSize)),
             (.folderPath, "Folder", folder.isEmpty ? "—" : folder),
             (.batch, "Position", position),
