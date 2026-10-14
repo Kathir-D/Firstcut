@@ -80,6 +80,9 @@ protocol CullViewState: AnyObject {
     func openRecent(_ folder: RecentFolder)
     func forgetRecent(_ folder: RecentFolder)
     func openFolder(at url: URL)
+    var isGoToBatchPresented: Bool { get }
+    func goToBatch(number: Int) -> Bool
+    func dismissGoToBatch()
 }
 
 extension CullViewState {
@@ -182,6 +185,7 @@ struct CullHistogram: Equatable, Sendable {
 enum CullAction {
     case openFolder
     case closeFolder
+    case goToBatch
     case cycleCompare
     case finishCull
     case photoPrevious

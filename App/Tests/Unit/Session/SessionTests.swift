@@ -421,6 +421,30 @@ struct AppModelNavigationTests {
         #expect(photos.map(\.fileName) == ["IMG_0004.CR3", "IMG_0005.CR3", "IMG_0006.CR3"])
         #expect(model.photos(inBatch: 99).isEmpty)
     }
+
+    @Test("Go to Batch opens its prompt only while culling with more than one batch")
+    func goToBatchPresents() throws {
+        let (model, _) = Self.makeModel()
+        #expect(model.isGoToBatchPresented == false)
+        // Four batches, so the prompt is worth showing.
+        model.perform(.goToBatch)
+        #expect(model.isGoToBatchPresented)
+    }
+
+    @Test("Go to Batch jumps to the named batch, clears the prompt, and refuses an out-of-range one")
+    func goToBatchJumps() throws {
+        let (model, _) = Self.makeModel()
+        model.perform(.goToBatch)
+        // A valid jump moves there and closes the prompt.
+        #expect(model.goToBatch(number: 3))
+        #expect(model.currentBatchIndex == 2)
+        #expect(model.isGoToBatchPresented == false)
+        // Re-open the prompt, then an out-of-range number refuses and leaves it open.
+        model.perform(.goToBatch)
+        #expect(model.isGoToBatchPresented)
+        #expect(model.goToBatch(number: 999) == false)
+        #expect(model.isGoToBatchPresented)
+    }
 }
 
 // MARK: - Rating through the model

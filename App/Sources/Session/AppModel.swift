@@ -43,6 +43,9 @@ public final class AppModel: SessionListener, KeyRouterSource {
     public private(set) var clippingOverlay: Bool = false
     public private(set) var viewer = ViewerState()
     public private(set) var finish: FinishStage = .hidden
+    /// The Go to Batch prompt is shown. Set by `perform(.goToBatch)` while culling, and cleared by
+    /// `goToBatch(number:)` or `dismissGoToBatch()`.
+    public var isGoToBatchPresented = false
 
     /// Caps Lock flips this for the session only; Settings → General owns the persistent value
     /// (Lightroom behaves the same way, and task.md §6.3 calls it "a setting, toggled also with
@@ -597,6 +600,22 @@ public final class AppModel: SessionListener, KeyRouterSource {
         phase = .welcome
     }
 
+    // MARK: - Go to Batch
+
+    /// Jump to the batch numbered `number` (1-based). A valid jump moves there and closes the
+    /// prompt; an out-of-range number does nothing and leaves the prompt open.
+    public func goToBatch(number: Int) -> Bool {
+        guard batches.indices.contains(number - 1) else { return false }
+        moveBatch(by: (number - 1) - currentBatchIndex, selecting: .first)
+        isGoToBatchPresented = false
+        return true
+    }
+
+    /// Close the Go to Batch prompt without moving (the prompt's Cancel).
+    public func dismissGoToBatch() {
+        isGoToBatchPresented = false
+    }
+
     // MARK: - The frame the user actually sees
     //
     // todo.md §7.3's sharpest target is "arrow key → sharp photo ≤ 8 ms", and the only honest way to
@@ -748,6 +767,11 @@ public final class AppModel: SessionListener, KeyRouterSource {
         case .redo: redo()
         case .openFolder: onRequestOpenFolder?()
         case .closeFolder: closeSession()
+        case .goToBatch:
+            // ⌘L opens the Go to Batch prompt: only while culling, and only if there is more than
+            // one batch to jump to. The prompt itself is the ui's concern (plan 2.5 builds the
+            // model and command now, the sheet next).
+            if phase == .culling, batches.count > 1 { isGoToBatchPresented = true }
         case .finishCull: startFinish()
         case .toggleFullScreen: onRequestToggleFullScreen?(true)
         }

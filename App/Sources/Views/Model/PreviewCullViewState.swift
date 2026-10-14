@@ -71,6 +71,10 @@ final class PreviewCullViewState: CullViewState {
 
     func openFolder(at url: URL) {}
 
+    var isGoToBatchPresented: Bool { false }
+    func goToBatch(number: Int) -> Bool { false }
+    func dismissGoToBatch() {}
+
     func finish(_ action: FinishAction) {
         if case .cancel = action { finishStage = .hidden }
     }
@@ -134,7 +138,7 @@ final class PreviewCullViewState: CullViewState {
             break
         case .openFolder, .finishCull:
             phase = .finishing
-        case .closeFolder, .cycleCompare:
+        case .closeFolder, .goToBatch, .cycleCompare:
             break
         }
     }

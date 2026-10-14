@@ -111,6 +111,7 @@ Every action is a `Command`. Keys, menus, toolbar buttons, and gestures all call
 | `edit.undo` / `edit.redo` | ⌘Z / ⇧⌘Z | Undo in another batch navigates there first |
 | `file.open` | ⌘O | |
 | `file.close` | ⌘W | |
+| `batch.goto` | ⌘L | open the Go to Batch prompt |
 | `cull.finish` | ⌘↩ | Also ⌘⌤ on the keypad |
 | `app.fullScreen` | ⌃⌘F | |
 
