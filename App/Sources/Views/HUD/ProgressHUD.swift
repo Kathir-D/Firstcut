@@ -19,7 +19,9 @@ struct ProgressHUD: View {
 
     /// Accessibility label and tooltip for the compact, icon-only reject-batch button.
     static let rejectBatchAccessibilityLabel = "Reject batch"
-    static let rejectBatchTooltip = "Reject every photo in this batch (⇧X). Undo puts them all back."
+    static let rejectBatchTooltip =
+        "Rejects every photo in this batch that has no rating yet (⇧X)."
+        + " Undo puts them all back."
 
     var body: some View {
         GlassCapsule(isInteractive: false) {

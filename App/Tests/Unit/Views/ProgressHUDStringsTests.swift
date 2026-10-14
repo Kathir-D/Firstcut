@@ -15,6 +15,9 @@ struct ProgressHUDStringsTests {
     @Test("The compact reject-batch button keeps its tooltip wording")
     func rejectBatchTooltip() {
         let tooltip = ProgressHUD.rejectBatchTooltip
-        #expect(tooltip == "Reject every photo in this batch (⇧X). Undo puts them all back.")
+        let expected =
+            "Rejects every photo in this batch that has no rating yet (⇧X)."
+            + " Undo puts them all back."
+        #expect(tooltip == expected)
     }
 }

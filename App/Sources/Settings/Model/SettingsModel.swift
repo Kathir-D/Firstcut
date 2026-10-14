@@ -63,7 +63,8 @@ public struct GeneralSettings: Codable, Equatable, Sendable {
     /// current batch gets the reject flag in one action, and one ⌘Z takes it back. Off by default
     /// (owner decision, 2026-10-14): Firstcut rates photo by photo, and this is an extra for a
     /// burst that is all bad takes, like erasing a burst group on a Canon body. It only flags —
-    /// nothing leaves the disk until Finish, exactly as with X.
+    /// nothing leaves the disk until Finish, exactly as with X. Since 2026-10-14 (T24) it only
+    /// flags photos that have no rating yet; photos you already rated are left alone.
     public var rejectWholeBatch: Bool = false
 
     public init() {}

@@ -952,6 +952,9 @@ public final class AppModel: SessionListener, KeyRouterSource {
     /// Settings → General → "Reject Whole Batch", **off by default**: X for every frame of the
     /// current batch, as one change that one ⌘Z takes back, then on to the next batch.
     ///
+    /// Only photos that have no rating yet get the reject flag; photos you already rated are left
+    /// alone (the closure returns early for them).
+    ///
     /// The batch is the burst, so this is the camera's "erase this group" for a burst that is all
     /// bad takes — except that, like X, it only flags. Nothing leaves the disk until Finish. With
     /// the setting off the command does nothing, whichever way it arrives (a custom keymap can
@@ -959,6 +962,7 @@ public final class AppModel: SessionListener, KeyRouterSource {
     func rejectCurrentBatch() {
         guard settings.general.rejectWholeBatch, canAct, let batch = currentBatch else { return }
         let ratings: [(PhotoID, Rating)] = allPhotos[batch.range].compactMap { photo in
+            guard photo.rating.isNeutral else { return nil }
             let updated = RatingRules.applying(
                 to: photo.rating, mode: ratingMode, keepThreshold: settings.keepThreshold
             ) { $0.flag = .reject }
