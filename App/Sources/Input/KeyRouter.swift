@@ -49,12 +49,22 @@ import Foundation
 
     public func start() {
         guard monitor == nil else { return }
-        // `NSEvent` is main-actor isolated, so the block is main-actor too: no hop is needed, and
-        // returning the event consumes it while nil lets it continue to the responder chain.
+        // `NSEvent` is main-actor isolated, so the block is main-actor too: no hop is needed. The
+        // decision is in `transform(_:)`, which returns the event to let it continue to the
+        // responder chain (menus, sheets, text fields) and nil to swallow it.
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) {
             [weak self] event in
-            self?.handle(event) == true ? event : nil
+            self?.transform(event)
         }
+    }
+
+    /// The monitor's decision, factored out so the swallow rule is testable without a live event
+    /// loop. `handle(_:)` returns true when the router handled the event, which means swallow it
+    /// here: returning the event would let a handled key continue to the menus. Returns the event
+    /// to let it continue, or nil to swallow it.
+    @discardableResult
+    public func transform(_ event: NSEvent) -> NSEvent? {
+        handle(event) == true ? nil : event
     }
 
     public func stop() {

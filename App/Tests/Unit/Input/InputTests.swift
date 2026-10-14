@@ -460,6 +460,29 @@ struct KeyRouterTests {
         #expect(router.handle(try Self.event(.k)))
         #expect(spy.received.map(\.0) == [.toggleInfoPanel])
     }
+
+    @Test("handled key is swallowed")
+    func handledKeySwallowed() throws {
+        let spy = Spy(keymap: try Self.keymap())
+        let router = KeyRouter(source: spy)
+        #expect(router.transform(try Self.event(.leftArrow, [.command])) == nil)
+        #expect(spy.received.count == 1)
+    }
+
+    @Test("unhandled key is delivered")
+    func unhandledKeyDelivered() throws {
+        let spy = Spy(keymap: try Self.keymap())
+        let router = KeyRouter(source: spy)
+        #expect(router.transform(try Self.event(.comma, [.command])) != nil)
+        #expect(spy.received.isEmpty)
+    }
+
+    @Test("escape is delivered")
+    func escapeDelivered() throws {
+        let spy = Spy(keymap: try Self.keymap())
+        let router = KeyRouter(source: spy)
+        #expect(router.transform(try Self.event(.escape)) != nil)
+    }
 }
 
 // MARK: - Helpers
