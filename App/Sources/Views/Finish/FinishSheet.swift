@@ -192,6 +192,33 @@ private struct SummaryStage: View {
     }
 }
 
+/// Where a typed destination will land: a relative name is taken from the shoot folder and an
+/// absolute path as it is, which is the core's rule (`fileops::resolve`). Plan 2.8.
+struct ResolvedPathLine: View {
+    let text: String
+    let base: URL?
+
+    static func resolved(_ text: String, base: URL?) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.hasPrefix("/") { return trimmed }
+        guard let base else { return nil }
+        return base.appendingPathComponent(trimmed).path
+    }
+
+    var body: some View {
+        if let path = Self.resolved(text, base: base) {
+            Text(path)
+                .font(.system(size: 11))
+                .foregroundStyle(Appearance.secondaryLabel)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .accessibilityLabel("Resolved folder \(path)")
+        }
+    }
+}
+
 private struct OptionsStage: View {
     let summary: FinishSummary
     let settings: FinishSettings
@@ -217,6 +244,7 @@ private struct OptionsStage: View {
                 FolderChooserButton(path: unkeptFolder)
             }
             .padding(.top, 6)
+            ResolvedPathLine(text: settings.unkept.folderName ?? "", base: state.folderURL)
         }
         if settings.unkept.isDestructive {
             Warning(text: "Deleting permanently cannot be undone.", isSevere: true).padding(.top, 6)
@@ -239,6 +267,7 @@ private struct OptionsStage: View {
                 FolderChooserButton(path: keptFolder)
             }
             .padding(.top, 6)
+            ResolvedPathLine(text: settings.kept.folderName ?? "", base: state.folderURL)
         }
         if case .writeList = settings.kept {
             TextField("List file name", text: keptFolder)
