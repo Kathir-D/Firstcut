@@ -123,6 +123,8 @@ final class ModelCullViewState: CullViewState {
     func openRecent(_ folder: RecentFolder) { model.openRecent(folder) }
     func forgetRecent(_ folder: RecentFolder) { model.forgetRecent(folder) }
 
+    func openFolder(at url: URL) { model.open(folder: url) }
+
     func finish(_ action: FinishAction) {
         switch action {
         case .confirm: model.confirmFinish()
