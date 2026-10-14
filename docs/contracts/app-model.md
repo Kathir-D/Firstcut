@@ -100,7 +100,8 @@ Every action is a `Command`. Keys, menus, toolbar buttons, and gestures all call
 | `flag.reject` / `flag.unflag` / `flag.toggle` | X / U / ` | Reject wins in both rating modes |
 | `label` (red / yellow / green / blue) | 6 / 7 / 8 / 9 | Purple has a command but no default key |
 | `autoAdvance.toggle` | Caps Lock | Session-only override of the setting |
-| `view.loupe` / `view.grid` / `view.compare` | E / G / C | 2-up on C, 3-up on ⌥C, 4-up on ⌥⇧C |
+| `view.loupe` / `view.grid` | E / G | |
+| `view.compare.cycle` | C | single → 2-up → 3-up → single |
 | `panel.info` | I | |
 | `overlay.clipping` / `overlay.af` | J / A | |
 | `hud.toggle` | H | |
@@ -187,3 +188,8 @@ core's own tests use; Swift's mock still decodes the exiftool dumps.
   `SessionBackend` gained `setRatings` / `undoStep` / `redoStep` (with per-photo defaults), and
   `AppModel.undo` / `redo` apply one whole step. `GeneralSettings` decodes with every key optional,
   so a settings file from before a setting existed keeps its other values.
+- v0.4 (2026-10-14): `Command.cycleCompare` (`view.compare.cycle`, C, not repeatable) cycles the
+  compare mode single → 2-up → 3-up → single. The default keymap's plain-C entry was retitled from
+  `view.compare` (2-up) to `view.compare.cycle`; ⌥C and ⌥⇧C still map to `view.compare` (3-up and
+  4-up) via the menu. `showCompare(2)` has no default key. The View menu gained a "Cycle Compare"
+  button; `AppModel.cycleCompare` switches on the current `viewMode`.

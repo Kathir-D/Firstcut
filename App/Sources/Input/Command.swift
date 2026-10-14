@@ -81,6 +81,8 @@ public enum Command: Hashable, Sendable {
     case showLoupe
     case showGrid
     case showCompare(Int)  // 2, 3 or 4
+    /// Cycle the compare mode: single → 2-up → 3-up → single. C. Not repeatable, like the others.
+    case cycleCompare
 
     // Zoom: gestures only, no default key (todo.md §2, §9.2, §10)
     case toggleZoom(at: NormalizedPoint?)
@@ -125,6 +127,7 @@ extension Command {
         case .showLoupe: "view.loupe"
         case .showGrid: "view.grid"
         case .showCompare: "view.compare"
+        case .cycleCompare: "view.compare.cycle"
         case .toggleZoom: "zoom.toggle"
         case .magnify: "zoom.magnify"
         case .undo: "edit.undo"
@@ -184,6 +187,7 @@ extension Command {
         case "zoom.lock.toggle": self = .toggleZoomLock
         case "view.loupe": self = .showLoupe
         case "view.grid": self = .showGrid
+        case "view.compare.cycle": self = .cycleCompare
         case "view.compare": self = .showCompare(min(max(argument ?? 2, 2), 4))
         case "zoom.toggle": self = .toggleZoom(at: nil)
         case "zoom.magnify": self = .magnify(by: Double(argument ?? 0), at: nil)
@@ -210,7 +214,7 @@ extension Command {
             true
         // A whole batch at a time: holding the key would reject the next batch, and the one after.
         case .openFolder, .closeFolder, .finishCull, .undo, .redo, .toggleFullScreen, .rejectBatch,
-            .toggleAutoAdvance, .showLoupe, .showGrid, .showCompare:
+            .toggleAutoAdvance, .showLoupe, .showGrid, .showCompare, .cycleCompare:
             false
         case .toggleInfoPanel, .toggleClippingOverlay, .toggleAFOverlay, .toggleHUD,
             .toggleZoomLock, .toggleZoom, .magnify, .setRatingMode:

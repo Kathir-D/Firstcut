@@ -37,7 +37,7 @@
 
     { "command": "view.loupe", "key": "e", "modifiers": [] },
     { "command": "view.grid", "key": "g", "modifiers": [] },
-    { "command": "view.compare", "argument": 2, "key": "c", "modifiers": [] },
+    { "command": "view.compare.cycle", "key": "c", "modifiers": [] },
     { "command": "view.compare", "argument": 3, "key": "c", "modifiers": ["option"] },
     { "command": "view.compare", "argument": 4, "key": "c", "modifiers": ["option", "shift"] },
     { "command": "panel.info", "key": "i", "modifiers": [] },

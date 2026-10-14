@@ -91,6 +91,7 @@ public enum CommandCatalog {
             CommandCatalogEntry(command: .showCompare(2), menu: .view, title: "Compare 2-Up"),
             CommandCatalogEntry(command: .showCompare(3), menu: .view, title: "Compare 3-Up"),
             CommandCatalogEntry(command: .showCompare(4), menu: .view, title: "Compare 4-Up"),
+            CommandCatalogEntry(command: .cycleCompare, menu: .view, title: "Cycle Compare"),
             CommandCatalogEntry(command: .toggleInfoPanel, menu: .view, title: "Info Panel"),
             CommandCatalogEntry(command: .toggleClippingOverlay, menu: .view, title: "Clipping Overlay"),
             CommandCatalogEntry(command: .toggleAFOverlay, menu: .view, title: "AF Point Overlay"),

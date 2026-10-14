@@ -45,7 +45,9 @@ struct CommandTests {
     func zoomHasNoDefaultKey() throws {
         var store = KeymapStore(directory: temporaryDirectory())
         _ = try store.load()
-        for command in [Command.toggleZoomLock, .toggleZoom(at: nil), .magnify(by: 1.1, at: nil)] {
+        for command in [
+            Command.toggleZoomLock, .toggleZoom(at: nil), .magnify(by: 1.1, at: nil), .showCompare(2),
+        ] {
             #expect(store.defaults.isBound(command) == false, "\(command.id) must not be bound by default")
         }
     }
@@ -171,7 +173,7 @@ struct KeymapTests {
             .toggleAutoAdvance: KeyChord(.capsLock, [.capsLock]),
             .showLoupe: KeyChord(.e),
             .showGrid: KeyChord(.g),
-            .showCompare(2): KeyChord(.c),
+            .cycleCompare: KeyChord(.c),
             .toggleInfoPanel: KeyChord(.i),
             .toggleClippingOverlay: KeyChord(.j),
             .toggleAFOverlay: KeyChord(.a),
