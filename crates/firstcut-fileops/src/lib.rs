@@ -1031,6 +1031,7 @@ fn volume_root(path: &Path) -> Option<PathBuf> {
     Some(root)
 }
 
+#[cfg(unix)]
 fn trash_dir() -> std::io::Result<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| std::io::Error::other("no HOME, so there is no Trash"))?;
     let trash = home.join(".Trash");
@@ -1836,6 +1837,7 @@ mod tests {
         tempfile::tempdir_in(shm).ok()
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_move_across_volumes_copies_then_removes() {
         let Some(other) = other_volume() else {
@@ -1891,6 +1893,7 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), original);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_move_to_another_volume_counts_as_bytes_to_copy() {
         let Some(other) = other_volume() else {
@@ -1980,6 +1983,7 @@ mod tests {
         assert!(from.exists(), "a copy leaves the original");
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_volume_root_is_the_mount_point() {
         let Some(other) = other_volume() else {
