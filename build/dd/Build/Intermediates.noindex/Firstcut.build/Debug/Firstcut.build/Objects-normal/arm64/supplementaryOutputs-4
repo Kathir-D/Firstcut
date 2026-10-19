@@ -1,0 +1,58 @@
+{
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Pipeline/ImageProvider.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ImageProvider.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ImageProvider.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ImageProvider.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ImageProvider.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ImageProvider.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Session/FixturePhotos.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FixturePhotos.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FixturePhotos.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FixturePhotos.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FixturePhotos.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FixturePhotos.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Session/FolderWatcher.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderWatcher.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderWatcher.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderWatcher.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderWatcher.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderWatcher.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Views/Batches/GoToBatchSheet.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GoToBatchSheet.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GoToBatchSheet.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GoToBatchSheet.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GoToBatchSheet.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GoToBatchSheet.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Views/Finish/FolderChooserButton.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderChooserButton.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderChooserButton.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderChooserButton.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderChooserButton.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/FolderChooserButton.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Views/Grid/GridView.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GridView.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GridView.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GridView.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GridView.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GridView.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Views/Info/InfoPanel.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/InfoPanel.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/InfoPanel.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/InfoPanel.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/InfoPanel.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/InfoPanel.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Views/Support/GlassBackground.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GlassBackground.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GlassBackground.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GlassBackground.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GlassBackground.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GlassBackground.swiftdeps"
+  }
+}

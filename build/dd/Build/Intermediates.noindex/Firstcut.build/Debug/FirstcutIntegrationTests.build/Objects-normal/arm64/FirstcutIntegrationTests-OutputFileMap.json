@@ -1,0 +1,69 @@
+{
+  "" : {
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutIntegrationTests-primary.dia",
+    "emit-module-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutIntegrationTests-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutIntegrationTests-primary-emit-module.dia",
+    "pch" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutIntegrationTests-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutIntegrationTests-primary.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Integration/FixtureHarnessTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FixtureHarnessTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FixtureHarnessTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FixtureHarnessTests.dia",
+    "index-unit-output-path" : "/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FixtureHarnessTests.o",
+    "llvm-bc" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FixtureHarnessTests.bc",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FixtureHarnessTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FixtureHarnessTests.swiftdeps",
+    "swiftmodule" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FixtureHarnessTests~partial.swiftmodule"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Integration/GroundTruthAuditTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/GroundTruthAuditTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/GroundTruthAuditTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/GroundTruthAuditTests.dia",
+    "index-unit-output-path" : "/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/GroundTruthAuditTests.o",
+    "llvm-bc" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/GroundTruthAuditTests.bc",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/GroundTruthAuditTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/GroundTruthAuditTests.swiftdeps",
+    "swiftmodule" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/GroundTruthAuditTests~partial.swiftmodule"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Integration/RealRawDecodeTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/RealRawDecodeTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/RealRawDecodeTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/RealRawDecodeTests.dia",
+    "index-unit-output-path" : "/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/RealRawDecodeTests.o",
+    "llvm-bc" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/RealRawDecodeTests.bc",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/RealRawDecodeTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/RealRawDecodeTests.swiftdeps",
+    "swiftmodule" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/RealRawDecodeTests~partial.swiftmodule"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Integration/Support/BoundarySampler.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/BoundarySampler.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/BoundarySampler.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/BoundarySampler.dia",
+    "index-unit-output-path" : "/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/BoundarySampler.o",
+    "llvm-bc" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/BoundarySampler.bc",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/BoundarySampler.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/BoundarySampler.swiftdeps",
+    "swiftmodule" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/BoundarySampler~partial.swiftmodule"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Integration/Support/ContactSheet.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/ContactSheet.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/ContactSheet.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/ContactSheet.dia",
+    "index-unit-output-path" : "/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/ContactSheet.o",
+    "llvm-bc" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/ContactSheet.bc",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/ContactSheet.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/ContactSheet.swiftdeps",
+    "swiftmodule" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/ContactSheet~partial.swiftmodule"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Integration/Support/FirstcutTestSupport.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutTestSupport.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutTestSupport.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutTestSupport.dia",
+    "index-unit-output-path" : "/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutTestSupport.o",
+    "llvm-bc" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutTestSupport.bc",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutTestSupport.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutTestSupport.swiftdeps",
+    "swiftmodule" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutIntegrationTests.build/Objects-normal/arm64/FirstcutTestSupport~partial.swiftmodule"
+  }
+}

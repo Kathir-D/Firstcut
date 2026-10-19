@@ -1,0 +1,13 @@
+Target dependency graph (5 targets)
+Target 'FirstcutPerformanceTests' in project 'Firstcut'
+➜ Explicit dependency on target 'Firstcut' in project 'Firstcut'
+➜ Explicit dependency on target 'FirstcutCore' in project 'Firstcut'
+Target 'FirstcutIntegrationTests' in project 'Firstcut'
+➜ Explicit dependency on target 'Firstcut' in project 'Firstcut'
+➜ Explicit dependency on target 'FirstcutCore' in project 'Firstcut'
+Target 'FirstcutUnitTests' in project 'Firstcut'
+➜ Explicit dependency on target 'Firstcut' in project 'Firstcut'
+➜ Explicit dependency on target 'FirstcutCore' in project 'Firstcut'
+Target 'Firstcut' in project 'Firstcut'
+➜ Explicit dependency on target 'FirstcutCore' in project 'Firstcut'
+Target 'FirstcutCore' in project 'Firstcut' (no dependencies)

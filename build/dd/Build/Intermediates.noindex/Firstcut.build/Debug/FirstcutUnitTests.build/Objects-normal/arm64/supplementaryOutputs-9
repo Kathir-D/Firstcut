@@ -1,0 +1,30 @@
+{
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Core/CoreBridgeTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreBridgeTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreBridgeTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreBridgeTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreBridgeTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreBridgeTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Pipeline/ClippingMaskTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ClippingMaskTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ClippingMaskTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ClippingMaskTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ClippingMaskTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ClippingMaskTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Pipeline/EmbeddedPreviewFallbackTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/EmbeddedPreviewFallbackTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/EmbeddedPreviewFallbackTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/EmbeddedPreviewFallbackTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/EmbeddedPreviewFallbackTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/EmbeddedPreviewFallbackTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Session/CoreSessionBackendTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreSessionBackendTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreSessionBackendTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreSessionBackendTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreSessionBackendTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/CoreSessionBackendTests.swiftdeps"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "buildCommand" : {
+    "command" : "build",
+    "skipDependencies" : false,
+    "style" : "buildAndRun"
+  },
+  "configuredTargets" : [
+    {
+      "guid" : "a208b84904f73426c9c3c60d609ca47e90c9c0fc5c310f0e4d20a116d24d0fa6"
+    },
+    {
+      "guid" : "a208b84904f73426c9c3c60d609ca47e655e796e87a2dbeea81342f7cf9f88d2"
+    },
+    {
+      "guid" : "a208b84904f73426c9c3c60d609ca47ed271c6369d73ab3298a2b4b96b3491de"
+    },
+    {
+      "guid" : "a208b84904f73426c9c3c60d609ca47e04f0f5fb7135831018b288f6b72c1350"
+    }
+  ],
+  "containerPath" : "/Users/kathirdev/Documents/projects/Firstcut/Firstcut.xcodeproj",
+  "continueBuildingAfterErrors" : false,
+  "dependencyScope" : "workspace",
+  "enableIndexBuildArena" : false,
+  "hideShellScriptEnvironment" : false,
+  "parameters" : {
+    "action" : "build",
+    "activeArchitecture" : "arm64",
+    "activeRunDestination" : {
+      "disableOnlyActiveArch" : false,
+      "hostTargetedPlatform" : null,
+      "platform" : "macosx",
+      "sdk" : "macosx27.0",
+      "sdkVariant" : "macos",
+      "supportedArchitectures" : [
+        "arm64e",
+        "arm64",
+        "x86_64"
+      ],
+      "targetArchitecture" : "arm64"
+    },
+    "arenaInfo" : {
+      "buildIntermediatesPath" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex",
+      "buildProductsPath" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Products",
+      "derivedDataPath" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd",
+      "indexDataStoreFolderPath" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Index.noindex/DataStore",
+      "indexEnableDataStore" : true,
+      "indexPCHPath" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Index.noindex/PrecompiledHeaders",
+      "pchPath" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/PrecompiledHeaders"
+    },
+    "configurationName" : "Debug",
+    "overrides" : {
+      "commandLine" : {
+        "table" : {
+
+        }
+      },
+      "synthesized" : {
+        "table" : {
+          "ENABLE_PREVIEWS" : "NO",
+          "ENABLE_XOJIT_PREVIEWS" : "YES"
+        }
+      }
+    }
+  },
+  "schemeCommand" : "test",
+  "showNonLoggedProgress" : true,
+  "useDryRun" : false,
+  "useImplicitDependencies" : true,
+  "useLegacyBuildLocations" : false,
+  "useParallelTargets" : true
+}

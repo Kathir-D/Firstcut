@@ -1,0 +1,58 @@
+{
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Session/CoreFirstPhoto.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreFirstPhoto.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreFirstPhoto.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreFirstPhoto.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreFirstPhoto.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreFirstPhoto.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Session/CoreSessionBackend.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreSessionBackend.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreSessionBackend.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreSessionBackend.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreSessionBackend.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreSessionBackend.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Session/Dependencies.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Dependencies.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Dependencies.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Dependencies.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Dependencies.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Dependencies.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Shared/CoreTypeAliases.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeAliases.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeAliases.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeAliases.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeAliases.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeAliases.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Shared/CoreTypeMapping.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeMapping.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeMapping.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeMapping.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeMapping.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypeMapping.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Shared/CoreTypes.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypes.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypes.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypes.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypes.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CoreTypes.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Views/HUD/DebugHUD.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/DebugHUD.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/DebugHUD.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/DebugHUD.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/DebugHUD.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/DebugHUD.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Views/Model/CullViewState.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CullViewState.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CullViewState.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CullViewState.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CullViewState.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/CullViewState.swiftdeps"
+  }
+}

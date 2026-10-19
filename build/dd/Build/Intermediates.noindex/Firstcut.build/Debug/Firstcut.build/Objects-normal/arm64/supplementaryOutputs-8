@@ -1,0 +1,58 @@
+{
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Pipeline/Signpost.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Signpost.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Signpost.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Signpost.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Signpost.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/Signpost.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Pipeline/VisualSigWorker.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/VisualSigWorker.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/VisualSigWorker.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/VisualSigWorker.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/VisualSigWorker.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/VisualSigWorker.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Session/UniFFICoreSession.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/UniFFICoreSession.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/UniFFICoreSession.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/UniFFICoreSession.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/UniFFICoreSession.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/UniFFICoreSession.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Settings/Model/SettingsModel.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsModel.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsModel.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsModel.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsModel.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsModel.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Settings/Views/SettingsView.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsView.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsView.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsView.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsView.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/SettingsView.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Views/Viewer/ViewerArea.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ViewerArea.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ViewerArea.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ViewerArea.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ViewerArea.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/ViewerArea.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Sources/Views/Welcome/WelcomeScreen.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/WelcomeScreen.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/WelcomeScreen.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/WelcomeScreen.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/WelcomeScreen.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/WelcomeScreen.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/Firstcut.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps"
+  }
+}

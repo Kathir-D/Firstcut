@@ -1,0 +1,37 @@
+{
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Session/FirstPhotoFastPathTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FirstPhotoFastPathTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FirstPhotoFastPathTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FirstPhotoFastPathTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FirstPhotoFastPathTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FirstPhotoFastPathTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Session/FolderChangeTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChangeTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChangeTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChangeTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChangeTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChangeTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Views/FilmstripTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FilmstripTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FilmstripTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FilmstripTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FilmstripTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FilmstripTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Views/FinishActionKindsTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FinishActionKindsTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FinishActionKindsTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FinishActionKindsTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FinishActionKindsTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FinishActionKindsTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Views/FolderChooserButtonTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChooserButtonTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChooserButtonTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChooserButtonTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChooserButtonTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/FolderChooserButtonTests.swiftdeps"
+  }
+}

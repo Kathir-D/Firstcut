@@ -4,6 +4,15 @@ All notable changes to Firstcut are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [unreleased — v2]
+
+The v2 rewrite is in progress on the `v2` branch ([docs/v2-plan.md](docs/v2-plan.md)): the core
+Rust logic now lives as a one-way ladder of domain crates (`crates/*`, `apps/firstcut-cli`),
+the Swift/Xcode app tree has been removed in favour of the native egui app (`apps/firstcut`,
+milestone by milestone), and the never-crash lint sweep (§4.5) is enforced across everything
+ported so far. Behaviour parity with what ships from v1's engine scaffolding is asserted by the
+418 tests carried over in the port commit.
+
 ## [0.1.0] - unreleased
 
 The first release.

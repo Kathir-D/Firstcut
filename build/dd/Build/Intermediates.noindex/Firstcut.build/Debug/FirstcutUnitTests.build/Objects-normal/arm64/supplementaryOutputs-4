@@ -1,0 +1,30 @@
+{
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Input/InputTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/InputTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/InputTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/InputTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/InputTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/InputTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Views/LowResPreviewTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/LowResPreviewTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/LowResPreviewTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/LowResPreviewTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/LowResPreviewTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/LowResPreviewTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Views/ModelCullViewStateTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ModelCullViewStateTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ModelCullViewStateTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ModelCullViewStateTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ModelCullViewStateTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/ModelCullViewStateTests.swiftdeps"
+  },
+  "/Users/kathirdev/Documents/projects/Firstcut/App/Tests/Unit/Views/OpenFolderButtonTests.swift" : {
+    "const-values" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/OpenFolderButtonTests.swiftconstvalues",
+    "dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/OpenFolderButtonTests.d",
+    "diagnostics" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/OpenFolderButtonTests.dia",
+    "object" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/OpenFolderButtonTests.o",
+    "swift-dependencies" : "/Users/kathirdev/Documents/projects/Firstcut/build/dd/Build/Intermediates.noindex/Firstcut.build/Debug/FirstcutUnitTests.build/Objects-normal/arm64/OpenFolderButtonTests.swiftdeps"
+  }
+}
