@@ -40,3 +40,8 @@ testing/
 .vscode/
 .idea/
 *.swp
+
+# xcodebuild leftovers from v1 (deleted with the Swift tree; a stray stray stash got
+# committed in 394eb57 before these rules came back)
+build/
+App/Generated/
