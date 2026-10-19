@@ -10,5 +10,13 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+firstcut-batching = { workspace = true }
+firstcut-catalog = { workspace = true }
 firstcut-engine = { workspace = true }
+firstcut-meta = { workspace = true }
 firstcut-types = { workspace = true }
+firstcut-xmp = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -11,3 +11,9 @@ workspace = true
 
 [dependencies]
 firstcut-types = { workspace = true }
+nix = { workspace = true }
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

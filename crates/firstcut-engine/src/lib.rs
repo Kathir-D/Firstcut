@@ -1,1 +1,6 @@
-//! The command registry, app state, undo/redo, background jobs and the event stream. The UI never mutates state except by dispatching commands (§4.3). Owns the v1 Swift Pipeline port in §4.2.
+//! The session: the scan → batch → rate → finish loop and its database, undo log and listeners.
+//!
+//! Ported verbatim from v1 `firstcut_core::session` (as module `session`) at the M1 port; only
+//! imports were re-pointed to the ladder crates. Owner: core-store (docs/contracts/session-api.md).
+
+pub mod session;

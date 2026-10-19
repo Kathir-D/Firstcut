@@ -11,5 +11,8 @@ workspace = true
 
 [dependencies]
 firstcut-types = { workspace = true }
-firstcut-meta = { workspace = true }
 firstcut-xmp = { workspace = true }
+nix = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

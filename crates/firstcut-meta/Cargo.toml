@@ -6,8 +6,19 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
+[features]
+# Byte-level test builders (`meta::exif::fixtures`) compiled for sibling crates' tests. Off by
+# default, so product builds carry none of it (§9: test scaffolding never rides product code).
+test-fixtures = []
+
 [lints]
 workspace = true
 
 [dependencies]
 firstcut-types = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }

@@ -63,6 +63,26 @@ receives partial v2 state.
 - App icon: `logo/firstcut-icon.svg` PNG pipeline keeps working; icon paths per-platform in
   packaging.
 
+**Port reality notes, M1 (written with the port commit, not after):**
+- v1's `store/identity.rs` used `libc` `statfs`/`getuid`. The workspace's `unsafe_code = "forbid"` (§4.5)
+  rules libc out, so v2 uses `nix` (`statvfs`, `getuid`); the volume identity string is
+  byte-identical on little-endian, and macOS's `f_mntonname` is replaced by a `st_dev`-based
+  ancestor walk shared with `firstcut-fileops::volume_root`. Windows/non-macOS paths return
+  `None`/`Unsupported` until M5 (documented in code).
+- The §4.5 lint sweep while porting turned v1's hand-checked `expect`s/indices into checked reads
+  (parsers skip a truncated field instead of crashing). Test-name parity: the workspace runs 418
+  green (+3 opt-in ignored, per §9) against v1's 426; the delta is the v1 FFI/uniffi tests that die
+  with `ffi.rs` (D6 above). Two id round-trip tests moved from `batch` into `firstcut-catalog::db`
+  where the store lives now, and the xmp "symlink is claimed, not followed" test keeps its race
+  retry but now also cleans a contended attempt's output (v1 left the made sidecar behind).
+- `firstcut-meta` grows a non-default `test-fixtures` cargo feature so `firstcut-engine`'s tests
+  can reuse the exif byte builders; product builds carry none of it.
+- v1's release-pipeline scripts and workflows (`build-app.sh`, `build-core*.sh`,
+  `generate-project.sh`, `with-timeout.sh`, `common.sh`, `package-release.sh`,
+  `bump-cask.sh`, `third-party-notices.sh`, `build-contact-sheet.sh`, and the
+  `ci/xcode26/release/screenshots` workflows) die with the Swift tree per this section; §6's
+  packaging story is rebuilt for the v2 native app at its own milestone.
+
 **Dies on v2:**
 - The entire `App/` Swift tree (AppKit/SwiftUI app), `project.yml`/xcodegen, UniFFI bridge
   (`ffi.rs`, generated bindings, conversion layer), Swift CI/test lanes, `swift-format`,

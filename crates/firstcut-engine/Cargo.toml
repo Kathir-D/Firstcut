@@ -16,8 +16,14 @@ firstcut-xmp = { workspace = true }
 firstcut-fileops = { workspace = true }
 firstcut-batching = { workspace = true }
 firstcut-catalog = { workspace = true }
+rusqlite = { workspace = true }
 firstcut-decode = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+firstcut-meta = { workspace = true, features = ["test-fixtures"] }

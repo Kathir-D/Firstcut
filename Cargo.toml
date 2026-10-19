@@ -1,14 +1,12 @@
 # Firstcut v2 — Cargo workspace (see docs/v2-plan.md §4.1 for the layout contract).
 #
 # This is the v2 crate ladder: one-way dependencies, enforced by `cargo xtask layers`.
-# The v1 Rust core still lives in `core/` until its modules are ported into crates/
-# (D6); it is its own workspace and excluded here so root-level cargo commands and
-# `cargo xtask ci` never mix the two.
+# The v1 Rust core has been ported crate-by-crate (M1); v1's `core/` workspace itself
+# is gone — the crates below are the whole engine.
 
 [workspace]
 resolver = "2"
 members = ["crates/*", "apps/*", "xtask"]
-exclude = ["core"]
 
 [workspace.package]
 version = "0.2.0-dev"
@@ -31,6 +29,8 @@ firstcut-engine = { path = "crates/firstcut-engine" }
 firstcut-ui = { path = "crates/firstcut-ui" }
 
 # shared external deps (add crates here as the port lands; keep alphabetical)
+nix = { version = "0.30", default-features = false, features = ["fs", "user"] }
+tempfile = "3"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
