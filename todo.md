@@ -183,6 +183,18 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
+> **As of 2026-10-19 (branch cleanup).** All branches and worktrees left from the 2026-10-14
+> plan execution are now gone except the kept record: **`autopilot/firstcut-fixes` (`4ada525`) is
+> `main` (`40eab21`) plus 48 commits that executed the whole review plan** (§0.5 of 2026-10-14's
+> newer items: plan 1.1–1.6, 2.1–2.9, 3.2–3.3, 4.1, T21 plays core). Deleted: 7 local and 7 remote
+> `ap/T*` branches, `origin/ccr-270c6e7f-gl7zpb` (merged), and 8 T3 worktrees under
+> `~/.t3/worktrees/Firstcut` — each deleted tip was verified an ancestor of `4ada525` first, and
+> every uncommitted worktree edit is preserved in the local `refs/t3/...` checkpoint refs.
+> **Nothing was merged: the chain's Swift CI job fails on the tip** (Rust passes; latest run
+> `38631145091`, build failed), main is green, and the owner chose to keep it as the record.
+> **Next:** fix the Swift build on `autopilot/firstcut-fixes`, get CI green, then fast-forward
+> main to it and delete the branch. Do not merge with a red suite (repo rule).
+
 > **As of 2026-10-14 (RAW formats + optional batch reject).** Both suites green: Rust (fmt, clippy,
 > 409 unit + integration), **Swift 314 tests in 40 suites**.
 >
