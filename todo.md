@@ -183,318 +183,46 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-19 (branch cleanup).** All branches and worktrees left from the 2026-10-14
-> plan execution are now gone except the kept record: **`autopilot/firstcut-fixes` (`4ada525`) is
-> `main` (`40eab21`) plus 48 commits that executed the whole review plan** (§0.5 of 2026-10-14's
-> newer items: plan 1.1–1.6, 2.1–2.9, 3.2–3.3, 4.1, T21 plays core). Deleted: 7 local and 7 remote
-> `ap/T*` branches, `origin/ccr-270c6e7f-gl7zpb` (merged), and 8 T3 worktrees under
-> `~/.t3/worktrees/Firstcut` — each deleted tip was verified an ancestor of `4ada525` first, and
-> every uncommitted worktree edit is preserved in the local `refs/t3/...` checkpoint refs.
-> **Nothing was merged: the chain's Swift CI job fails on the tip** (Rust passes; latest run
-> `38631145091`, build failed), main is green, and the owner chose to keep it as the record.
-> **Next:** fix the Swift build on `autopilot/firstcut-fixes`, get CI green, then fast-forward
-> main to it and delete the branch. Do not merge with a red suite (repo rule).
+> **As of 2026-10-19 (v2 M0 — the rewrite branch is live).** The `v2` branch is the pure-Rust
+> rewrite (**`docs/v2-plan.md` is its contract**; agent rules now live in the rewritten
+> `AGENTS.md`). **M0 milestone state:**
+>
+> - **Draft PR open: `v2` → `main` is https://github.com/Kathir-D/Firstcut/pull/6** — stays a draft
+>   until the owner moves it; the owner merges, never an agent.
+> - **Workspace scaffold live:** root workspace (`crates/`, `apps/`, `xtask/`) in the plan's §4.1
+>   ladder shape — `firstcut-{types,meta,xmp,fileops,batching,catalog,decode,decode-libraw,engine,ui}`
+>   + `apps/firstcut` (egui/eframe shell) + `apps/firstcut-cli` (stub) + `xtask`. v1's `core/`
+>   workspace is untouched and excluded (`exclude = ["core"]` in the root Cargo.toml) until its
+>   modules port over in M1, when `core/` and the `App/` Swift tree die on this branch and
+>   `.github/workflows/ci.yml` goes with them in the same commit.
+> - **Never-crash lints enforced from the first code commit** (§4.5): workspace
+>   `unsafe_code = "forbid"` + `clippy::unwrap_used/expect_used/panic/todo/indexing_slicing deny`
+>   with `clippy.toml` shielding tests; **the single unsafe carve-out is
+>   `crates/firstcut-decode-libraw`** (its own `[lints.rust]` table is the only one allowed, and
+>   `cargo xtask layers` fails CI if any other crate carries one — verified by a unit test).
+> - **`xtask` live and green:** `layers` (edge + lints-table check, self-consistency tests),
+>   `ci` (fmt, clippy -D warnings, layers, assets, workspace tests; adaptive build jobs/test
+>   threads; writes `target/ci/report.json` + `summary.md`), `smoke` (window opens, paints,
+>   exits 0). `cargo xtask ci` passes locally, `cargo xtask smoke` proves the window on this Mac.
+> - **3-OS matrix workflow added:** `.github/workflows/v2-ci.yml` — `cargo xtask ci` +
+>   `cargo xtask smoke` on macos/windows/ubuntu (Linux under xvfb with lavapipe). **Waiting for the
+>   first matrix runs to turn green; any red runs are fixed as small follow-up commits.**
+> - **Toolchain/config:** rust-toolchain.toml pins 1.99.0; rustfmt max-150; clippy.toml MSRV.
+>   `flake.nix` ships but is NOT a supported lane (plan §8) and could not be tested locally (no nix).
+> - **Next in order (M1):** port v1 core modules into the ladder exactly as mapped —
+>   `types` ← `batch::{PhotoId,BatchId,fnv1a64,Photo trait}` (+ `store::rating`'s Rating/Flag/ColorLabel),
+>   `meta` ← `scan/meta/formats`, `xmp` ← `xmp` (move sidecar-path helpers here), `fileops` ← `fileops`,
+>   `batching` ← `order/batch` (break the order↔batch cycle at the types crate), `catalog` ←
+>   `store(+session)`, then the engine's command registry. The two surgeries recorded by the port
+>   audit: PhotoId must leave `batch/mod.rs`, and sidecar-path helpers must leave `xmp`. When the
+>   port lands in ONE commit, delete `core/` + `App/` + `project.yml` + old workflows; gitnexus
+>   re-index (`--embeddings --pdg`) right after.
+> - **Not done in M0:** Agents can't prove Windows/Linux window smoke locally — that is the matrix
+>   runner's job (workflow will show it). Everything else in M0's §6 list is committed.
 
-> **As of 2026-10-14 (RAW formats + optional batch reject).** Both suites green: Rust (fmt, clippy,
-> 409 unit + integration), **Swift 314 tests in 40 suites**.
->
-> - **Every raw.pixls.us format opens** (§8): 13 new `RawFormat`s, CRW and MRW readers, and
->   `firstcut verify <folder> [--previews]` against exiftool — 98 of 105 sample files agree. The
->   samples were downloaded to `/tmp/fcall` (not committed; raw.pixls.us, one per camera family).
-> - **Embedded-JPEG fallback** (`App/Sources/Pipeline/EmbeddedPreviewFallback.swift`): a RAW ImageIO
->   cannot open is drawn from `PhotoMeta.preview`. Only after ImageIO fails, never instead of it.
-> - **Reject Whole Batch** (§6.3): opt-in and **off by default** — the owner was explicit that the
->   Canon burst-group erase was context for what a batch *is*, not how Firstcut should delete. It
->   only flags, and undoes as one step (schema v3 `history.group_id`).
-> - **Next:** check the fallback and the batch reject by hand in the app on a real folder; the CR3
->   burst "roll" (several frames per file) is still one photo; X3F / Leaf MOS / Kodak MakerNote
->   metadata are still missing (§8).
-
-> **As of 2026-10-05 (full codebase audit).** A systematic audit of `core/` and `App/` — every
-> module read in full, findings triaged by what they would cost a user — landed in `ccff25a` and the
-> commit after it. Both suites are green: **Rust 391 unit + 16 integration** (fmt and clippy clean),
-> **Swift 309 tests in 39 suites** plus 3 XCTest, green under `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES`.
->
-> - **Fixed, with regression tests.** Path containment on every operation that reaches a file; a
->   cross-volume copy that is on the device before the original is unlinked; a sidecar temp file
->   claimed with `create_new` instead of following a symlink; a user's colour label no longer deleted
->   by an unkeep; `xmp:Rating="0"` no longer importing as a rating; one unreadable scan entry no
->   longer failing the whole scan; a 64-bit box size no longer overflowing an offset; an absurd EXIF
->   year no longer overflowing the calendar; the SubIFD and IFD walks bounded; `\` no longer turned
->   into a path separator; a fallback capture time no longer producing a hard split; boundary
->   precision no longer reportable as 100% with a false positive counted; the decode engine no longer
->   leaking an in-flight slot; eviction no longer crossing cache tiers; the histogram path no longer
->   dropping the EXIF orientation; a short read no longer cached as a picture; ⇧1–⇧5 no longer
->   advancing twice; `formatShutter` no longer trapping on a zero exposure time; the clipping
->   thresholds no longer read statically through an existential; the typed `DELETE` no longer
->   surviving a plan rebuild. Also removed a placeholder test that asserted `#expect(Bool(true))` and
->   one that compared `pickerTag` against its own implementation.
-> - **Release safety.** `release.yml` ran neither the Swift tests nor the lint, and `ci.yml` is
->   `tags-ignore: ["v*"]`, so a tag push published an artefact whose tests had never been run. Both
->   now run before the app is built, and `ci.yml` and `release.yml` have `timeout-minutes` — the
->   documented failure mode here is a hang, not a failure, and GitHub's default is six hours.
-> - **Known not done, deliberately.** Every change to `App/Sources/Pipeline/ImageProvider.swift` from
->   this audit was reverted, and this is the most important thing in the handoff. Four defects there
->   are confirmed and worth doing, and all four were written and passed locally on Xcode 27:
->
->   1. **`store(_:_:)` leaks an in-flight slot** (`ImageProvider.swift`, the discard branch of
->      `store`). It returns before `inFlight.remove(key)`, and `inFlight` is both the concurrency
->      bound and the "do not enqueue twice" set — so each discard costs a slot for the session. After
->      `maxConcurrent` of them `takeNext` returns nil forever and `waitUntilIdle` never returns. The
->      fix is `defer { inFlight.remove(key) }` immediately after `key` is computed.
->   2. **`Entry.pixels` records the request, not the result** (`store`, with the comment above it
->      claiming the opposite), so a photograph smaller than the viewer claims to be larger than it is
->      and is re-decoded on every window growth. Recording `image.longestEdge` needs a second field to
->      tell "too small" from "gave back everything it has" — and that second rule must **not** go into
->      the thumbnail `satisfies` path, only the display `bigEnough` path. Putting it in both is what
->      broke `outsideTheWindowIsNotAFocusMiss` on CI.
->   3. **`evictLocked` evicts across tiers** — candidates are collected per dict but the victim id is
->      removed from all three plus the histogram, so a stale thumbnail takes the display bitmap and the
->      92 MB RAW develop with it.
->   4. **The histogram path drops the EXIF orientation** (`DecodeEngine.histogram` and
->      `ImageProvider.histogram`), caching an upright bitmap for an orientation-8 photograph —
->      26 frames of Game1JENKS — until something evicted it. And `readBytes` promises a short read is
->      a failure and does not check, so a half-copied card yields a cached half-grey frame with
->      `decodeFailures == 0`.
->
->   **Why reverted rather than shipped.** Xcode 16.4 rejected all of it and Xcode 27 accepted it:
->   `outsideTheWindowIsNotAFocusMiss` failed on CI, then `reopeningResets` and
->   `movingOnCancelsStaleWork` failed on CI after the first was addressed. Green here was not evidence,
->   which is this repo's own §0.4 rule. Re-landing them needs a CI loop per change — one commit each,
->   not four together — and the pipeline test file has no seam for forcing an eviction or a
->   mid-flight re-open, which is why two of the four were hard to write at all.
->
-> - Also reverted, same reason, and separately worth doing: separating "queued" from "executing" in the
->   decode engine, which double-counts the concurrency bound across a folder switch. The first attempt
->   stalled `waitUntilIdle` because nothing re-pumps the queue when the gate reopens.
->
-> **As of 2026-10-05 (setup session).** GitNexus code intelligence is set up
-> for this repo and for the machine, and nothing else changed.
->
-> - **What landed:** `gitnexus` 1.6.12 installed globally (`npm i -g gitnexus`);
->   the repo indexed (`gitnexus analyze`: 7,866 symbols, 27,749 relationships,
->   292 clusters, 701 flows, 158 files, status up-to-date); `gitnexus setup`
->   configured MCP + skills + hooks for Claude Code, OpenCode, and Codex
->   (OpenCode's `~/.config/opencode/opencode.json` now has the `gitnexus` MCP
->   server; 12 skills in `~/.config/opencode/skills/`).
-> - **Committed:** the AGENTS.md gitnexus section (generated by `analyze`), a
->   matching CLAUDE.md, and the six `.claude/skills/gitnexus-*` skill files the
->   section points at. `.gitnexus/` (the ~100 MB LadybugDB index, parse caches,
->   `run.cjs`) is self-ignoring via its own `.gitignore` plus `.git/info/exclude`
->   — it is machine-local state, never commit it; a fresh clone re-creates it
->   with `gitnexus analyze` (or `npx gitnexus@latest analyze`).
-> - **For future agents:** read the AGENTS.md "GitNexus — Code Intelligence"
->   section. The workflow it asks for: impact analysis before edits,
->   `detect_changes` before committing, graph tools (`query`, `context`,
->   `impact`) over grep. The CLI fallback is `node .gitnexus/run.cjs <tool>
->   --repo .`; on a machine without it, `npx gitnexus@latest <command>`.
-> - **Next:** re-run `gitnexus analyze` after big code moves (the index goes
->   stale); `gitnexus wiki` if generated docs are ever wanted.
-
-> **As of 2026-10-02 (agent session, fourth pass).** The hand check §0.5 asked for found a real
-> dead-wire bug, and the sizing audit is now settled rather than guessed at.
->
-> - **The `activeModel` bug: three closures were dead, not one.** §0.5 flagged the `AppEnvironment`
->   → `onDoubleClick` closure as the one thing in the batch-navigation change with no test. It had
->   no test because it was **never running**. `activeModel` was declared only in a protocol
->   *extension* on `CullViewState`, never in the requirement list, so `any CullViewState` dispatched
->   it statically to the extension's `nil`. The factory's `if let model = state.activeModel`
->   therefore never ran, and everything inside it was unwired: `onDoubleClick`, **and also**
->   `onFramePresented` (§7.3's frame intervals) and `onViewportPixelSize` (T2 decoded at exactly the
->   pixels the viewer covers). Fixed by declaring it a requirement (`8ab50ac`). The regression test
->   holds an `any CullViewState`; the pre-existing one held the concrete type, which is precisely why
->   it could not see the bug, and it still passes with the fix removed. Verified by hand in the built
->   app both ways: right half Batch 1 → 2 (IMG_0001 → IMG_0013), left half back to Batch 1's last
->   frame (IMG_0012).
-> - **The lesson is the general one, and it cost real time to learn: an existential cannot dispatch a
->   member that is not a requirement.** Anything else reached through `any CullViewState` and
->   declared only in an extension is silently the extension's value. Worth grepping for before the
->   next seam is added.
-> - **Driving the mouse in this app: `cliclick` posts real events, System Events does not.**
->   `System Events`' `click at` does an accessibility press, which fires SwiftUI buttons (the Finish
->   button opened its sheet) and reaches `CGImageViewerHost` not at all — so it looked exactly like
->   a broken double-click. Use `cliclick` verbs: `c:` single, **`dc:`** double. `dd:` is *not* a
->   double-click and fails silently, which is what made the first round of testing meaningless.
->   Also: launching the binary directly gives a process with **no window**; `open -n` is required.
->   And `log stream` does not capture this app's `NSLog` — write to a file to see anything.
-> - **CI caught the same class of bug a second time, and it is now a standing trap.** Both capsule
->   commits (`2f07475`, `4ff5bfb`) were green locally and red on the runner, twice over:
->   `Capsule(style:)` does not exist in the macOS 15 SDK, and then — the real one — a `let radius`
->   computed and never read, which is a *warning*, and CI builds with
->   `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES`. **The local build cannot be run with that flag** (it trips
->   a pre-existing Xcode-27-only diagnostic in `ImageProvider.swift:1600`, the reverse of the usual
->   trap), so the substitute is to build normally and **read every `warning:` in the output** rather
->   than trust the exit code. Grep the log for `warning:`; that is what finds these.
-> - **Two more things about verifying this app by hand, both of which cost a wrong conclusion:**
->   `screencapture` between two clicks can leave the window not processing the next one (assert
->   frontmost before every click, and screenshot only *after* the click), and a dbg sink that opens
->   the file per line drops and reorders entries fast enough to invent bugs that are not there —
->   `mouseUp` lines went missing that way. The `activeModel` finding itself was real: the closure
->   demonstrably fired with `dir=-1` and moved the batch. Confirmed clean: forward, back, forward
->   from a fresh launch gives Batch 1 → 2 → 1 → 3.
-> - **The sizing audit is answered, and it was reading (a), generalized.** The owner's screenshot
->   plus words — "the ovals around everything are way too small they don't fit / follow the Apple
->   way of ui especially with liquid glass" — are about **corner radii on pill-sized controls**, not
->   the photo ring. `Keep` / `Not keep` were `RoundedRectangle(cornerRadius: 5)` around a 20pt-tall
->   button, so the curve stopped a third of the way down and it read as a tight box inside the HUD's
->   own glass capsule; the Welcome screen's recent-folder rows had the same defect at radius 8. Both
->   are `Capsule` now, sized by `Appearance.pillCornerRadius(height:)` = height/2, so the radius
->   cannot drift when the label or type size changes (`2f07475`, `4ff5bfb`). Deliberately **not**
->   changed: filmstrip thumbnails, grid cells and compare panes keep their tight radii — those are
->   photos, not pills.
-> - **CI was green on all three commits.** `9257d65` failed and `9d84bf3` fixed it, as §0.5 said.
-
-> **As of 2026-10-02 (agent session, third pass).** Two owner requests landed since the previous
-> handoff, and one of them turned up a data-loss bug worth knowing about before anything else.
->
-> - **A keep is 1 star everywhere** (display, stored mode conversion, XMP), not 5. Stars mode is
->   unchanged. The Keep mode HUD now has two idempotent buttons — Keep and Not keep — with `P`
->   still toggling. `RatingRules.tier` checks the keep flag **before** star grading; without that
->   reordering, a 1-star Keep would have graded as "maybe" and lost its ring.
-> - **The one-star change nearly destroyed imports.** `XmpMapping` used `keep_rating` for *both*
->   writing a keep and deciding whether a sidecar rating is a keep, and §6.2 had lowered its
->   default from 5 to 1 — so `rating >= keep_rating` would have made **every** rated photo in an
->   imported folder a Keep. Split into `keep_rating` (written, 1) and `keep_import_rating`
->   (threshold, 5, unchanged). This is the §0.4 checklist paying off again: the change that looked
->   like a one-constant edit was the one with teeth. Two tests now kill the single-threshold bug
->   (`a_one_star_written_keep_does_not_make_every_rating_a_keep_on_read`,
->   `the_import_threshold_is_independent_of_the_written_value`).
-> - **Keeps are not recovered from sidecars, and should not be.** A 1-star sidecar is
->   indistinguishable from a foreign 1-star rating. A re-opened shoot restores keeps from the
->   `keep` column of the session database, and `import_new_ratings_from_sidecars` only fills
->   photographs Firstcut has no rating for, always as stars. An old test asserted a
->   sidecar round-trip that the DB actually owns; it now asserts the real property.
-> - **Arrows now cross batch edges by default** (owner decision): most boundaries are burst
->   boundaries, so rolling over is the common case. `Stop` is still one click away in
->   Settings → General. **A double-click in the loupe jumps a whole batch**, in the direction of the
->   half clicked — `Command.jumpBatch` / `batch.jump`, forward to the next batch's first photo and
->   back to the previous batch's last. It deliberately ignores `enteringBatchBehavior`, because it
->   *leaves* a batch rather than entering one. Pinned by 5 new `ViewerDoubleClickTests` (the
->   direction, plus single-click and drag staying out of the way) and 2 in `SessionTests`; both
->   directions were mutation-checked.
-> - **The `AppEnvironment` → `onDoubleClick` wiring has no test.** `AppEnvironment` is a live
->   singleton, so the closure cannot be driven in a test; the tests deliberately stop one layer
->   down, at the host. If that closure is ever deleted the suite still passes, so it is the one
->   thing in this change to eyeball by hand.
-> - **Still open, and it needs a person: the sizing audit.** The owner asked to "make sure oval
->   around many buttons and everything in ui correct size" and then said **"open the app on the
->   computer, I'll screenshot what I mean"** — so the meaning is not yet established. Do not guess
->   it. The three readings are (a) the Keep / Not keep buttons should be pills rather than
->   near-square rounded rectangles, (b) the buttons and the HUD should share one height and
->   baseline, or (c) it is the coloured ring drawn around each *photo* that is mis-sized. A Release
->   build is staged and current at `dist/Firstcut.app`; launch it with
->   `open -n dist/Firstcut.app --args -FirstcutMockShoot 1 -FirstcutRatingMode keep` and ask for the
->   screenshot before changing anything.
-> - **CI caught a local-green commit once already today** (`9257d65`): an unused loop variable that
->   only fails under `GCC_TREAT_WARNINGS_AS_ERRORS` on Xcode 16.4. Run the local test command with
->   that flag before pushing, not after.
-
-> **As of 2026-10-01 (agent session on Kathir's Mac, second pass).** Every agent-side item in §0.3
-> is now done, including the T4 "Exact RAW" decode that the previous handoff stopped short of.
-> `main` is green on CI: Rust fmt/clippy/tests, the Swift build and tests on **Xcode 16.4 with
-> warnings as errors**, and the enforced `swift-format` lint. **What is left is §0.2, which needs a
-> person** — and one §0.2-shaped judgement call (§7.2's preview-vs-RAW comparison).
->
-> - **The §0.5 list from 2026-09-30 is complete:** the first-photo fast path, the bench db phase
->   (measured: 0.235–0.300 s cold, scan+db 0.87–1.10 s scaled, against a 3.5 s target), the sidecar
->   import and same-name-swap fixes, and the screenshot pass.
-> - **§0.3 items done:** one definition per type (17 mirrors aliased), strict CI, all three
->   unhonoured settings, and **T4**. Two of the settings found real bugs — the clipping overlay
->   painted every pixel red and never saw black, and `Codable` on three core types was vacuous.
-> - **§0.4's checklist is now the thing that would have saved this session:** every claim about T4
->   had to be measured because the plausible-looking ones were wrong, twice over. `CIRAWFilter` was
->   recorded as unusable when it is public API; the EXIF orientation was recorded as something to
->   apply in the app when the filter applies it; and **the develop was recorded as 3.4× slower than
->   the preview when it is slightly faster** (see the cold-cache trap below). All three are
->   documented where the code lives now.
-> - **CI was red for three pushes before this session's first fix.** `bitmapInfo.byteOrder` is a
->   newer-SDK overlay member; CI builds with Xcode 16.4 against the macOS 15 SDK. The lesson is in
->   §0.4's checklist: **anything that compiles locally under Xcode 27 is not evidence about CI.**
->   Two more traps followed: `openSettings()` throws on one SDK and not the other, and
->   `GCC_TREAT_WARNINGS_AS_ERRORS` turns a deployment-target linker warning into a failure.
-> - **A warning for whoever picks up item 2: measuring beats assuming, and it cost two wrong
->   conclusions before the right one.** The previous handoff recorded `CIRAWFilter` as unusable;
->   it is public API and works, and the reason it looked broken is that the *documented-looking*
->   `CIFilter(name:)` route returns an object with no input keys and **throws an uncatchable
->   `NSException`** on the obvious key. Along the way three plausible-looking probes all pointed
->   at "no demosaic available on macOS": `CIImage(contentsOf:)` and
->   `CGImageSourceCreateImageAtIndex` really are just the embedded preview (confirmed against the
->   camera's own extracted JPEG bytes: 0.24/255 apart from each other, ~5/255 from the JPEG), and a
->   4 ms "full resolution" render is not a demosaic. The discriminator that settled it was the
->   cheapest one available: **compare a candidate against the same object's own preview**, so
->   colour management cancels. If a probe here reports something surprising, check it against a
->   control before believing it — one of mine scored *identically* to its own control (3.827 vs
->   3.827), which is only possible if the control was broken.
->
->   Two more traps from the same session, both of which cost time and are now in the code as
->   comments: the EXIF orientation tag on a CR3 is at the **top level** of the properties (and
->   mirrored in `{TIFF}`), *not* in the `{Exif}` sub-dictionary — reading the Exif dictionary
->   returns nil, so a `?? 1` would report "every frame is upright" and silently make the
->   orientation test assert nothing. And **a RAW develop must not re-apply the orientation**,
->   because the filter has already applied it (see item 1).
->
->   **The measurement trap, which is the one most likely to be repeated:** the first cost figure
->   for T4 was **0.299 s against the preview's 0.089 s**, and it was wrong — a **cold file cache**,
->   paid by whichever call happened to go first (reading a 12 MB CR3 off the SSD). Measured
->   properly, alternating the two calls over five rounds with the order reversed each round, the
->   develop is **~0.079–0.096 s against ~0.090–0.113 s for the preview: the same cost, or slightly
->   faster.** This is the general form of the lesson, so it is worth stating plainly: **when timing
->   two things against each other, whichever runs first pays for the file read.** Warm both, or
->   alternate, before believing a ratio. It matters here because "a demosaic is slow" is the natural
->   assumption, it is false on this hardware, and acting on it would have put T4 in the prefetch for
->   the wrong reason — the real constraint is **92 MB of memory**, not time.
->
-> **Next, in order:**
->
-> 1. ~~**"Exact RAW" (T4) decode.**~~ **Done**, in `087c22c` + three follow-ups (`d46113d` for the
->    CI concurrency error, `8cd60a3` for a test that would not compile on CI, `a1c57df` for the cost
->    correction above). T4 is a separate `DecodeEngine.Kind`
->    (`case exactRaw`), so the cache separation the design called for is free from `Key`'s
->    `id + kind`; `exactRaws` holds the current photograph only; `setExactRaw` replaces whatever the
->    tier was doing on every focus report, so moving on drops the develop; and work already running
->    when the setting is turned off is marked `cancelled` (deliberately not `failed`, so asking
->    again still develops) rather than re-inserting 92 MB. The toggle is now in Settings → Viewer,
->    the debug HUD has a row for it, and `docs/contracts/pipeline-api.md` is v0.4.
->    Verified: 6 unit tests (no photos) + 4 integration tests on real CR3s, Swift 284 green, Rust
->    338 + 3 CLI, lint clean, `main` green on CI. Five mutations were each checked to fail a test —
->    filing the develop into the display store, dropping the develop, removing the `kind` gate,
->    ignoring the cancellation, and re-applying the EXIF orientation.
-> 2. **Pipeline:** the embedded-preview vs `CIRAWFilter` comparison (§7.2) still needs a person to
->    judge the pictures. **It is now a free decision:** both paths cost the same (~0.09 s against
->    ~0.079 s for the same 6000×4000, measured over five alternating rounds) and differ by 3–52/255
->    per pixel, so nothing is being traded for speed. Both are reachable from the app (the toggle is
->    in Settings → Viewer), so this is a matter of looking at the same frame both ways and saying
->    which you would rather cull on.
-> 3. **Speculative T3 after a dwell** (§7.5) — deliberately deferred until the arrow-key measurement
->    exists, because the measurement is what decides whether it is worth a decode.
-> 4. **The owner's items** in §0.2, unchanged and still first in line for a human: the boundary-F1
->    ground truth, the Game1JENKS re-press decision, the perf numbers on the running app, the
->    visual sign-off against Finder, and the tap secret / `v0.1.0` tag.
->
-> **One thing worth knowing before running the photo tests on this machine:** they **hang**, rather
-> than fail, when the app reads `~/Documents`, because the test host is a GUI app with a fresh
-> ad-hoc identity on every rebuild and nobody is present to answer the TCC prompt
-> (`docs/contracts/build.md`). The escape is the one build.md records — point
-> `FIRSTCUT_TEST_PHOTOS` at a copy outside a protected folder:
-> `FIRSTCUT_TEST_PHOTOS=/tmp/fcphotos scripts/test-with-photos.sh FirstcutIntegrationTests/<Suite>`.
-> Note that `testAFolderOfCR3sScansBatchesPrefetchesAndAnswersFromCache` asserts `photos.count ==
-> 708` for Game1JENKS, so a small copy will fail that test; the T4 tests take their own sample and
-> pass on a small folder.
->
-> **How to run things quickly** (the full suite is ~15 min of builds; these are seconds):
-> - Rust, one area: `cargo test -p firstcut-core --lib session::` (or `meta::`, `batch::`).
-> - Swift, one area: `xcodebuild … test -only-testing:FirstcutUnitTests` (the whole unit target is
->   ~1.2 s once built; add a suite name to narrow it, e.g. `-only-testing:FirstcutUnitTests/ImageProviderTests`).
-> - One test against real photos: `FIRSTCUT_TEST_PHOTOS=/tmp/fcphotos scripts/test-with-photos.sh
->   FirstcutIntegrationTests/RealRawDecodeTests/testExactRawThroughTheProviderOnRealCR3s` (~2 min,
->   mostly the build).
-> - Nothing in a test run may touch `~/Documents` (build.md); real-photo tests are opt-in behind
->   `FIRSTCUT_ALLOW_PHOTO_TESTS=1`.
-
-> **Keep this current.** Any agent that stops mid-task (rate limit, context limit, end of session)
-> rewrites this block in the same commit as its last change, so the next agent can pick up without the
-> chat. Newest state only; history is `git log`.
-
+> **v1 record (pre-rewrite), last state 2026-10-19:** branch cleanup — all branches/worktrees from
+> the 2026-10-14 plan are gone except the kept record `autopilot/firstcut-fixes`; nothing merged
+> (the chain's Swift CI was red on the tip; main is green). Full v1 history: `git log`.
 **As of 2026-09-30 (agent session on Kathir's Mac, not the cloud container):**
 
 - **The blockers in the previous handoff are gone: this session is on the real Mac.** `cargo`,
