@@ -183,43 +183,49 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-19 (v2 M0 — the rewrite branch is live).** The `v2` branch is the pure-Rust
-> rewrite (**`docs/v2-plan.md` is its contract**; agent rules now live in the rewritten
-> `AGENTS.md`). **M0 milestone state:**
+> **As of 2026-10-19 (v2, M1 complete — the port is on the branch).** The `v2` branch is the
+> pure-Rust rewrite (**`docs/v2-plan.md` is its contract**; agent rules live in the rewritten
+> `AGENTS.md`). Milestone state:
 >
 > - **Draft PR open: `v2` → `main` is https://github.com/Kathir-D/Firstcut/pull/6** — stays a draft
 >   until the owner moves it; the owner merges, never an agent.
-> - **Workspace scaffold live:** root workspace (`crates/`, `apps/`, `xtask/`) in the plan's §4.1
->   ladder shape — `firstcut-{types,meta,xmp,fileops,batching,catalog,decode,decode-libraw,engine,ui}`
->   + `apps/firstcut` (egui/eframe shell) + `apps/firstcut-cli` (stub) + `xtask`. v1's `core/`
->   workspace is untouched and excluded (`exclude = ["core"]` in the root Cargo.toml) until its
->   modules port over in M1, when `core/` and the `App/` Swift tree die on this branch and
->   `.github/workflows/ci.yml` goes with them in the same commit.
-> - **Never-crash lints enforced from the first code commit** (§4.5): workspace
->   `unsafe_code = "forbid"` + `clippy::unwrap_used/expect_used/panic/todo/indexing_slicing deny`
->   with `clippy.toml` shielding tests; **the single unsafe carve-out is
->   `crates/firstcut-decode-libraw`** (its own `[lints.rust]` table is the only one allowed, and
->   `cargo xtask layers` fails CI if any other crate carries one — verified by a unit test).
-> - **`xtask` live and green:** `layers` (edge + lints-table check, self-consistency tests),
->   `ci` (fmt, clippy -D warnings, layers, assets, workspace tests; adaptive build jobs/test
->   threads; writes `target/ci/report.json` + `summary.md`), `smoke` (window opens, paints,
->   exits 0). `cargo xtask ci` passes locally, `cargo xtask smoke` proves the window on this Mac.
-> - **3-OS matrix workflow added:** `.github/workflows/v2-ci.yml` — `cargo xtask ci` +
->   `cargo xtask smoke` on macos/windows/ubuntu (Linux under xvfb with lavapipe). **Waiting for the
->   first matrix runs to turn green; any red runs are fixed as small follow-up commits.**
-> - **Toolchain/config:** rust-toolchain.toml pins 1.99.0; rustfmt max-150; clippy.toml MSRV.
->   `flake.nix` ships but is NOT a supported lane (plan §8) and could not be tested locally (no nix).
-> - **Next in order (M1):** port v1 core modules into the ladder exactly as mapped —
->   `types` ← `batch::{PhotoId,BatchId,fnv1a64,Photo trait}` (+ `store::rating`'s Rating/Flag/ColorLabel),
->   `meta` ← `scan/meta/formats`, `xmp` ← `xmp` (move sidecar-path helpers here), `fileops` ← `fileops`,
->   `batching` ← `order/batch` (break the order↔batch cycle at the types crate), `catalog` ←
->   `store(+session)`, then the engine's command registry. The two surgeries recorded by the port
->   audit: PhotoId must leave `batch/mod.rs`, and sidecar-path helpers must leave `xmp`. When the
->   port lands in ONE commit, delete `core/` + `App/` + `project.yml` + old workflows; gitnexus
->   re-index (`--embeddings --pdg`) right after.
-> - **Not done in M0:** Agents can't prove Windows/Linux window smoke locally — that is the matrix
->   runner's job (workflow will show it). Everything else in M0's §6 list is committed.
-
+> - **M1 port done in ONE commit, `8a01a65` ("port: v1 core folds into the crate ladder; delete
+>   the Swift tree and v1 workspaces", pushed):** every v1 core module lives in the ladder
+>   (`firstcut-{types,meta,xmp,fileops,batching,catalog,decode,decode-libraw,engine}` — decode +
+>   engine were already M0 work); the SAME commit deleted `App/` (all of Swift), most of `core/`,
+>   the obsolete workflows (`ci.yml`, `xcode26.yml`, `release.yml`, `screenshots.yml`) and the
+>   Xcode build scripts. v1 release-pipeline scripts (`build-app.sh`, `build-core*.sh`,
+>   `package-release.sh`, `bump-cask.sh`, …, `tools/contact-sheet`) are deliberately deleted —
+>   §6 packaging rebuilds at its own milestone; `scripts/test-with-photos.sh` survives, retargeted
+>   as a thin cargo wrapper exporting `FIRSTCUT_TEST_PHOTOS` + `FIRSTCUT_ALLOW_PHOTO_TESTS=1` and
+>   running `cargo test --workspace -- --include-ignored`.
+> - **Test parity vs v1: 418 passed + 3 ignored (opt-in photo tests) vs v1's 426 passed (+3
+>   opt-in).** The delta is the v1 FFI/uniffi tests that no v2 layer can host; 2 id round-trip
+>   tests moved into `firstcut-catalog/src/db.rs`; one test-robustness fix in firstcut-xmp (the
+>   symlink-race test now removes a contended attempt's created sidecar, which v1 left behind).
+> - **Never-crash lints (§4.5) swept through all ported code:** checked reads everywhere
+>   (helper fns like `read_be32` in meta/cr3.rs), `nix` replaces `libc` (workspace
+>   `unsafe_code = "forbid"`), and the one truncated-parser crash became a field skip. Workspace
+>   clippy clean at `-D warnings`, `cargo xtask layers` green (13 edges), `cargo xtask ci`
+>   pass (12 s). The single unsafe carve-out remains `crates/firstcut-decode-libraw` (D3).
+> - **Port reality is documented in the contract:** `docs/v2-plan.md` has a "Port reality notes,
+>   M1" section (nix swap, lint sweep, `test-fixtures` feature on firstcut-meta so
+>   firstcut-engine's tests can build byte fixtures, script deletions).
+> - **Follow-up commits (both pushed):** `394eb57` — `docs/contracts/build.md` rewritten to
+>   v2.1 for the crate ladder, `.gitignore` trimmed of Xcode/SPM rules, `CHANGELOG.md` gain
+>   `## [unreleased — v2]`; `0041b4f` — the stray DerivedData + `App/Generated` uniffi files that
+>   leaked into `394eb57` via `git add -A` removed, `build/` + `App/Generated/` ignore lines
+>   re-added; `3c0a1f2` — the rest of the v1 remnants deleted (the earlier `git rm` had aborted
+>   on the untracked `Firstcut.xcodeproj` pathspec): `core/` workspace files, the
+>   uniffi-bindgen binaries, `project.yml`, `tools/contact-sheet/main.swift`. **Repo is clean:
+>   125 tracked files, zero core/ or Swift paths, fmt/clippy/layers re-verified after.**
+> - **Stale-doc sweep left for a later task (not this one):** `README.md` (~line 208) and
+>   `docs/qa/{qa-checklist,bugs,perf-baselines}.md` + `docs/contracts/pipeline-api.md` still
+>   mention xcodebuild/project.yml/UniFFI; `THIRD-PARTY-NOTICES.md` is stale (regenerate at the
+>   packaging milestone); `todo.md` §5/§6 still carry v1 script references.
+> - **GitNexus:** the parent session re-indexes (gitnexus analyze --embeddings --pdg) after this
+>   restructure; this session did not run gitnexus.
+>
 > **v1 record (pre-rewrite), last state 2026-10-19:** branch cleanup — all branches/worktrees from
 > the 2026-10-14 plan are gone except the kept record `autopilot/firstcut-fixes`; nothing merged
 > (the chain's Swift CI was red on the tip; main is green). Full v1 history: `git log`.
