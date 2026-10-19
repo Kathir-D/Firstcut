@@ -1,0 +1,1 @@
+//! The decode engine: trait + priority window + cache tiers (thumbnail, display, Exact RAW). Backends attach and are never baked in: the native LibRaw backend is a separate crate below; the embedded-preview fast path lives here.

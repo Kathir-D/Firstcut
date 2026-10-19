@@ -1,0 +1,23 @@
+[package]
+name = "firstcut-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+firstcut-types = { workspace = true }
+firstcut-meta = { workspace = true }
+firstcut-xmp = { workspace = true }
+firstcut-fileops = { workspace = true }
+firstcut-batching = { workspace = true }
+firstcut-catalog = { workspace = true }
+firstcut-decode = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }

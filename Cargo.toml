@@ -1,0 +1,77 @@
+# Firstcut v2 — Cargo workspace (see docs/v2-plan.md §4.1 for the layout contract).
+#
+# This is the v2 crate ladder: one-way dependencies, enforced by `cargo xtask layers`.
+# The v1 Rust core still lives in `core/` until its modules are ported into crates/
+# (D6); it is its own workspace and excluded here so root-level cargo commands and
+# `cargo xtask ci` never mix the two.
+
+[workspace]
+resolver = "2"
+members = ["crates/*", "apps/*", "xtask"]
+exclude = ["core"]
+
+[workspace.package]
+version = "0.2.0-dev"
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+rust-version = "1.99"
+
+[workspace.dependencies]
+# internal ladder (paths)
+firstcut-types = { path = "crates/firstcut-types" }
+firstcut-meta = { path = "crates/firstcut-meta" }
+firstcut-xmp = { path = "crates/firstcut-xmp" }
+firstcut-fileops = { path = "crates/firstcut-fileops" }
+firstcut-batching = { path = "crates/firstcut-batching" }
+firstcut-catalog = { path = "crates/firstcut-catalog" }
+firstcut-decode = { path = "crates/firstcut-decode" }
+firstcut-decode-libraw = { path = "crates/firstcut-decode-libraw" }
+firstcut-engine = { path = "crates/firstcut-engine" }
+firstcut-ui = { path = "crates/firstcut-ui" }
+
+# shared external deps (add crates here as the port lands; keep alphabetical)
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.38", features = ["bundled"] }
+notify = "8"
+log = "0.4"
+
+# decode fast path (§4.2): embedded JPEG
+zune-jpeg = { version = "0.5", default-features = false, features = ["std", "x86", "neon"] }
+
+# UI (D1): egui + eframe on the wgpu renderer; native only, no web feature
+egui = "0.37"
+eframe = { version = "0.37", default-features = false, features = [
+  "default_fonts",
+  "wgpu",
+  "wayland",
+  "x11",
+] }
+egui_kittest = "0.37"
+
+[workspace.lints.rust]
+# §4.5: the single `unsafe` carve-out is firstcut-decode-libraw, which carries its own
+# [lints.rust] table (the only one permitted in the workspace — enforced by
+# `cargo xtask layers`). `forbid` cannot be escaped in-source; re-enabling in any
+# other crate fails CI.
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# §4.5 "never crash outranks feature work": denied (product code; tests are exempted
+# per-file-scope by clippy.toml, which is committed and reviewed).
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+indexing_slicing = "deny"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+debug = "line-tables-only"

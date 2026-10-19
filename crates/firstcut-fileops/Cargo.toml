@@ -1,0 +1,15 @@
+[package]
+name = "firstcut-fileops"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+firstcut-types = { workspace = true }
+firstcut-meta = { workspace = true }
+firstcut-xmp = { workspace = true }
