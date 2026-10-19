@@ -138,6 +138,7 @@ fn mount_point_of(path: &Path) -> Option<PathBuf> {
 ///
 /// Parsed with a scan rather than a plist crate: the answer is a single `<key>VolumeUUID</key>`
 /// followed by a `<string>`, and a dependency that can fail must not be able to fail here.
+#[cfg(unix)]
 fn volume_uuid(mount_point: &Path) -> Option<String> {
     let output = std::process::Command::new("/usr/sbin/diskutil").arg("info").arg("-plist").arg(mount_point).output().ok()?;
     if !output.status.success() {
@@ -360,6 +361,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    // Windows has no `statfs` in this port's std surface; its volume key reads "unknown" until
+    // M5 lands the Windows volume probe, so the "always an id" guarantee is unix-scope for now.
     fn volume_identity_has_a_filesystem_id() {
         let dir = tempfile::tempdir().unwrap();
         let volume = volume_identity(dir.path());

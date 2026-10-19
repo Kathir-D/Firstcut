@@ -7,6 +7,7 @@ this mechanically and fails on any unattributed file.
 
 | Asset | Source | License | Added by |
 | --- | --- | --- | --- |
+| `crates/firstcut-decode/tests/fixtures/tiny.jpg` | Generated locally with `sips` from macOS's own `MakePDF.app/0blank.jpg` (a blank white 1×1), resampled to 8×8 | (generated test fixture; no rights asserted) | Kathir Dev |
 
 Nothing yet — the egui shell at M0 uses no bundled assets. The first assets
 (D10: the Inter font family and the Lucide icon set, both permissively

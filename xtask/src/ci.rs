@@ -76,7 +76,7 @@ fn shell_step(name: &'static str, cmd: &mut Command) -> Step {
             let ok = out.status.success();
             let text = String::from_utf8_lossy(if ok { &out.stdout } else { &out.stderr });
             let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-            let tail = lines.last_page(40).join("\n");
+            let tail = lines.last_page(250).join("\n");
             (ok, tail)
         }
         Err(e) => (false, format!("could not run: {e}")),
