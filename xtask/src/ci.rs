@@ -265,7 +265,7 @@ fn write_report(machine: &Machine, steps: &[Step], total_s: f64, failed: &[&Step
         println!("ci: all steps green");
     } else {
         for f in failed {
-            eprintln!("ci: step failed — {}", f.name);
+            eprintln!("ci: step failed — {} ({}s)\n{}", f.name, f.duration_s, f.message);
         }
     }
 }
@@ -284,7 +284,7 @@ fn summary_markdown(machine: &Machine, steps: &[Step], total_s: f64, failed: &[&
     );
     for s in steps {
         let note = if s.message.len() > 60 { "see target/ci/report.json".to_string() } else { s.message.clone() };
-        md += &format!("| {} | {} | {:.1} | {} |\n", s.name, if s.ok { "✅" } else { "❌" }, s.duration_s, note);
+        md += &format!("| {} | {} | {:.1} | {} |\n", s.name, if s.ok { "green" } else { "FAIL" }, s.duration_s, note);
     }
     md += "\nSkipped (stated, never silent): real-photo corpus is opt-in (`FIRSTCUT_ALLOW_PHOTO_TESTS=1`), milestone-only by the tiered-test rule.\n";
     Some(md)
