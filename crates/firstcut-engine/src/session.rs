@@ -1420,12 +1420,17 @@ mod tests {
             // scanner rather than finding a folder of files it correctly refuses.
             write_cr3(folder.path(), &meta.rel_path, index as u32 + 1);
             // The stat identity has to come from the file that is actually there, or a rename
-            // would not be recognisable and the reconcile test would be testing nothing.
-            let stat = fs::metadata(folder.path().join(&meta.rel_path)).unwrap();
-            use std::os::unix::fs::MetadataExt;
-            meta.device = Some(stat.dev() as i64);
-            meta.ino = Some(stat.ino() as i64);
-            meta.file_size = stat.len();
+            // would not be recognisable and the reconcile test would be testing nothing. Windows
+            // has no dev/ino in `std`, so there the test keeps the zeros (the identity tests run
+            // where the real data lives).
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let stat = fs::metadata(folder.path().join(&meta.rel_path)).unwrap();
+                meta.device = Some(stat.dev() as i64);
+                meta.ino = Some(stat.ino() as i64);
+                meta.file_size = stat.len();
+            }
         }
         let scan = firstcut_meta::meta::ScanResult { skipped: Vec::new(), photos };
         let session = Session::from_scan(scan, folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();

@@ -741,16 +741,18 @@ fn collect(root: &Path, dir: &Path, walk: &mut Walk) -> Result<(), ScanError> {
         let Some(kind) = kind_of(extension) else {
             continue;
         };
-        use std::os::unix::fs::MetadataExt;
-        walk.candidates.push(Candidate {
-            rel_path: rel,
-            path,
-            kind,
-            size: metadata.len(),
-            mtime_ms: mtime_ms_of(&metadata),
-            device: metadata.dev() as i64,
-            ino: metadata.ino() as i64,
-        });
+        // The stat identity (device + inode) is how a re-scan recognises that a file is the same
+        // physical file (photo-meta.md). Windows offers no equivalent in `std`, so there it
+        // records the honest "unknown" zeros and reconcile falls back to the fingerprint rules
+        // (the same degradation `firstcut-catalog::identity` already documents).
+        #[cfg(unix)]
+        let (device, ino) = {
+            use std::os::unix::fs::MetadataExt;
+            (metadata.dev() as i64, metadata.ino() as i64)
+        };
+        #[cfg(not(unix))]
+        let (device, ino) = (0, 0);
+        walk.candidates.push(Candidate { rel_path: rel, path, kind, size: metadata.len(), mtime_ms: mtime_ms_of(&metadata), device, ino });
     }
     Ok(())
 }
@@ -1179,6 +1181,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn one_unreadable_entry_costs_its_own_photos_and_a_backslash_is_not_a_separator() {
         use exif::fixtures::{jpeg, tiff};
@@ -1228,6 +1231,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_symlink_to_a_photograph_is_a_photograph() {
         // A linked photo is a photo the user can open in Preview. `read_dir` calls a symlink

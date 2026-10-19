@@ -236,6 +236,7 @@ mod tests {
         assert_eq!(names, vec!["IMG_0001.CR3", "IMG_0001.CR3.xmp"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_read_only_sidecar_is_reported_not_ignored() {
         use std::os::unix::fs::PermissionsExt;

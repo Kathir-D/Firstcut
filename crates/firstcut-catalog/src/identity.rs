@@ -99,8 +99,11 @@ fn probe_volume_unix(path: &Path) -> VolumeIdentity {
 
     let mount_point = mount_point_of(path);
     // `f_fsid` renders as one machine word of hex; on the little-endian machines v1 ran on,
-    // that is byte-identical to v1's two rendered halves.
-    let fsid = statvfs(path).ok().map(|stats| format!("{:016x}", stats.filesystem_id()));
+    // that is byte-identical to v1's two rendered halves. nix widens `f_fsid` to u64 only on
+    // some platforms (it is a narrower word on macOS), so the same conversion is useless there
+    // and required here — narrowing the allow to exactly this expression.
+    #[allow(clippy::useless_conversion)]
+    let fsid = statvfs(path).ok().map(|stats| format!("{:016x}", u64::from(stats.filesystem_id())));
 
     VolumeIdentity { uuid: mount_point.as_deref().and_then(volume_uuid), fsid, mount_point }
 }

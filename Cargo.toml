@@ -29,7 +29,6 @@ firstcut-engine = { path = "crates/firstcut-engine" }
 firstcut-ui = { path = "crates/firstcut-ui" }
 
 # shared external deps (add crates here as the port lands; keep alphabetical)
-nix = { version = "0.30", default-features = false, features = ["fs", "user"] }
 tempfile = "3"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

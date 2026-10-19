@@ -642,6 +642,9 @@ fn check_free_space(sampled: &[PathBuf], bytes: u64, warnings: &mut Vec<String>)
 pub fn free_space(path: &Path) -> Option<u64> {
     let stats = nix::sys::statvfs::statvfs(path).ok()?;
     // `f_bavail` × `f_frsize`: blocks an unprivileged user may still write, bytes per block.
+    // nix hands `f_bavail` back as u64 only on some platforms (a narrower word on macOS), so
+    // the conversion is useless there and required here — allow, narrowed to this line.
+    #[allow(clippy::useless_conversion)]
     let blocks = u64::from(stats.blocks_available());
     let block_size = stats.fragment_size();
     Some(blocks.saturating_mul(block_size))
@@ -1821,6 +1824,7 @@ mod tests {
     }
 
     /// A second file system for the cross-volume tests, when this machine has one.
+    #[cfg(unix)]
     fn other_volume() -> Option<tempfile::TempDir> {
         use std::os::unix::fs::MetadataExt;
         let shm = Path::new("/dev/shm");
