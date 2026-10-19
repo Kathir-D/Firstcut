@@ -7,6 +7,12 @@
 >
 > Written 2026-10-19 with the owner, before any M0 code. Start prompt: the LightCraft-shaped
 > "Pure-Rust App, Native + WebAssembly" kickoff prompt (owner-supplied), amended below.
+>
+> **Owner amendments at plan review, same day:**
+> 1. **The Web/WASM target is removed from the goals entirely.** Not deferred — dropped. No web
+>    build tasks, no wasm crate shaping, no `docs/web.md`, no browser parity rows.
+> 2. **Tiered test discipline replaces "full CI before every commit"** (§9): slow suites run
+>    when they matter — at milestone gates — not after every single commit.
 
 ---
 
@@ -32,8 +38,8 @@ receives partial v2 state.
 | --- | --- | --- | --- |
 | D1 | GUI framework | `egui` + `eframe`/`wgpu` | Immediate mode fits a culler's per-frame state machine; custom paint for loupe/overlays; `emulsion` precedent |
 | D2 | RAW decode | **LibRaw** via bindings, native only | See D3. Embedded-JPEG decode via `zune-jpeg` stays the fast path (§4.2) |
-| D3 | C/C++ dependency approval | **Approved** by owner | The kickoff prompt's "no C/C++ unless I approve" clause: LibRaw (C++) is approved for the native target, recorded here and in AGENTS.md. Web drop-in later must be pure Rust. `unsafe` is contained in one bindings crate (§4.5) |
-| D4 | Web/WASM target | **Deferred, post-merge** | Native-only v2. Crates stay wasm-shaped; docs carry an "in progress" web section (§8) |
+| D3 | C/C++ dependency approval | **Approved** by owner | The kickoff prompt's "no C/C++ unless I approve" clause: LibRaw (C++) is approved for the v2 native target, recorded here and in AGENTS.md. The only `unsafe` in the workspace is the LibRaw bindings crate (§4.5) |
+| D4 | Web/WASM target | **Removed from scope entirely** | Not a goal of this project — not built, not deferred. v2 targets three native OSes and nothing else |
 | D5 | License | **GPL-3.0 stays** | Prompt's MIT/Apache dual-license files are dropped. LibRaw links under its LGPL-2.1 option (CDDL not used) |
 | D6 | Existing Rust core | **Split into the ladder** | `firstcut-core`'s modules fold into the domain crates unchanged in logic, tests move with them; UniFFI/`ffi.rs` deleted |
 | D7 | Scope | **Full parity before merge** | Screen-by-screen checklist (§7) gates the merge |
@@ -61,7 +67,7 @@ receives partial v2 state.
 - The entire `App/` Swift tree (AppKit/SwiftUI app), `project.yml`/xcodegen, UniFFI bridge
   (`ffi.rs`, generated bindings, conversion layer), Swift CI/test lanes, `swift-format`,
   `with-timeout`'s TCC hang mitigations tied to the GUI test host, xcodebuild-based
-  distribution scripts, Sparkle plans (deferred with web, if ever), and the §0.4
+  distribution scripts, Sparkle-class updaters (deferred, §8), and the §0.4
   Xcode-16.4-vs-27 toolchain-trap notes (moot).
 - macOS-26-only presentation code (Liquid Glass).
 
@@ -79,13 +85,13 @@ allowed edges live in exactly one file in `xtask` (`xtask/src/layers.rs`), not i
 
 ```
 crates/
-├── firstcut-types       # ids, geometry, sizes, errors, event types (pure, wasm-shaped)
+├── firstcut-types       # ids, geometry, sizes, errors, event types (pure)
 ├── firstcut-meta        # RAW container + metadata readers from specs (existing core code)
 ├── firstcut-xmp         # sidecar read/write, ratings, keep labels (existing)
 ├── firstcut-fileops     # move/copy/delete, path containment, typed-DELETE gate (existing)
 ├── firstcut-batching    # visual signatures, ordering, boundaries (existing)
-├── firstcut-catalog     # session DB + key-value storage behind one trait
-│                        #   (native: folder on disk; the OPFS/IndexedDB web impl is post-merge)
+├── firstcut-catalog     # session DB + key-value storage behind one storage trait
+│                        #   (native target: a plain folder on disk)
 ├── firstcut-decode      # decode trait + priority window + tiers; backends attach, never bake in:
 │                        #   - native backend: LibRaw bindings (C++; lives in its own crate
 │                        #     firstcut-decode-libraw, the only `unsafe` crate in the workspace)
@@ -100,12 +106,10 @@ apps/
 └── firstcut-cli         # `run`, `mcp` (--connect host:port), `--control` socket lives in app
 ```
 
-Every crate: own tests, one-paragraph purpose comment at the top of `lib.rs`. Everything
-except `firstcut-decode-libraw` and the app entry points compiles for
-`wasm32-unknown-unknown`.
+Every crate: own tests, one-paragraph purpose comment at the top of `lib.rs`.
 
 Workspace root: `Cargo.toml` (workspace deps + lints), `Cargo.lock` committed,
-`rust-toolchain.toml` (pinned stable, wasm32 target listed), `rustfmt.toml`, `clippy.toml`,
+`rust-toolchain.toml` (pinned stable), `rustfmt.toml`, `clippy.toml`,
 `.cargo/config.toml`, `AGENTS.md`, `CLAUDE.md` (pointer to AGENTS.md), `README.md`,
 `ROADMAP.md`, `docs/`, `assets/` (+ `ATTRIBUTION.md`), `packaging/`, `xtask/`.
 
@@ -192,17 +196,24 @@ dedicated tests (v1's biggest gap).
 
 ## 6. Milestones
 
-Branch `v2`. Commits are small and one-thing; every commit: `cargo xtask ci` green; pushed
-right after; gitnexus `detect_changes` before committing while the index is fresh (re-index
-after big moves; the index is machine-local, never committed).
+Branch `v2`. Commits are small and one-thing; pushed right after. **Tests run when they
+matter, not after every commit** (§9): the rules in this section name the gate where a suite
+runs; do not re-run the whole workspace between gates. GitNexus `detect_changes` before
+committing while the index is fresh (re-index after big moves; the index is machine-local,
+never committed).
 
 ### M0 — Scaffold (branch setup, this file landed first)
 
 - Workspace in the layout of §4.1; lints + toolchain + `rustfmt` + `clippy`.
-- `xtask ci` (see §7) green on this machine; GitHub Actions matrix green (3 OS).
-- `xtask layers` live with the real crate list.
-- App opens a native window (egui shell, empty) on mac; wasm build deferred per D4 but the
-  target compiles (`cargo check --target wasm32-unknown-unknown` green on pure crates).
+- `xtask` with these tasks, live and green on this machine:
+  - `ci` — the full gate: fmt check, clippy (deny warnings), workspace tests, layering
+    check, asset-attribution check. Writes `target/ci/report.json` + `summary.md`
+    (hardware, skipped tests with reasons, a PR-pasteable block). Picks job/thread counts
+    from the machine's CPUs and RAM so it never OOMs. Nothing is uploaded.
+  - `layers` — reads workspace metadata, fails on any upward/sideways edge.
+- GitHub Actions matrix green (3 OS), calling `cargo xtask ci`.
+- App opens a native window (egui shell, empty) on **macOS, Windows, Linux** — the matrix
+  runner is where cross-OS window creation is actually proven, not by hand here first.
 - `AGENTS.md` rewritten (rules verbatim-in-spirit from the kickoff prompt + the §4.5
   exception for `firstcut-decode-libraw`); `CLAUDE.md` points at it; GitNexus re-indexed
   (`analyze --embeddings --pdg`) right after the restructure.
@@ -253,8 +264,7 @@ selection behavior for culling a card.
   AppImage + `.deb`.
 - Release workflow: 3-OS matrix, artifacts, SHA-256 sums; tag `v2.0.0` when the owner says.
 - Docs re-land: new `README.md` (short, honest, feature-status table), `ROADMAP.md`,
-  `docs/web.md` (what's deferred and why), `docs/control-protocol.md`, `docs/mcp.md`,
-  `docs/layers.md`? (no — layer list lives in xtask per §4.1; docs only narrate),
+  `docs/control-protocol.md`, `docs/mcp.md`,
   `docs/parity-checklist.md` (§7), `todos carry-forward`. GitNexus wiki regenerated.
 - `CHANGELOG.md` gets the v2 entry; README claims only what a test proves.
 
@@ -299,8 +309,6 @@ carried over, unchanged in substance):
 
 ## 8. Deferred to post-merge (documented, not forgotten)
 
-- **Web/WASM target** (D4): pure-Rust decode backend behind the trait, OPFS/IndexedDB
-  storage backend, wasm CI task, "in progress" feature table rows.
 - Sparkle-class updaters for desktop.
 - Post-v1 features (todo.md §16): manual batch split/merge, importable presets
   (`.xmp`, `.lrtemplate`, `.costyle`).
@@ -311,9 +319,19 @@ carried over, unchanged in substance):
 
 - Read this file + todo.md §0.5 handoff first every session; todo.md stays the handoff
   mechanism (§0.5 rewritten before stopping, in the last commit).
-- `cargo xtask ci` green before every commit; push right after; gitnexus `detect_changes`
-  (`--scope all`) before committing; `detect_changes --scope compare --base-ref main` before
-  qualifying the merge.
+- **Tiered test discipline (owner amendment: tests run when they matter, not every commit):**
+  - Per commit: `cargo fmt --check` + `cargo clippy -D warnings` restricted to touched
+    crates, plus the touched crates' own unit tests, plus `xtask layers` when crate edges
+    could have moved. Seconds to a couple of minutes — this is the commit gate.
+  - Milestone gate (before declaring a milestone done, and before any push of milestone-
+    boundary commits): the full `cargo xtask ci`, and only then is the milestone "done".
+  - Integration tests over the real-photo corpus (`FIRSTCUT_ALLOW_PHOTO_TESTS=1`) are
+    milestone-only on this machine by hand/agent choice — never part of the per-commit gate.
+  - Never skip a failing test: a failure is either diagnosed before the next commit, or the
+    milestone report names it with the reason. Push after every commit regardless — a red
+    fix follows as its own small commit.
+- GitNexus `detect_changes` (`--scope all`) before committing; `detect_changes --scope
+  compare --base-ref main` before qualifying the merge.
 - Real-photo tests stay opt-in (`FIRSTCUT_TEST_PHOTOS`, `FIRSTCUT_ALLOW_PHOTO_TESTS=1`);
   photos never enter the repo.
 - A task is not done until something asserts it; a performance number is not done until it is
