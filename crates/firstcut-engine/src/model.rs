@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use firstcut_batching::batch::BatchId;
+use firstcut_batching::batch::{Batch, BatchId};
 use firstcut_meta::meta::PhotoMeta;
 use firstcut_types::{ColorLabel, Flag, PhotoId, Rating, RatingMode, Tier};
 
-use crate::session::{Batch, Cursor, Session, SessionListener, SessionSnapshot};
+use crate::session::{Cursor, Session, SessionListener};
 
 /// What phase the app is in (app-model.md). The `loading` phase and its progress stream exist in
 /// v1 because the first-photo fast path can have a folder ratable before the scan finishes; M2
@@ -90,13 +90,7 @@ pub struct BatchVm {
 
 impl BatchVm {
     fn of(batch: &Batch, visited: bool) -> Self {
-        Self {
-            id: batch.id,
-            index: batch.index,
-            photo_ids: batch.photo_ids.clone(),
-            visited,
-            provisional: batch.provisional,
-        }
+        Self { id: batch.id, index: batch.index, photo_ids: batch.photo_ids.clone(), visited, provisional: batch.provisional }
     }
 
     pub fn count(&self) -> usize {
@@ -260,20 +254,23 @@ impl Model {
     /// model stays Welcome with `last_error` set (app-model.md); on success it drops the
     /// previous session and lands in Culling, seeded from the restored cursor and keep stars.
     pub fn open_folder(&mut self, folder: &Path) -> Result<(), String> {
-        let listener = SessionForwarder {
-            errors: self.pending_errors.clone(),
-            batches: self.pending_batches.clone(),
-        };
-        let session = Session::open(folder, Arc::new(listener)).map_err(|err| {
+        // The standard location (firstcut_catalog::sessions_dir) is inside; tests and `bench`
+        // need an isolated sessions directory, hence the `open_folder_in` seam.
+        let sessions = firstcut_catalog::sessions_dir().map_err(|err| err.to_string())?;
+        self.open_folder_in(folder, &sessions)
+    }
+
+    /// `open_folder` with the sessions directory chosen (tests, `bench --folder`).
+    pub fn open_folder_in(&mut self, folder: &Path, sessions_dir: &Path) -> Result<(), String> {
+        let listener = SessionForwarder { errors: self.pending_errors.clone(), batches: self.pending_batches.clone() };
+        let session = Session::open_in(folder, sessions_dir, Arc::new(listener)).map_err(|err| {
             self.last_error = Some(err.to_string());
             self.phase = Phase::Welcome;
             err.to_string()
         })?;
         self.settings.keep_stars = clamp_keep_stars(session.keep_stars());
         self.folder = Some(folder.to_path_buf());
-        self.folder_name = folder
-            .file_name()
-            .map_or_else(|| folder.to_string_lossy().to_string(), |name| name.to_string_lossy().to_string());
+        self.folder_name = folder.file_name().map_or_else(|| folder.to_string_lossy().to_string(), |name| name.to_string_lossy().to_string());
         self.load_session(session);
         self.drain_session_messages();
         Ok(())
@@ -282,39 +279,20 @@ impl Model {
     /// Seeds the model from a session (the split point `bench` also uses: scan → model).
     pub fn load_session(&mut self, session: Session) {
         let snapshot = session.snapshot();
-        self.photo_index = snapshot
-            .photos
-            .iter()
-            .enumerate()
-            .map(|(position, meta)| (meta.id, position))
-            .collect();
-        self.photos = snapshot
-            .photos
-            .into_iter()
-            .map(|meta| PhotoVm {
-                rating: snapshot.ratings.get(&meta.id.0).copied().unwrap_or_default(),
-                meta,
-            })
-            .collect();
-        self.batches = snapshot
-            .batches
-            .iter()
-            .map(|batch| BatchVm::of(batch, snapshot.visited.contains(&batch.id.0)))
-            .collect();
+        self.photo_index = snapshot.photos.iter().enumerate().map(|(position, meta)| (meta.id, position)).collect();
+        self.photos =
+            snapshot.photos.into_iter().map(|meta| PhotoVm { rating: snapshot.ratings.get(&meta.id.0).copied().unwrap_or_default(), meta }).collect();
+        self.batches = snapshot.batches.iter().map(|batch| BatchVm::of(batch, snapshot.visited.contains(&batch.id.0))).collect();
         self.current_batch_index = 0;
         self.current_photo_index = 0;
         // Restore the cursor the database kept: the batch it points into, if re-batching has not
         // eaten it, and the photo it pointed at within that batch.
-        if let Some(cursor) = snapshot.cursor {
-            if let Some(position) = self.batches.iter().position(|b| b.id == cursor.batch) {
-                self.current_batch_index = position;
-                if let Some(within) = self
-                    .batches
-                    .get(position)
-                    .and_then(|batch| batch_position_of(batch, cursor.photo))
-                {
-                    self.current_photo_index = within;
-                }
+        if let Some(cursor) = snapshot.cursor
+            && let Some(position) = self.batches.iter().position(|b| b.id == cursor.batch)
+        {
+            self.current_batch_index = position;
+            if let Some(within) = self.batches.get(position).and_then(|batch| batch_position_of(batch, cursor.photo)) {
+                self.current_photo_index = within;
             }
         }
         self.session = Some(session);
@@ -346,9 +324,7 @@ impl Model {
             if by > 0 && self.move_batch_selecting(1, Selecting::First) {
                 return;
             }
-            if by < 0 && self.move_batch_selecting(-1, Selecting::Last) {
-                return;
-            }
+            if by < 0 && self.move_batch_selecting(-1, Selecting::Last) {}
         }
     }
 
@@ -425,13 +401,7 @@ impl Model {
 
     fn position_of_last_viewed(&self, batch: &BatchVm) -> usize {
         let Some(session) = self.session.as_ref() else { return 0 };
-        let Some(photo) = session
-            .snapshot()
-            .last_photo_in_batch
-            .get(&batch.id.0)
-            .copied()
-            .and_then(|id| self.photo(PhotoId(id)))
-        else {
+        let Some(photo) = session.snapshot().last_photo_in_batch.get(&batch.id.0).copied().and_then(|id| self.photo(PhotoId(id))) else {
             return 0;
         };
         batch_position_of(batch, photo.meta.id).unwrap_or(0)
@@ -475,10 +445,10 @@ impl Model {
         }
         // The session owns persistence; a writer failure surfaces as `last_error`, the local
         // rating still moves — the same listener backstop v1 had.
-        if let Some(session) = self.session.as_ref() {
-            if let Err(err) = session.set_rating(photo_id, updated) {
-                self.last_error = Some(err.to_string());
-            }
+        if let Some(session) = self.session.as_ref()
+            && let Err(err) = session.set_rating(photo_id, updated)
+        {
+            self.last_error = Some(err.to_string());
         }
         self.apply_rating_locally(photo_id, updated);
         if advance_after && self.auto_advance() {
@@ -489,7 +459,9 @@ impl Model {
 
     /// A change that is already persisted gets only mirrored locally (undo, reject batch).
     fn apply_rating_locally(&mut self, photo_id: PhotoId, rating: Rating) {
-        if let Some(photo) = self.photos.get_mut(*self.photo_index.get(&photo_id)? as usize) {
+        if let Some(position) = self.photo_index.get(&photo_id)
+            && let Some(photo) = self.photos.get_mut(*position)
+        {
             photo.rating = rating;
         }
     }
@@ -517,14 +489,19 @@ impl Model {
         }
     }
 
+    pub fn set_arrow_behavior(&mut self, behavior: ArrowBehavior) {
+        self.settings.arrow_behavior = behavior;
+    }
+
+    pub fn set_entering_behavior(&mut self, behavior: EnteringBatchBehavior) {
+        self.settings.entering_behavior = behavior;
+    }
+
     // ---- rating primitives (the one place a field changes) ---------------------------------
 
     pub fn rate_stars(&mut self, stars: u8) -> Option<Rating> {
         let stars = stars.min(5);
-        self.rate_current(|rating| Rating {
-            stars,
-            ..rating
-        })
+        self.rate_current(|rating| Rating { stars, ..rating })
     }
 
     pub fn rate_stars_and_advance(&mut self, stars: u8) -> Option<Rating> {
@@ -540,10 +517,7 @@ impl Model {
     }
 
     pub fn toggle_pick_flag(&mut self) -> Option<Rating> {
-        self.rate_current(|rating| Rating {
-            flag: if rating.flag == Flag::Pick { Flag::None } else { Flag::Pick },
-            ..rating
-        })
+        self.rate_current(|rating| Rating { flag: if rating.flag == Flag::Pick { Flag::None } else { Flag::Pick }, ..rating })
     }
 
     pub fn set_keep(&mut self) -> Option<Rating> {
@@ -557,17 +531,11 @@ impl Model {
     }
 
     pub fn toggle_keep(&mut self) -> Option<Rating> {
-        self.rate_current(|rating| Rating {
-            keep: !rating.keep,
-            ..rating
-        })
+        self.rate_current(|rating| Rating { keep: !rating.keep, ..rating })
     }
 
     pub fn reject_flag(&mut self) -> Option<Rating> {
-        self.rate_current(|rating| Rating {
-            flag: Flag::Reject,
-            ..rating
-        })
+        self.rate_current(|rating| Rating { flag: Flag::Reject, ..rating })
     }
 
     pub fn unflag(&mut self) -> Option<Rating> {
@@ -575,10 +543,7 @@ impl Model {
     }
 
     pub fn toggle_flag(&mut self) -> Option<Rating> {
-        self.rate_current(|rating| Rating {
-            flag: if rating.flag == Flag::None { Flag::Pick } else { Flag::None },
-            ..rating
-        })
+        self.rate_current(|rating| Rating { flag: if rating.flag == Flag::None { Flag::Pick } else { Flag::None }, ..rating })
     }
 
     pub fn set_label(&mut self, label: Option<ColorLabel>) -> Option<Rating> {
@@ -599,7 +564,7 @@ impl Model {
             .iter()
             .filter_map(|id| self.photo(*id).map(|photo| (*id, photo.rating)))
             .map(|(id, rating)| (id, Rating { flag: Flag::Reject, ..rating }))
-            .filter(|(id, updated)| self.photo(*id).map_or(false, |photo| photo.rating != *updated))
+            .filter(|(id, updated)| self.photo(*id).is_some_and(|photo| photo.rating != *updated))
             .collect();
         if !updates.is_empty() {
             // `set_ratings` records the batch as one undo step (session-api.md).
@@ -640,10 +605,10 @@ impl Model {
         }
         for change in &changes {
             self.navigate_to(change.photo, change.batch);
-            self.apply_rating_locally(change.photo, match side {
-                UndoSide::Before => change.before,
-                UndoSide::After => change.after,
-            });
+            // `apply_history_entry` already wrote the restored value to the database: whatever
+            // was found rides `before`, the restored value rides `after`, for BOTH undo and redo
+            // (session.rs documents the pairing). Mirror the restored value.
+            self.apply_rating_locally(change.photo, change.after);
         }
         true
     }
@@ -677,18 +642,18 @@ impl Model {
             }
             errors.clear();
         }
-        let fresh: Vec<Vec<Batch>> = self
-            .pending_batches
-            .lock()
-            .map(|mut queue| queue.drain(..).flatten().collect())
-            .unwrap_or_default();
-        let Some(latest) = fresh.last() else { return };
+        let latest: Vec<Batch> = self.pending_batches.lock().map(|mut queue| queue.drain(..).next_back().unwrap_or_default()).unwrap_or_default();
+        if latest.is_empty() {
+            // No re-batch pending: the model's batches are already the real ones, and draining
+            // them with an empty list must not blank them out.
+            return;
+        }
         // The latest re-batch is authoritative; visited is per-batch and a batch the user was in
         // is frozen (only unvisited ones can differ).
         self.batches = latest
             .iter()
             .map(|batch| {
-                let visited = self.batches.iter().find(|old| old.id == batch.id).map_or(false, |old| old.visited);
+                let visited = self.batches.iter().find(|old| old.id == batch.id).is_some_and(|old| old.visited);
                 BatchVm::of(batch, visited)
             })
             .collect();
@@ -697,10 +662,7 @@ impl Model {
             Some(photo) => {
                 let position = self.batches.iter().position(|batch| batch.photo_ids.contains(&photo));
                 self.current_batch_index = position.unwrap_or(0);
-                self.current_photo_index = position
-                    .and_then(|p| self.batches.get(p))
-                    .and_then(|batch| batch_position_of(batch, photo))
-                    .unwrap_or(0);
+                self.current_photo_index = position.and_then(|p| self.batches.get(p)).and_then(|batch| batch_position_of(batch, photo)).unwrap_or(0);
                 if position.is_none() {
                     self.current_photo_index = 0;
                 }
