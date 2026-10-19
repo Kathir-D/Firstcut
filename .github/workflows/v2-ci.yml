@@ -1,0 +1,63 @@
+# v2 — the pure-Rust rewrite CI (docs/v2-plan.md §6, M0).
+#
+# Three-OS matrix calling `cargo xtask ci`, plus `cargo xtask smoke`: this
+# matrix is where cross-OS native window creation is actually proven.
+# The v1 Swift/Rust CI (ci.yml) keeps running while `core/` and the old app tree
+# still exist; it is removed on this branch in the same commit as the v1 tree.
+
+name: v2-ci
+
+on:
+  push:
+    branches: [v2]
+    paths: &touched
+      - .github/workflows/v2-ci.yml
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - rustfmt.toml
+      - clippy.toml
+      - .cargo/**
+      - crates/**
+      - apps/**
+      - xtask/**
+      - assets/**
+  pull_request:
+    branches: [main]
+    paths: *touched
+
+concurrency:
+  group: v2-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+          - os: windows-latest
+          - os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: install Rust toolchain (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+      - name: Linux — display and Vulkan for the window smoke test
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libxkbcommon-x11-0 libwayland-client0 libvulkan1 mesa-vulkan-drivers
+      - name: cargo xtask ci
+        run: cargo xtask ci --summary-md
+      - name: cargo xtask smoke (window opens, paints, exits 0)
+        run: cargo xtask smoke
