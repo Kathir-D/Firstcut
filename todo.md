@@ -257,13 +257,22 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - **Parity checklist landed (`e2049b5`):** `docs/parity-checklist.md` mirrors §7 row by
 >   row with honest status (✔ rows carry the test names; unmoved rows carry their
 >   milestone). The merge gate reads this file, not the plan.
-> - **Still ahead in the M1 slice (docs/v2-plan.md §6):** the **opt-in real-photo tests**
->   (`FIRSTCUT_TEST_PHOTOS` + `FIRSTCUT_ALLOW_PHOTO_TESTS=1` over the owner's corpus),
->   README screenshots via agent-driven showcase scripts, then the **milestone gate**:
->   `cargo xtask ci` (+ summary), full matrix green on the tip, update PR #6's body.
->   Watch note: the snapshot PNGs were rendered by Metal here and are already proven
->   green on all three OSes (the `34ff0ad` run); later pushes while a run is in flight
->   CANCEL the earlier run — batch pushes or rewatch after.
+> - **Opt-in real-photo tests passed** (`scripts/test-with-photos.sh` over `~/Documents/testing`):
+>   475 passed, 0 failed — the +17 over the synthetic-only run are the owner's corpus tests.
+> - **Showcase leg landed (`95732f2`+`150439a`):** `docs/showcase/m1-screenshot.sh` drives the
+>   real app (scratch HOME, `--control <port>`) and saves ONE screenshot of the open shoot to
+>   `docs/showcase/out/` (gitignored — the pixels are the owner's photos, never repo content).
+>   First real-CR3 run caught a **crash**: a 6000×4000 preview hit egui's max-texture-side
+>   assert and killed the frame — fixed in `95732f2` (`fit_to_max_side`, one uniform stride,
+>   3 regression tests in `crates/firstcut-ui/src/cull.rs::tests`). Second finding, recorded
+>   in the parity checklist row 17: decoded pixels ignore EXIF orientation (sideways loupe) —
+>   M2's decode tiers own the rotate.
+> - **Still ahead in the M1 slice (docs/v2-plan.md §6):** the README image itself (run the
+>   showcase script and reference the PNG — needs the owner's word on the pixels), then the
+>   **milestone gate**: `cargo xtask ci` (+ summary), the full matrix green on the TIP of v2
+>   (run 39463717709 on `8d81293` was green; the two commits after it need their own final
+>   green), and update PR #6's body. Watch note: pushing while a run is in flight CANCELS
+>   the earlier run — batch pushes or rewatch after.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).

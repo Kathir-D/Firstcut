@@ -27,7 +27,7 @@ Rows, in §7's order:
 | 14 | Rename reconciliation; sidecar import rules | — M4 (fileops carries the rules) | Rules from v1 `fileops` ported; no screen uses them yet |
 | 15 | Reject Whole Batch (opt-in, off by default) | part | model rejects a batch (`batch.reject` in the registry) — the full flow (dialog, undo grouping) is M3 |
 | 16 | Embedded-JPEG fallback for RAW the backend cannot decode | ✔ | `firstcut-decode`'s `decode_display`; a JPEG photo displays from the file itself (`a_jpeg_photo_displays_from_the_file_itself`, `firstcut-meta`) |
-| 17 | Every format raw.pixls.us lists opens (metadata side unchanged; decode per §4.2) | — M2 | metadata-only parity is the existing `firstcut-meta` readers (CR3/CRW/MRW/X3FWarning/RAF/TIFF) — real-file sweep lands with Exact RAW |
+| 17 | Every format raw.pixls.us lists opens (metadata side unchanged; decode per §4.2) | — M2 | metadata-only parity is the existing `firstcut-meta` readers (CR3/CRW/MRW/X3FWarning/RAF/TIFF) — real-file sweep lands with Exact RAW. **Found in the M1 showcase run** (`docs/showcase/m1-screenshot.sh`, Game1JENKS): decoded pixels ignore EXIF orientation — loupe shows the frame sideways; the rotate belongs to the M2 decode-tier work (row 8's histogram expects it too) |
 | 18 | §5 rows measured | — M2+ | `bench` exists for order/batch; decode rows come with M2 |
 | 19 | Owner items (carried from todo §0.2): boundary ground truth, Exact RAW default, Game1JENKS pause decision, sidecar round-trip check, visual sign-off, Homebrew secret, tag v2.0.0 | **owner** | unchanged, do not synthesise; see todo.md |
 
