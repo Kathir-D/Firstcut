@@ -267,12 +267,12 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   3 regression tests in `crates/firstcut-ui/src/cull.rs::tests`). Second finding, recorded
 >   in the parity checklist row 17: decoded pixels ignore EXIF orientation (sideways loupe) —
 >   M2's decode tiers own the rotate.
-> - **Still ahead in the M1 slice (docs/v2-plan.md §6):** the README image itself (run the
->   showcase script and reference the PNG — needs the owner's word on the pixels), then the
->   **milestone gate**: `cargo xtask ci` (+ summary), the full matrix green on the TIP of v2
->   (run 39463717709 on `8d81293` was green; the two commits after it need their own final
->   green), and update PR #6's body. Watch note: pushing while a run is in flight CANCELS
->   the earlier run — batch pushes or rewatch after.
+> - **Milestone gate status (2026-10-20):** `cargo xtask ci` → **pass** (target/ci/report.json +
+>   summary.md), and the matrix is **green on the tip** (run 39465662543 through `86a4c4b`).
+>   PR #6's body describes the M1 status; the only owner-owned remainder in M1 is the README
+>   image itself (run `docs/showcase/m1-screenshot.sh` on an approved shoot — the pixels are
+>   the owner's call). M2 next: decode priority window, cancellation, Exact RAW, memory
+>   budget, watcher + histogram (which carries the EXIF-orientation rotate), bench rows.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).
