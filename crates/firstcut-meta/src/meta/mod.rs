@@ -636,7 +636,7 @@ struct Walk {
 /// `O(d · n log n)` over the depth of the tree; the one sort happens here instead.
 fn walk_folder(root: &Path) -> Result<Walk, ScanError> {
     let mut walk = Walk::default();
-    collect(root, root, &mut walk)?;
+    collect(root, "", &mut walk)?;
     walk.candidates.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     Ok(walk)
 }
@@ -653,14 +653,19 @@ struct Candidate {
     ino: i64,
 }
 
-/// A path relative to the scan root, with `/` between components.
+/// A path relative to the scan root, with `/` between components — **so a `PhotoId` is the same
+/// photo on every platform** (a session synchronized or a folder moved between machines must
+/// re-match its rows).
 ///
-/// `strip_prefix` already produces the platform separator, so nothing is rewritten here. It used to
-/// be rewritten from `\` to `/`, which is wrong: `\` is a legal character in a macOS file name, so
-/// `a\b.JPG` became `a/b.JPG`, collided with a real `a/b.JPG` — same group key, same `PhotoId`, and
-/// two rows for one photo in `photos`.
-fn relative_to(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned()
+/// The walk does not build this with `strip_prefix`: that yields the platform separator, and a
+/// Windows file would get `card2\IMG_0002.CR3`, splitting its identity from the same folder read
+/// on a mac. Nor is it escaped on output: `\` is a legal character in a macOS *file name*, and
+/// rewriting it would merge `a\b.JPG` (a root file) with `a/b.JPG` (a file in the folder `a`) —
+/// same group key, same `PhotoId`, two rows for one photo. The distinction survives because the
+/// `/` in a `rel_path` only ever comes from the walk descending into a directory, never from a
+/// rewritten backslash inside a name.
+fn relative_of(dir_rel: &str, name: &str) -> String {
+    if dir_rel.is_empty() { name.to_string() } else { format!("{dir_rel}/{name}") }
 }
 
 fn mtime_ms_of(metadata: &std::fs::Metadata) -> Option<i64> {
@@ -669,14 +674,14 @@ fn mtime_ms_of(metadata: &std::fs::Metadata) -> Option<i64> {
     Some(since.as_millis() as i64)
 }
 
-fn collect(root: &Path, dir: &Path, walk: &mut Walk) -> Result<(), ScanError> {
+fn collect(dir: &Path, dir_rel: &str, walk: &mut Walk) -> Result<(), ScanError> {
     let entries = std::fs::read_dir(dir).map_err(|source| ScanError::Io { path: dir.to_path_buf(), source })?;
     for entry in entries {
         // One entry the file system will not describe is not the end of the scan. This `?` used to
         // propagate a per-entry `io::Error` out as a fatal `ScanError::Io`, discarding every
         // photograph the walk had already collected.
         let Ok(entry) = entry else {
-            walk.skipped.push(Skipped { rel_path: relative_to(root, dir), reason: "the folder listed an entry it would not describe".to_string() });
+            walk.skipped.push(Skipped { rel_path: dir_rel.to_string(), reason: "the folder listed an entry it would not describe".to_string() });
             continue;
         };
         let name = entry.file_name();
@@ -686,7 +691,7 @@ fn collect(root: &Path, dir: &Path, walk: &mut Walk) -> Result<(), ScanError> {
             continue;
         }
         let path = entry.path();
-        let rel = relative_to(root, &path);
+        let rel = relative_of(dir_rel, &name);
         // The lstat, because the directory decision has to be made about the *link*: a symlinked
         // folder must not send the walk back into the tree it is already in.
         let lstat = match entry.metadata() {
@@ -705,8 +710,8 @@ fn collect(root: &Path, dir: &Path, walk: &mut Walk) -> Result<(), ScanError> {
             }
             // A folder that cannot be opened costs its own photos, not the whole shoot's: the walk
             // carries on with the next entry, and the folder is reported.
-            if let Err(err) = collect(root, &path, walk) {
-                walk.skipped.push(Skipped { rel_path: relative_to(root, &path), reason: format!("cannot read this folder: {err}") });
+            if let Err(err) = collect(&path, &rel, walk) {
+                walk.skipped.push(Skipped { rel_path: rel, reason: format!("cannot read this folder: {err}") });
             }
             continue;
         }
@@ -1439,6 +1444,24 @@ mod tests {
         let names: Vec<&str> = result.skipped.iter().map(|s| s.rel_path.as_str()).collect();
         assert_eq!(names, ["IMG_0001.CR3", "card2/IMG_0002.CR3"]);
         assert!(names.iter().all(|name| !name.contains('\\')), "paths are '/' separated so a PhotoId is the same on every platform");
+    }
+
+    #[test]
+    #[cfg(unix)] // `\` is a separator on Windows (where such a name cannot exist) — this tests mac/linux
+    fn a_backslash_in_a_file_name_is_not_a_folder_separator() {
+        // macOS file names may legally contain `\`, and rewriting it to `/` merged such a file
+        // with `a/b.JPG` in the folder `a`: same group key, same PhotoId, two rows for one photo.
+        // The walk builds the separators itself, so a `\` stays a literal in a file's name.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a\\b.JPG"), b"junk").unwrap();
+        let folder = dir.path().join("a");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("b.JPG"), b"junk").unwrap();
+        let result = scan_folder(dir.path()).expect("a scan");
+        let mut names: Vec<&str> =
+            result.photos.iter().map(|p| p.rel_path.as_str()).chain(result.skipped.iter().map(|s| s.rel_path.as_str())).collect();
+        names.sort();
+        assert_eq!(names, ["a/b.JPG", "a\\b.JPG"]);
     }
 
     #[test]
