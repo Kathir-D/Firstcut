@@ -256,7 +256,13 @@ impl Model {
     pub fn open_folder(&mut self, folder: &Path) -> Result<(), String> {
         // The standard location (firstcut_catalog::sessions_dir) is inside; tests and `bench`
         // need an isolated sessions directory, hence the `open_folder_in` seam.
-        let sessions = firstcut_catalog::sessions_dir().map_err(|err| err.to_string())?;
+        let sessions = firstcut_catalog::sessions_dir().map_err(|err| {
+            // A failed open reports the same way no matter which leg failed: the phase stays
+            // welcome and `last_error` is set (app-model.md). A `HOME` that is gone is just as
+            // much "the folder did not open" as a missing shoot folder is.
+            self.last_error = Some(err.to_string());
+            err.to_string()
+        })?;
         self.open_folder_in(folder, &sessions)
     }
 

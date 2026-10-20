@@ -279,8 +279,12 @@ fn arrows_can_stop_at_batch_edges_when_the_setting_says_so() {
 fn opening_a_missing_folder_reports_and_stays_welcome() {
     let fixtures = Shoot::with_bursts();
     let mut model = Model::new();
-    let error =
-        dispatch(&mut model, "file.open", &json!({ "path": fixtures.missing_path_str() })).expect_err("a folder that does not exist cannot open");
+    let error = dispatch(
+        &mut model,
+        "file.open",
+        &json!({ "path": fixtures.missing_path_str(), "sessionDir": fixtures.sessions.path().to_string_lossy().to_string() }),
+    )
+    .expect_err("a folder that does not exist cannot open");
     assert!(!error.is_empty(), "the failure has a message for the window");
     let state = dispatch(&mut model, "engine.state", &json!({})).unwrap();
     assert_eq!(state.get("phase"), Some(&json!("welcome")), "the model stayed welcome");
