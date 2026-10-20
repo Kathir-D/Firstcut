@@ -229,11 +229,26 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   numbers, `true`/`false` to bools, raw JSON accepted; `--sessions` injects `file.open`'s
 >   `sessionDir` (the tests' isolation pattern); `run help` prints the registry. End-to-end test
 >   opens a synthetic CR3 shoot, rates, reads the state back through the same dispatch.
+> - **kittest snapshot leg landed (`c8ab3ad`):** `apps/firstcut/tests/culling_ui.rs` drives the
+>   real screen headless (`egui_kittest` wgpu+snapshot): a synthetic-CR3 shoot opened for real,
+>   test-minted pixels, `key_press` through the harness, a11y check on, two committed PNGs under
+>   `apps/firstcut/tests/snapshots/` (baseline generated with `UPDATE_SNAPSHOTS=1`). First lesson:
+>   egui's bundled fonts have NO U+2605, and a missing glyph panics the frame — the strip's star
+>   readout is ASCII (`*`/`·`) until the theme-assets leg. Second lesson: clippy's
+>   `allow-*-in-tests` config does not reach helpers outside `#[test]` fns in a `tests/` target —
+>   the file carries a scoped allow instead.
+> - **MCP leg landed (`34ff0ad`):** `firstcut-cli mcp` — minimal JSON-RPC 2.0 on ndjson stdio:
+>   `initialize` (echoes the client's protocolVersion), `ping`, `tools/list` generated from
+>   `REGISTRY` (ids dot-free-named `firstcut_<dots_as_underscores>`, input schemas read off the
+>   declared params, raw dotted-name calls also accepted), `tools/call` → the one `dispatch`.
+>   Results as `{content:[{type:text,text:…}], isError}`. Live-checked with a piped session
+>   (open → rate → state). `--connect host:port` (control-channel bridge) is a later leg.
 > - **Still ahead in the M1 slice (docs/v2-plan.md §6):** the **control channel** (`firstcut
->   --control <port>`, docs/control-protocol.md), **MCP** (`firstcut-cli mcp`, docs/mcp.md),
->   the **egui_kittest headless UI snapshot** leg, `docs/parity-checklist.md`, README screenshots
->   via agent-driven showcase scripts, then the **milestone gate** (`cargo xtask ci`, matrix green)
->   and the M1 report.
+>   --control <port>`, `engine.execute`/`engine.commands`/`engine.state`/`ui.*`, documented at
+>   the docs leg), `docs/parity-checklist.md`, README screenshots via agent-driven showcase
+>   scripts, opt-in real-photo tests, then the **milestone gate** (`cargo xtask ci`, matrix
+>   green) and the M1 report. Watch: the snapshot PNGs were rendered by Metal on this mac — if
+>   windows/CI renders differ pixelwise, add a `kittest.toml` diff tolerance.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).
