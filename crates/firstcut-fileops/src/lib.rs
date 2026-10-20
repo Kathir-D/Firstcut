@@ -2054,8 +2054,14 @@ mod tests {
     #[test]
     fn free_space_is_readable_for_a_real_folder() {
         let shoot = Shoot::new();
-        let available = free_space(shoot.path()).expect("a real folder has free space");
-        assert!(available > 0);
+        let available = free_space(shoot.path());
+        if cfg!(windows) {
+            // M5 brings a real implementation; "cannot be checked" is the documented answer
+            // there, and the plan skips the space warning rather than failing (see `free_space`).
+            assert_eq!(available, None);
+        } else {
+            assert!(available.is_some_and(|bytes| bytes > 0), "a real folder has free space");
+        }
     }
 
     #[test]
