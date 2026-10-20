@@ -44,7 +44,7 @@ pub enum EnteringBatchBehavior {
 
 /// The General half of v1's settings the model reads. Defaults are v1's (SettingsModel.swift).
 /// Persistence lands with the settings store (§4.3); the model only holds what was set.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GeneralSettings {
     pub rating_mode: RatingMode,
     pub auto_advance: bool,
@@ -129,6 +129,9 @@ pub struct Model {
     pending_errors: Arc<Mutex<Vec<String>>>,
     /// Re-batches the settle pass pushed while the dispatch loop was not looking.
     pending_batches: Arc<Mutex<Vec<Vec<Batch>>>>,
+    /// Present only when a surface asked for persistence; the model then seeds its General
+    /// settings from the loaded file and writes back on every general setter.
+    settings_store: Option<crate::settings::SettingsStore>,
 }
 
 impl Model {
@@ -148,6 +151,19 @@ impl Model {
             last_error: None,
             pending_errors: Arc::new(Mutex::new(Vec::new())),
             pending_batches: Arc::new(Mutex::new(Vec::new())),
+            settings_store: None,
+        }
+    }
+
+    /// Hands the model a settings store (v1's `AppModel` construction order: load, then seed the
+    /// General half from the file). A session already open — the UI's open-then-attach order —
+    /// gets its keep stars re-synced the way `set_keep_stars` does it.
+    pub fn attach_settings_store(&mut self, store: crate::settings::SettingsStore) {
+        let general = store.general();
+        self.settings = general;
+        self.settings_store = Some(store);
+        if let Some(session) = self.session.as_ref() {
+            session.set_keep_stars(self.settings.keep_stars);
         }
     }
 
@@ -476,13 +492,17 @@ impl Model {
     /// consistent, and the visible tier is derived at read time (todo.md §6).
     pub fn set_rating_mode(&mut self, mode: RatingMode) {
         self.settings.rating_mode = mode;
+        self.persist_settings();
     }
 
     pub fn set_auto_advance(&mut self, on: bool) {
         self.settings.auto_advance = on;
         self.auto_advance_override = None;
+        self.persist_settings();
     }
 
+    /// Caps-Lock's session-scoped override: deliberately NOT persisted (v1's behaviour — it is
+    /// the session's say, not the app's).
     pub fn toggle_auto_advance(&mut self) {
         self.auto_advance_override = Some(!self.auto_advance());
     }
@@ -493,14 +513,28 @@ impl Model {
         if let Some(session) = self.session.as_ref() {
             session.set_keep_stars(self.settings.keep_stars);
         }
+        self.persist_settings();
     }
 
     pub fn set_arrow_behavior(&mut self, behavior: ArrowBehavior) {
         self.settings.arrow_behavior = behavior;
+        self.persist_settings();
     }
 
     pub fn set_entering_behavior(&mut self, behavior: EnteringBatchBehavior) {
         self.settings.entering_behavior = behavior;
+        self.persist_settings();
+    }
+
+    /// Writes the general half back through the attached store, when a surface gave the model
+    /// one. Failures land in `last_error` like every other side effect the window shows; without
+    /// a store (tests, `bench`) persistence is a no-op.
+    fn persist_settings(&mut self) {
+        if let Some(store) = self.settings_store.as_mut()
+            && let Err(err) = store.set_general_from(self.settings)
+        {
+            self.last_error = Some(err.to_string());
+        }
     }
 
     // ---- rating primitives (the one place a field changes) ---------------------------------

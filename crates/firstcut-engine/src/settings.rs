@@ -23,7 +23,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use firstcut_types::{ColorLabel, RatingMode};
+use firstcut_types::RatingMode;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value as Json};
 
@@ -158,28 +158,6 @@ pub enum ColorLabelJson {
     Purple,
 }
 
-impl ColorLabelJson {
-    fn of(label: ColorLabel) -> Self {
-        match label {
-            ColorLabel::Red => Self::Red,
-            ColorLabel::Yellow => Self::Yellow,
-            ColorLabel::Green => Self::Green,
-            ColorLabel::Blue => Self::Blue,
-            ColorLabel::Purple => Self::Purple,
-        }
-    }
-
-    fn label(self) -> ColorLabel {
-        match self {
-            Self::Red => ColorLabel::Red,
-            Self::Yellow => ColorLabel::Yellow,
-            Self::Green => ColorLabel::Green,
-            Self::Blue => ColorLabel::Blue,
-            Self::Purple => ColorLabel::Purple,
-        }
-    }
-}
-
 /// What a keep is written as in XMP (v1 `KeepMapping`): a rating or a colour label, as the
 /// two-word shape `{"type": "rating", "stars": n}` / `{"type": "colorLabel", "label": "red"}`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,9 +183,10 @@ fn default_mapping_label() -> ColorLabelJson {
     ColorLabelJson::Red
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum XmpWriteModeJson {
+    #[default]
     Merge,
     Overwrite,
 }
@@ -418,12 +397,8 @@ impl UnkeptActionJson {
     }
 
     fn from_case(name: &str, value: &Json) -> Result<Self, String> {
-        let payload = |case: &Json| -> Result<String, String> {
-            case
-                .as_object()
-                .and_then(|fields| fields.get("_0"))
-                .and_then(Json::as_str)
-                .map(|path| path.to_string())
+        let payload = |case: &Json| -> Option<String> {
+            case.as_object().and_then(|fields| fields.get("_0")).and_then(Json::as_str).map(|path| path.to_string())
         };
         match name {
             "markRejectedInXmp" | "moveToTrash" | "deletePermanently" | "nothing" if value.as_object().is_some() => match name {
@@ -457,7 +432,7 @@ impl Serialize for UnkeptActionJson {
 
 impl<'de> Deserialize<'de> for UnkeptActionJson {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserialize_keyed_case(deserializer, "unkept action", |name, value| UnkeptActionJson::from_case(name, value).map_err(serde::de::Error::custom))
+        deserialize_keyed_case(deserializer, "unkept action", UnkeptActionJson::from_case)
     }
 }
 
@@ -485,12 +460,8 @@ impl KeptActionJson {
     }
 
     fn from_case(name: &str, value: &Json) -> Result<Self, String> {
-        let payload = |case: &Json| -> Result<String, String> {
-            case
-                .as_object()
-                .and_then(|fields| fields.get("_0"))
-                .and_then(Json::as_str)
-                .map(|path| path.to_string())
+        let payload = |case: &Json| -> Option<String> {
+            case.as_object().and_then(|fields| fields.get("_0")).and_then(Json::as_str).map(|path| path.to_string())
         };
         match name {
             "none" if value.as_object().is_some() => Ok(Self::Nothing),
@@ -523,7 +494,7 @@ impl Serialize for KeptActionJson {
 
 impl<'de> Deserialize<'de> for KeptActionJson {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserialize_keyed_case(deserializer, "kept action", |name, value| KeptActionJson::from_case(name, value).map_err(serde::de::Error::custom))
+        deserialize_keyed_case(deserializer, "kept action", KeptActionJson::from_case)
     }
 }
 
@@ -532,7 +503,7 @@ impl<'de> Deserialize<'de> for KeptActionJson {
 fn deserialize_keyed_case<'de, D: Deserializer<'de>, T>(
     deserializer: D,
     what: &'static str,
-    from_case: impl Fn(&str, &Json) -> Result<T, serde::de::Error>,
+    from_case: impl Fn(&str, &Json) -> Result<T, String>,
 ) -> Result<T, D::Error> {
     let value = Json::deserialize(deserializer)?;
     let case = value.as_object().ok_or_else(|| serde::de::Error::custom(format!("{what} must be a keyed object")))?;
@@ -543,11 +514,7 @@ fn deserialize_keyed_case<'de, D: Deserializer<'de>, T>(
     if entries.next().is_some() {
         return Err(serde::de::Error::custom(format!("{what} names more than one case")));
     }
-    from_case(name, payload)
-}
-
-fn serde_message(message: &str) -> String {
-    message.to_string()
+    from_case(name, payload).map_err(serde::de::Error::custom)
 }
 
 // ── translation into what the model reads ───────────────────────────────────
@@ -600,10 +567,7 @@ impl AppSettingsJson {
     /// The sidecar switches as the session takes them. (v1's `XMPWriteMode`, `KeepMapping`,
     /// and `writeRatingsIntoDng` reach the writer through later plumbing.)
     pub fn session_xmp(&self) -> crate::session::XmpSettings {
-        crate::session::XmpSettings {
-            write_sidecars: self.metadata.write_xmp,
-            sidecars_for_non_raw: self.metadata.write_sidecars_for_jpegs,
-        }
+        crate::session::XmpSettings { write_sidecars: self.metadata.write_xmp, sidecars_for_non_raw: self.metadata.write_sidecars_for_jpegs }
     }
 }
 
@@ -643,10 +607,7 @@ impl SettingsStore {
     /// Reads `path`, falling back to defaults the way v1's `try?` did: an unreadable file is a
     /// fresh `AppSettings()`, whoever's fault the unreadability is.
     pub fn at(path: &Path) -> Self {
-        let current = std::fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<AppSettingsJson>(&bytes).ok())
-            .unwrap_or_else(AppSettingsJson::default);
+        let current = std::fs::read(path).ok().and_then(|bytes| serde_json::from_slice::<AppSettingsJson>(&bytes).ok()).unwrap_or_default();
         Self { path: path.to_path_buf(), current }
     }
 
@@ -678,15 +639,10 @@ impl SettingsStore {
             .parent()
             .ok_or_else(|| io_message("settings: no directory to write in"))
             .map_err(|source| SettingsError::Write { path: path_string.clone(), source })?;
-        let temporary = tempfile::Builder::new()
-            .tempfile_in(directory)
-            .map_err(|source| SettingsError::Write { path: path_string.clone(), source })?;
-        (&temporary)
-            .write_all(&bytes)
-            .map_err(|source| SettingsError::Write { path: path_string.clone(), source })?;
-        temporary
-            .persist(&self.path)
-            .map_err(|error| SettingsError::Write { path: path_string, source: error.error })
+        let temporary =
+            tempfile::Builder::new().tempfile_in(directory).map_err(|source| SettingsError::Write { path: path_string.clone(), source })?;
+        (&temporary).write_all(&bytes).map_err(|source| SettingsError::Write { path: path_string.clone(), source })?;
+        temporary.persist(&self.path).map(|_| ()).map_err(|error| SettingsError::Write { path: path_string, source: error.error })
     }
 }
 
@@ -700,21 +656,26 @@ fn io_message(message: &'static str) -> std::io::Error {
 mod tests {
     use super::*;
 
-    fn store_with(json: &str) -> SettingsStore {
-        let file = tempfile::tempdir().unwrap().path().join("settings.json");
+    /// A settings file inside a live temp directory. The guard must outlive the store: dropping
+    /// it deletes the directory the file lives in.
+    fn store_with(json: &str) -> (tempfile::TempDir, SettingsStore) {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("settings.json");
         std::fs::write(&file, json).unwrap();
-        SettingsStore::at(&file)
+        let store = SettingsStore::at(&file);
+        (directory, store)
     }
 
+    /// The compact spelling, exactly what the substring assertions pin.
     fn dump(store: &SettingsStore) -> String {
-        serde_json::to_string_pretty(&store.current).unwrap()
+        serde_json::to_string(store.current()).unwrap()
     }
 
     #[test]
     fn an_old_file_still_reads_every_setting_it_names() {
         // A file written before, say, `confirmPermanentDelete` existed. What it says it keeps;
         // the rest is v1's defaults — never a bulk reset of General.
-        let store = store_with("{\n  \"general\" : {\"ratingMode\" : \"keep\", \"keepThreshold\" : 5}\n}");
+        let (_guard, store) = store_with("{\n  \"general\" : {\"ratingMode\" : \"keep\", \"keepThreshold\" : 5}\n}");
         let general = &store.current.general;
         assert_eq!(general.rating_mode, RatingModeJson::Keep);
         assert_eq!(general.keep_threshold, 5);
@@ -726,9 +687,7 @@ mod tests {
 
     #[test]
     fn a_future_key_is_ignored_not_fatal() {
-        let store = store_with(
-            r#"{"version":1,"general":{"ratingMode":"stars","someSettingFromV2":true},"viewer":{"neverHeardOfIt":3}}"#,
-        );
+        let (_guard, store) = store_with(r#"{"version":1,"general":{"ratingMode":"stars","someSettingFromV2":true},"viewer":{"neverHeardOfIt":3}}"#);
         assert_eq!(store.current.general.rating_mode, RatingModeJson::Stars);
         assert_eq!(store.current.viewer, ViewerJson::default(), "unknown keys ride their defaults");
     }
@@ -737,38 +696,45 @@ mod tests {
     fn the_swift_keyed_shape_is_the_file_shape() {
         // The measured Swift bytes: {"case": {}} for a unit case and {"_0": …} for the payload
         // one — never a bare string, which Swift's decoder rejects when any case has a payload.
-        let store =
-            store_with(r#"{"general":{"finishUnkept":{"moveToSubfolder":{"_0":"_Not kept"}},"finishKept":{"none":{}}}}"#);
+        let (_guard, store) = store_with(r#"{"general":{"finishUnkept":{"moveToSubfolder":{"_0":"_Not kept"}},"finishKept":{"none":{}}}}"#);
         assert_eq!(store.current.general.finish_unkept, UnkeptActionJson::MoveToSubfolder("_Not kept".to_string()));
         assert_eq!(store.current.general.finish_kept, KeptActionJson::Nothing);
         let written = dump(&store);
-        assert!(written.contains(r#""finishUnkept": {"moveToSubfolder": {"_0": "_Not kept"}}"#), "{written}");
-        assert!(written.contains(r#""finishKept": {"none": {}}"#), "{written}");
+        assert!(written.contains(r#""finishUnkept":{"moveToSubfolder":{"_0":"_Not kept"}}"#), "{written}");
+        assert!(written.contains(r#""finishKept":{"none":{}}"#), "{written}");
     }
 
     #[test]
     fn an_unreadable_value_resets_everything_the_way_v1_did() {
         // v1's one-bad-key rule: the whole AppSettings falls back, not just the broken section.
-        let store = store_with(r#"{"general":{"ratingMode":"stars5","autoAdvance":true},"viewer":{"zoomLock":true}}"#);
+        let (_guard, store) = store_with(r#"{"general":{"ratingMode":"stars5","autoAdvance":true},"viewer":{"zoomLock":true}}"#);
         assert_eq!(store.current, AppSettingsJson::default());
         assert!(!store.current.general.auto_advance, "auto advance did not survive its neighbour's garbage");
     }
 
     #[test]
-    fn a_full_file_round_trips_and_translation_reaches_the_model() {
-        let mut general = GeneralSettings::default();
-        general.rating_mode = RatingMode::KeepNotKeep;
-        general.keep_stars = 5;
-        general.arrow_behavior = ArrowBehavior::Stop;
-        general.entering_behavior = EnteringBatchBehavior::LastViewed;
-        general.auto_advance = true;
-        general.reject_whole_batch = true;
+    fn a_garbage_file_resets_to_defaults() {
+        let (_guard, store) = store_with("not json at all");
+        assert_eq!(store.current, AppSettingsJson::default());
+    }
+
+    #[test]
+    fn a_full_file_round_trips() {
+        let general = GeneralSettings {
+            rating_mode: RatingMode::KeepNotKeep,
+            keep_stars: 5,
+            arrow_behavior: ArrowBehavior::Stop,
+            entering_behavior: EnteringBatchBehavior::LastViewed,
+            auto_advance: true,
+            reject_whole_batch: true,
+        };
 
         let mut settings = AppSettingsJson::default();
         settings.metadata.keep_mapping = KeepMappingJson::ColorLabelVariant { label: ColorLabelJson::Green };
         settings.set_general_from(general);
 
-        let file = tempfile::tempdir().unwrap().path().join("settings.json");
+        let directory = tempfile::tempdir().unwrap(); // held: the save lands inside it
+        let file = directory.path().join("settings.json");
         SettingsStore { path: file.clone(), current: settings }.save().unwrap();
 
         let reloaded = SettingsStore::at(&file);
@@ -780,14 +746,8 @@ mod tests {
     }
 
     #[test]
-    fn color_labels_translate_to_the_engine_type() {
-        assert_eq!(ColorLabelJson::of(ColorLabel::Green), ColorLabelJson::Green);
-        assert_eq!(ColorLabelJson::Green.label(), ColorLabel::Green);
-    }
-
-    #[test]
     fn the_session_takes_the_sidecar_switches() {
-        let store = store_with(r#"{"metadata":{"writeXmp":false,"writeSidecarsForJpegs":false}}"#);
+        let (_guard, store) = store_with(r#"{"metadata":{"writeXmp":false,"writeSidecarsForJpegs":false}}"#);
         let xmp = store.current.session_xmp();
         assert!(!xmp.write_sidecars);
         assert!(!xmp.sidecars_for_non_raw);
@@ -797,11 +757,33 @@ mod tests {
     /// file carries — the point of the "everything else untouched" rule.
     #[test]
     fn a_save_keeps_a_v1_users_finish_choices() {
-        let mut store = store_with(r#"{"general":{"finishUnkept":{"moveToTrash":{}},"confirmBeforeFinish":false}}"#);
+        let (guard, mut store) = store_with(r#"{"general":{"finishUnkept":{"moveToTrash":{}},"confirmBeforeFinish":false}}"#);
         store.current.set_general_from(GeneralSettings::default());
         store.save().unwrap();
-        let written = dump(store_with(&std::fs::read_to_string(store_with("").path).unwrap_or_default()));
-        assert!(written.contains(r#""finishUnkept": {"moveToTrash": {}}"#), "{written}");
-        assert!(written.contains(r#""confirmBeforeFinish": false"#), "{written}");
+
+        // Re-read through the store: the finish action outlives a settings change untouched.
+        let reloaded = SettingsStore::at(&guard.path().join("settings.json"));
+        assert_eq!(reloaded.current.general.finish_unkept, UnkeptActionJson::MoveToTrash);
+        assert!(!reloaded.current.general.confirm_before_finish);
+        assert_eq!(reloaded.current.general.finish_kept, KeptActionJson::Nothing, "a key the file did not name is the default, not a reset");
+        // And the bytes are Swift's keyed shape, not a bare string.
+        let written = serde_json::to_string(reloaded.current()).unwrap();
+        assert!(written.contains(r#""finishUnkept":{"moveToTrash":{}}"#), "{written}");
+    }
+
+    /// The surfaces' construction order: load, attach, seed, then setters persist as they go.
+    #[test]
+    fn the_model_seeds_from_the_store_and_persists_changes() {
+        let (guard, store) = store_with(r#"{"general":{"ratingMode":"keep","keepThreshold":5}}"#);
+        let mut model = crate::model::Model::new();
+        model.attach_settings_store(store);
+        assert_eq!(model.settings().rating_mode, RatingMode::KeepNotKeep);
+        assert_eq!(model.settings().keep_stars, 5, "v1's keepThreshold is the model's keep stars");
+
+        model.set_rating_mode(RatingMode::Stars);
+        let reloaded = SettingsStore::at(&guard.path().join("settings.json"));
+        let general = &reloaded.current.general;
+        assert_eq!(general.rating_mode, RatingModeJson::Stars, "the setter reached the file");
+        assert_eq!(general.keep_threshold, 5, "a setting the model did not touch is untouched");
     }
 }
