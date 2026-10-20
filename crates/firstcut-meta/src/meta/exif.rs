@@ -1207,8 +1207,8 @@ mod tests {
         // bytes are the file's own, end to end, or the loupe has nothing to decode.
         let bytes = fixtures::jpeg(&tiff_bytes(), 4000, 3000);
         let size = bytes.len() as u64;
-        let mut file = tempfile::tempdir().unwrap();
-        let path = file.path().join("IMG_0001.jpg");
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("IMG_0001.jpg");
         std::fs::write(&path, &bytes).unwrap();
 
         let meta = read(&path, FileKind::Jpeg, size).unwrap();
