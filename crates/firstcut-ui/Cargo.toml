@@ -12,3 +12,5 @@ workspace = true
 [dependencies]
 firstcut-engine = { workspace = true }
 firstcut-types = { workspace = true }
+egui = { workspace = true }
+serde_json = { workspace = true }

@@ -678,9 +678,12 @@ version = "0.2.0-dev"
 dependencies = [
  "eframe",
  "egui",
+ "firstcut-catalog",
  "firstcut-decode",
  "firstcut-decode-libraw",
  "firstcut-engine",
+ "firstcut-meta",
+ "firstcut-types",
  "firstcut-ui",
 ]
 
@@ -790,8 +793,10 @@ dependencies = [
 name = "firstcut-ui"
 version = "0.2.0-dev"
 dependencies = [
+ "egui",
  "firstcut-engine",
  "firstcut-types",
+ "serde_json",
 ]
 
 [[package]]
