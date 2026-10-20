@@ -22,6 +22,7 @@ use firstcut_batching::batch::signals::Decision;
 use firstcut_batching::batch::{BatchParams, PhotoId, batch_with};
 use firstcut_batching::order;
 
+mod mcp;
 mod run;
 mod verify;
 
@@ -57,10 +58,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "verify" => verify::cmd_verify(rest),
         // The `mcp` leg (registry as MCP tools, docs/mcp.md) is still ahead; `run` is live.
         "run" => run::cmd_run(rest),
-        "mcp" => {
-            eprintln!("firstcut `mcp` is not implemented yet — the registry-as-MCP-tools leg lands next");
-            Ok(())
-        }
+        "mcp" => mcp::cmd_mcp(rest),
         other => Err(format!("unknown subcommand `{other}`")),
     }
 }
@@ -76,9 +74,14 @@ USAGE
 COMMANDS
   run [--sessions <dir>] <command> key=value … [<command> key=value …]
         Headless driving of the app through the command registry (docs/v2-plan.md §4.3).
-        One JSON line per command: {{\"id\": …, \"result\": …}} or {{\"id\": …, \"error\": …}}.
+        One JSON line per command: an object with the id and either a result or an error.
         `--sessions` points `file.open` at a scratch Sessions directory. Example:
         `firstcut run --sessions /tmp/s file.open path=/tmp/shoot rate.stars stars=4 engine.state`.
+
+  mcp
+        The command registry as MCP tools over stdio (docs/v2-plan.md §4.3): `initialize`,
+        `tools/list`, `tools/call`. Headless; `--connect host:port` (the control-channel
+        bridge) is a later leg.
 
   dump-meta --from-exiftool <in.json> --out <out.json>
         Convert an `exiftool -j` dump into PhotoMeta-shaped JSON for the other
