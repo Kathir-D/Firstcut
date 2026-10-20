@@ -22,6 +22,7 @@ use firstcut_batching::batch::signals::Decision;
 use firstcut_batching::batch::{BatchParams, PhotoId, batch_with};
 use firstcut_batching::order;
 
+mod run;
 mod verify;
 
 fn main() -> ExitCode {
@@ -54,10 +55,10 @@ fn run(args: &[String]) -> Result<(), String> {
         "bench" => cmd_bench(rest),
         "ground-truth" => cmd_ground_truth(rest),
         "verify" => verify::cmd_verify(rest),
-        // The `run`/`mcp` command registry is the app-facing face of v2 and lands in a later
-        // milestone (docs/v2-plan.md §7); the subcommands above are this CLI's M1 surface.
-        "run" | "mcp" => {
-            eprintln!("firstcut `{command}` is not implemented yet — the registry lands in a later milestone");
+        // The `mcp` leg (registry as MCP tools, docs/mcp.md) is still ahead; `run` is live.
+        "run" => run::cmd_run(rest),
+        "mcp" => {
+            eprintln!("firstcut `mcp` is not implemented yet — the registry-as-MCP-tools leg lands next");
             Ok(())
         }
         other => Err(format!("unknown subcommand `{other}`")),
@@ -73,6 +74,12 @@ USAGE
   firstcut <command> [options]
 
 COMMANDS
+  run [--sessions <dir>] <command> key=value … [<command> key=value …]
+        Headless driving of the app through the command registry (docs/v2-plan.md §4.3).
+        One JSON line per command: {{\"id\": …, \"result\": …}} or {{\"id\": …, \"error\": …}}.
+        `--sessions` points `file.open` at a scratch Sessions directory. Example:
+        `firstcut run --sessions /tmp/s file.open path=/tmp/shoot rate.stars stars=4 engine.state`.
+
   dump-meta --from-exiftool <in.json> --out <out.json>
         Convert an `exiftool -j` dump into PhotoMeta-shaped JSON for the other
         agents' mocks. `dump-meta --fixture <name>` writes
