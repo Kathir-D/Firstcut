@@ -337,7 +337,8 @@ pub struct PerformanceJson {
     /// 0 = auto; the measured knee beats any fixed core count (v1 `decodeThreads`).
     #[serde(default)]
     pub decode_threads: u32,
-    #[serde(default)]
+    /// The key is `debugHUD` in v1 — all caps, not `debugHud` (measured bytes).
+    #[serde(default, rename = "debugHUD")]
     pub debug_hud: bool,
 }
 
@@ -771,7 +772,8 @@ mod tests {
         assert!(written.contains(r#""finishUnkept":{"moveToTrash":{}}"#), "{written}");
     }
 
-    /// The surfaces' construction order: load, attach, seed, then setters persist as they go.
+    /// The model seeds from the store: the surfaces' construction order, load, attach, then
+    /// setters persist as they go.
     #[test]
     fn the_model_seeds_from_the_store_and_persists_changes() {
         let (guard, store) = store_with(r#"{"general":{"ratingMode":"keep","keepThreshold":5}}"#);
@@ -785,5 +787,53 @@ mod tests {
         let general = &reloaded.current.general;
         assert_eq!(general.rating_mode, RatingModeJson::Stars, "the setter reached the file");
         assert_eq!(general.keep_threshold, 5, "a setting the model did not touch is untouched");
+    }
+
+    /// The real bytes a v1 app wrote on this machine (`…"language"…`-free, 1470 bytes), pinned as
+    /// a fixture so the port's shapes are checked against what Swift's encoder actually emitted —
+    /// not against what the port believes it would emit. Boundaries are never synthesised.
+    #[test]
+    fn the_real_v1_file_every_section_loads() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1-settings.json");
+        let raw = std::fs::read_to_string(path).expect("the real v1 settings fixture is in the repo");
+        let settings: AppSettingsJson = serde_json::from_str(&raw).unwrap_or_default();
+
+        // General.
+        assert_eq!(settings.general.rating_mode, RatingModeJson::Keep);
+        assert_eq!(settings.general.keep_threshold, 4);
+        assert!(settings.general.reject_whole_batch, "the user finished rejects whole batches");
+        assert!(settings.general.auto_advance);
+        assert_eq!(settings.general.finish_unkept, UnkeptActionJson::MoveToSubfolder("_Not kept".to_string()));
+        assert_eq!(settings.general.finish_kept, KeptActionJson::Nothing);
+
+        // Metadata.
+        assert_eq!(settings.metadata.keep_mapping, KeepMappingJson::Rating { stars: 5 });
+        assert_eq!(settings.metadata.xmp_write_mode, XmpWriteModeJson::Merge);
+        assert!(settings.metadata.write_sidecars_for_jpegs);
+        assert!(!settings.metadata.write_ratings_into_dng);
+
+        // Viewer — including the two keys a synthesised file would likely have omitted.
+        assert_eq!(settings.viewer.background_gray, 0.12);
+        assert!(settings.viewer.hud_visible);
+        assert!(settings.viewer.exact_raw);
+        assert_eq!(settings.viewer.clipping_highlight_threshold, 1.0);
+        assert_eq!(settings.viewer.info_fields.len(), 20);
+
+        // Performance — the all-caps key the camelCase rule would have misnamed.
+        assert!(!settings.performance.debug_hud);
+        assert_eq!(settings.performance.decode_threads, 0);
+        assert_eq!(settings.performance.look_ahead_batches, 2);
+        assert_eq!(settings.performance.thumbnail_pixels, 256);
+        assert_eq!(settings.performance.memory_budget_fraction, 0.4);
+        assert_eq!(settings.version, 1);
+
+        // And the round trip emits the same keyed shapes back (a save must not lose the user's).
+        let rewritten = serde_json::to_string(&settings).unwrap_or_default();
+        assert!(
+            rewritten.contains(r#""finishUnkept":{"moveToSubfolder":{"_0":"_Not kept"}}"#)
+                && rewritten.contains(r#""debugHUD":false"#)
+                && rewritten.contains(r#""keepMapping":{"type":"rating","stars":5}"#),
+            "the round trip keeps v1's shapes: {rewritten}",
+        );
     }
 }
