@@ -838,7 +838,13 @@ impl State {
             let Some(row) = by_id.get(&meta.id.0) else {
                 continue;
             };
-            let same_file = meta.device.zip(meta.ino) == row.device.zip(row.ino);
+            // The inode short-hand claims "same file" only when the size agrees too: file systems
+            // reuse inode numbers after a delete (ext4 often hands a recreated file the just-freed
+            // number; exFAT and FAT cards derive the number from the directory slot), so a re-shot
+            // file can land on the departed capture's number. A file touched in place is still
+            // itself — and if it changed size (a DNG re-save, say), the shutter check below gets
+            // the say.
+            let same_file = meta.device.zip(meta.ino) == row.device.zip(row.ino) && row.file_size == meta.file_size;
             if same_file {
                 continue;
             }
@@ -1419,17 +1425,25 @@ mod tests {
             // A real, parseable CR3, so a reopen or a rescan in a later test goes through the
             // scanner rather than finding a folder of files it correctly refuses.
             write_cr3(folder.path(), &meta.rel_path, index as u32 + 1);
-            // The stat identity has to come from the file that is actually there, or a rename
-            // would not be recognisable and the reconcile test would be testing nothing. Windows
-            // has no dev/ino in `std`, so there the test keeps the zeros (the identity tests run
-            // where the real data lives).
+            // The ingested identity has to match what a rescan's `scan` will produce, or every
+            // reopen would read as "all three identities disagree" and drop the ratings
+            // (todo.md §0.5 rule: the swap fires only when everything disagrees). Unix reads the
+            // real per-file identity, as the scanner does. Windows' scanner records `(0, 0)` —
+            // `std` has no per-file identity for it (M5 fills this in) — but the real size either
+            // way.
+            let path = folder.path().join(&meta.rel_path);
+            let stat = fs::metadata(&path).unwrap();
+            meta.file_size = stat.len();
             #[cfg(unix)]
             {
                 use std::os::unix::fs::MetadataExt;
-                let stat = fs::metadata(folder.path().join(&meta.rel_path)).unwrap();
                 meta.device = Some(stat.dev() as i64);
                 meta.ino = Some(stat.ino() as i64);
-                meta.file_size = stat.len();
+            }
+            #[cfg(windows)]
+            {
+                meta.device = Some(0);
+                meta.ino = Some(0);
             }
         }
         let scan = firstcut_meta::meta::ScanResult { skipped: Vec::new(), photos };
