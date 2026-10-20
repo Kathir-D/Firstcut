@@ -45,3 +45,4 @@ testing/
 # committed in 394eb57 before these rules came back)
 build/
 App/Generated/
+docs/showcase/out/
