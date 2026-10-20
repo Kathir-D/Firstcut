@@ -243,12 +243,27 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   declared params, raw dotted-name calls also accepted), `tools/call` → the one `dispatch`.
 >   Results as `{content:[{type:text,text:…}], isError}`. Live-checked with a piped session
 >   (open → rate → state). `--connect host:port` (control-channel bridge) is a later leg.
-> - **Still ahead in the M1 slice (docs/v2-plan.md §6):** the **control channel** (`firstcut
->   --control <port>`, `engine.execute`/`engine.commands`/`engine.state`/`ui.*`, documented at
->   the docs leg), `docs/parity-checklist.md`, README screenshots via agent-driven showcase
->   scripts, opt-in real-photo tests, then the **milestone gate** (`cargo xtask ci`, matrix
->   green) and the M1 report. Watch: the snapshot PNGs were rendered by Metal on this mac — if
->   windows/CI renders differ pixelwise, add a `kittest.toml` diff tolerance.
+> - **Control channel landed (`27e520b`):** `firstcut --control <port>` — JSON lines on
+>   localhost: `engine.execute`/`engine.state`/`engine.commands`
+>   (through `registry::dispatch`), and the `ui.*` trio rendered through the SAME headless
+>   harness the snapshot tests use: `ui.widgets` (a11y tree names+rects),
+>   `ui.clickWidget` (clicks by accessible name — the live test spawned a real window,
+>   clicked `filmstrip: IMG_0003.JPG` and the cursor moved), `ui.screenshot` (PNG path).
+>   Listener thread + per-connection readers; requests answered on the UI thread inside a
+>   normal frame; **a queued request must wake the UI thread** — otherwise eframe idles in
+>   the AppKit event loop and everything times out (first live run proved exactly this;
+>   the `wake` slot gets the ctx from the first frame). `apps/firstcut` now ships
+>   `egui_kittest` + `image` as REGULAR deps (layers updated: 13+2 edges checked green).
+> - **Parity checklist landed (`e2049b5`):** `docs/parity-checklist.md` mirrors §7 row by
+>   row with honest status (✔ rows carry the test names; unmoved rows carry their
+>   milestone). The merge gate reads this file, not the plan.
+> - **Still ahead in the M1 slice (docs/v2-plan.md §6):** the **opt-in real-photo tests**
+>   (`FIRSTCUT_TEST_PHOTOS` + `FIRSTCUT_ALLOW_PHOTO_TESTS=1` over the owner's corpus),
+>   README screenshots via agent-driven showcase scripts, then the **milestone gate**:
+>   `cargo xtask ci` (+ summary), full matrix green on the tip, update PR #6's body.
+>   Watch note: the snapshot PNGs were rendered by Metal here and are already proven
+>   green on all three OSes (the `34ff0ad` run); later pushes while a run is in flight
+>   CANCEL the earlier run — batch pushes or rewatch after.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).
