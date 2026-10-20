@@ -259,11 +259,43 @@ fn paint_thumb(row: &mut egui::Ui, thumb: &Thumb, images: &FrameImages<'_>, text
 }
 
 /// GPU texture for one photo's pixels, decoded once and cached until the photo is gone.
+/// GPU texture for one photo's pixels, decoded once and cached until the photo is gone.
+///
+/// Oversized frames are downsampled before the upload: egui asserts a texture no wider than
+/// the device's `max_texture_side`, and a real 6000×4000 R8 preview crashes the first loupe
+/// otherwise (the showcase run on Game1JENKS proved it). The nearest-neighbour stride keeps
+/// every sampled pixel's colour and costs nothing next to the decode; M2's decode tiers
+/// deliver properly-sized previews and this becomes a safety net rather than the rule.
 fn load_texture<'a>(textures: &'a mut HashMap<u64, TextureHandle>, ctx: &egui::Context, id: u64, pixels: &egui::ColorImage) -> &'a TextureHandle {
     textures.entry(id).or_insert_with(|| {
         let name = format!("photo-{id}");
-        ctx.load_texture(name, pixels.clone(), egui::TextureOptions::LINEAR)
+        let max_side = ctx.input(|input| input.max_texture_side);
+        ctx.load_texture(name, fit_to_max_side(pixels, max_side), egui::TextureOptions::LINEAR)
     })
+}
+
+/// The largest copy of `pixels` whose sides respect `max_side`: ONE stride chosen from the
+/// two axes applies to both, so the aspect survives; never upscaled; empty images pass
+/// through untouched. Sampled pixels keep their own colour (nearest-neighbour by stride).
+fn fit_to_max_side(pixels: &egui::ColorImage, max_side: usize) -> egui::ColorImage {
+    let [width, height] = pixels.size;
+    if (width <= max_side && height <= max_side) || width == 0 || height == 0 {
+        return egui::ColorImage { size: [width, height], source_size: pixels.source_size, pixels: pixels.pixels.clone() };
+    }
+    let step = width.div_ceil(max_side).max(height.div_ceil(max_side));
+    let new_width = width.div_ceil(step);
+    let new_height = height.div_ceil(step);
+    // The stride grid only ever shrinks, so the sampled copy is made of source pixels and
+    // carries the original's full extent as its source size.
+    let mut sampled = Vec::with_capacity(new_width * new_height);
+    for y in (0..new_height).map(|row| row * step) {
+        for x in (0..new_width).map(|column| column * step) {
+            if let Some(color) = pixels.pixels.get(y * width + x) {
+                sampled.push(*color);
+            }
+        }
+    }
+    egui::ColorImage { size: [new_width, new_height], source_size: pixels.source_size, pixels: sampled }
 }
 
 /// Stars the way v1 drew them under a strip frame; unrated reads as a dot, not an empty line.
@@ -287,4 +319,52 @@ fn fit_into(into: Vec2, image: Vec2) -> Vec2 {
     }
     let scale = (into.x / image.x).min(into.y / image.y);
     image * scale.max(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The real-photo crash the M1 showcase run caught: a 6000×4000 preview went to
+    /// `load_texture` raw and egui's max-texture-side assert killed the frame.
+    #[test]
+    fn a_six_thousand_pixel_preview_fits_the_texture_limit() {
+        let width = 6000;
+        let height = 4000;
+        let mut image = egui::ColorImage::new([width, height], vec![egui::Color32::BLACK; width * height]);
+        // A sentinel in a sampled position (both coordinates are multiples of the stride 3)
+        // and one on the far edge, to prove the stride grid still reaches it.
+        image.pixels[0] = egui::Color32::from_rgba_unmultiplied(11, 0, 0, 255);
+        image.pixels[3999 * width + 5997] = egui::Color32::from_rgba_unmultiplied(200, 0, 0, 255);
+
+        let fitted = fit_to_max_side(&image, 2048);
+
+        assert!(fitted.size[0] <= 2048 && fitted.size[1] <= 2048, "{:?}", fitted.size);
+        // The single uniform stride keeps the 3:2 aspect: 2000×1334.
+        assert_eq!(fitted.size, [2000, 1334]);
+        assert_eq!(fitted.pixels[0].r(), 11, "the origin pixel is sampled");
+        assert_eq!(fitted.pixels[1333 * 2000 + 1999].r(), 200, "the far edge is sampled");
+    }
+
+    #[test]
+    fn small_images_are_never_upscaled_and_empty_ones_pass_through() {
+        let small = egui::ColorImage::new([100, 60], vec![egui::Color32::from_rgba_unmultiplied(7, 0, 0, 255); 100 * 60]);
+        let copy = fit_to_max_side(&small, 2048);
+        assert_eq!(copy.size, [100, 60]);
+        assert_eq!(copy.pixels[1234].r(), 7, "the copy keeps the original pixels");
+
+        let exactly_at_limit = egui::ColorImage::new([2048, 2048], vec![egui::Color32::BLACK; 2048 * 2048]);
+        assert_eq!(fit_to_max_side(&exactly_at_limit, 2048).size, [2048, 2048]);
+
+        let empty = egui::ColorImage { size: [0, 0], source_size: Vec2::ZERO, pixels: Vec::new() };
+        assert_eq!(fit_to_max_side(&empty, 2048).size, [0, 0]);
+    }
+
+    #[test]
+    fn a_two_pixel_wide_strip_is_bounded_on_its_long_side() {
+        let tall = egui::ColorImage::new([2, 4096], vec![egui::Color32::BLACK; 2 * 4096]);
+        let fitted = fit_to_max_side(&tall, 2048);
+        assert!(fitted.size[0] <= 2048 && fitted.size[1] <= 2048);
+        assert_eq!(fitted.size, [1, 2048]);
+    }
 }
