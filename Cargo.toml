@@ -49,6 +49,7 @@ eframe = { version = "0.37", default-features = false, features = [
   "x11",
 ] }
 egui_kittest = "0.37"
+image = "0.25"
 
 [workspace.lints.rust]
 # §4.5: the single `unsafe` carve-out is firstcut-decode-libraw, which carries its own

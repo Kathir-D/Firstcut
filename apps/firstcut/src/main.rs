@@ -13,18 +13,58 @@ use eframe::egui;
 use firstcut_engine::model::Model;
 use firstcut_engine::settings::SettingsStore;
 use firstcut_meta::meta::PhotoMeta;
+use serde_json::json;
+
+mod control;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let smoke = args.iter().any(|a| a == "--smoke");
-    let folder = args.iter().filter(|a| a.as_str() != "--smoke").map(PathBuf::from).next();
-    if let Err(err) = run(smoke, folder) {
+    let mut smoke = false;
+    let mut control: Option<u16> = None;
+    let mut folder: Option<PathBuf> = None;
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        match arg.as_str() {
+            "--smoke" => smoke = true,
+            "--control" => match args.get(index + 1).and_then(|p| p.parse::<u16>().ok()) {
+                Some(port) => {
+                    control = Some(port);
+                    index += 1; // the port is consumed as a value, not a folder
+                }
+                None => {
+                    eprintln!("firstcut: `--control` needs a TCP port number (1..=65535)");
+                    std::process::exit(2);
+                }
+            },
+            non_flag if !non_flag.starts_with("--") => match folder {
+                None => folder = Some(PathBuf::from(non_flag)),
+                Some(_) => {
+                    eprintln!("firstcut: unexpected argument `{non_flag}` (one shoot folder)");
+                    std::process::exit(2);
+                }
+            },
+            unknown => {
+                eprintln!("firstcut: unknown option `{unknown}`");
+                std::process::exit(2);
+            }
+        }
+        index += 1;
+    }
+    if let Err(err) = run(smoke, folder, control) {
         eprintln!("firstcut: {err}");
         std::process::exit(1);
     }
 }
 
-fn run(smoke: bool, folder: Option<PathBuf>) -> Result<(), String> {
+fn run(smoke: bool, folder: Option<PathBuf>, control: Option<u16>) -> Result<(), String> {
+    // The control channel starts before the window so a script can connect and drive
+    // everything from the first frame; a bind failure is a startup failure, not silence.
+    // `wake_slot` is filled in by the first frame: queued requests must wake the UI thread.
+    let wake_slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let control_receiver = match control {
+        Some(port) => Some(control::start(port, std::sync::Arc::clone(&wake_slot))?),
+        None => None,
+    };
     let mut model = Model::new();
     // v1's AppModel construction order: load the settings file, seed the General
     // half from it, then open. A file that will not read is v1's defaults.
@@ -44,7 +84,7 @@ fn run(smoke: bool, folder: Option<PathBuf>) -> Result<(), String> {
             viewport: egui::ViewportBuilder::default().with_title("Firstcut").with_inner_size([1200.0, 760.0]).with_min_inner_size([640.0, 380.0]),
             ..Default::default()
         },
-        Box::new(move |_cc| Ok(Box::new(Shell::new(smoke, model)))),
+        Box::new(move |_cc| Ok(Box::new(Shell::new(smoke, control_receiver, wake_slot, model)))),
     )
     .map_err(|e| format!("eframe failed to create the window: {e}"))
 }
@@ -64,16 +104,60 @@ struct Shell {
     frames_painted: u32,
     smoke_logged: bool,
     smoke: bool,
+    control_receiver: Option<mpsc::Receiver<control::Request>>,
+    /// Filled in by the first frame; the control thread reads it to wake this one. It is set
+    /// exactly once, so `Option` is not a state machine, it is "before the first paint".
+    wake_slot: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
+    wake_noticed: bool,
 }
 
 impl Shell {
-    fn new(smoke: bool, model: Model) -> Self {
-        Self { model, screen: firstcut_ui::CullScreen::new(), bank: DecodeBank::new(), frames_painted: 0, smoke_logged: false, smoke }
+    fn new(
+        smoke: bool,
+        control_receiver: Option<mpsc::Receiver<control::Request>>,
+        wake_slot: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
+        model: Model,
+    ) -> Self {
+        Self {
+            model,
+            screen: firstcut_ui::CullScreen::new(),
+            bank: DecodeBank::new(),
+            frames_painted: 0,
+            smoke_logged: false,
+            smoke,
+            control_receiver,
+            wake_slot,
+            wake_noticed: false,
+        }
     }
 }
 
 impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if !self.wake_noticed {
+            self.wake_noticed = true;
+            if let Ok(mut wake) = self.wake_slot.lock() {
+                *wake = Some(ui.ctx().clone());
+            }
+        }
+
+        // Control clients first: their engine.execute runs inside this frame's pass, so an
+        // agent's command and the result it reads back are the same frame's facts.
+        if let Some(receiver) = self.control_receiver.take() {
+            loop {
+                match receiver.try_recv() {
+                    Ok(request) => {
+                        self.answer_control(request);
+                    }
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        eprintln!("firstcut control: the listener is gone");
+                        break;
+                    }
+                }
+            }
+            self.control_receiver = Some(receiver);
+        }
         // Finished decodes land in the cache, then what the surfaces want next
         // is queued — ahead of repainting, so a decode has the whole frame's
         // time to get back before the next try.
@@ -95,6 +179,92 @@ impl eframe::App for Shell {
             }
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
+    }
+}
+
+// ---- the control channel's UI half --------------------------------------------------------
+
+impl Shell {
+    /// One queued request, answered against the live state inside this frame.
+    fn answer_control(&mut self, request: control::Request) {
+        match request {
+            control::Request::Dispatch { id, params, reply } => {
+                let _ = reply.send(firstcut_engine::registry::dispatch(&mut self.model, &id, &params));
+            }
+            control::Request::Widgets { reply } => {
+                let _ = reply.send(self.ephemeral_ui_pass(None));
+            }
+            control::Request::Click { name, reply } => {
+                let _ = reply.send(self.ephemeral_ui_pass(Some(name)));
+            }
+            control::Request::Screenshot { reply } => {
+                let _ = reply.send(self.harness_screenshot());
+            }
+        }
+    }
+
+    /// Renders the live state through the same headless harness the snapshot tests use — the
+    /// agents' `ui.widgets`/`ui.clickWidget` drive the real widget tree, not a shadow of it.
+    /// `click` names the accessible name of the widget to click; `None` only lists.
+    fn ephemeral_ui_pass(&mut self, click: Option<String>) -> Result<serde_json::Value, String> {
+        use egui_kittest::kittest::{NodeT, Queryable};
+
+        // Field-split borrows: the pass paints the model through a fresh screen (fresh texture
+        // cache), the pixels come straight from the bank.
+        let Shell { model, bank, .. } = self;
+        let mut screen = firstcut_ui::CullScreen::new();
+        let mut harness = egui_kittest::Harness::builder().with_size(control::HARNESS_SIZE).build_ui(|ui| {
+            let current_id = model.current_photo_id();
+            let current = current_id.and_then(|id| bank.image(id.0).map(|pixels| (id, pixels)));
+            let images = firstcut_ui::FrameImages { current, thumbs: &bank.cache };
+            screen.show(ui, model, &images);
+        });
+        harness.run();
+
+        if let Some(name) = click {
+            let found: Vec<_> = harness.query_all_by_label(&name).collect();
+            let Some(target) = found.first() else {
+                return Err(format!("no widget is named `{name}` — ui.widgets lists the names"));
+            };
+            target.click();
+            drop(found); // the node borrows the harness; the click needs a frame to land
+            harness.run();
+        }
+
+        // One entry per named node; rects so a script can also click at points.
+        let mut widgets: Vec<serde_json::Value> = Vec::new();
+        for node in harness.root().children_recursive() {
+            let label = node.accesskit_node().label().or_else(|| node.accesskit_node().value());
+            if let Some(label) = label {
+                let rect = node.rect();
+                widgets.push(json!({
+                    "name": label,
+                    "role": format!("{:?}", node.accesskit_node().role()),
+                    "rect": [rect.min.x, rect.min.y, rect.width(), rect.height()],
+                }));
+            }
+        }
+        Ok(json!({ "widgets": widgets }))
+    }
+
+    /// `ui.screenshot`: the live state as a PNG, the path handed back for the caller to fetch.
+    fn harness_screenshot(&mut self) -> Result<serde_json::Value, String> {
+        let Shell { model, bank, .. } = self;
+        let mut screen = firstcut_ui::CullScreen::new();
+        let mut harness = egui_kittest::Harness::builder().with_size(control::HARNESS_SIZE).build_ui(|ui| {
+            let current_id = model.current_photo_id();
+            let current = current_id.and_then(|id| bank.image(id.0).map(|pixels| (id, pixels)));
+            let images = firstcut_ui::FrameImages { current, thumbs: &bank.cache };
+            screen.show(ui, model, &images);
+        });
+        harness.run();
+        let image = harness.render()?;
+        let path = std::env::temp_dir().join(format!(
+            "firstcut-screenshot-{}.png",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or_default()
+        ));
+        image.save(&path).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        Ok(json!({ "path": path.display().to_string() }))
     }
 }
 

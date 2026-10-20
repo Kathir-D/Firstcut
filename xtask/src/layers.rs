@@ -45,6 +45,8 @@ const LADDER: &[(&str, &[&str])] = &[
             "firstcut-decode-libraw",
             "firstcut-engine",
             "firstcut-ui",
+            "egui_kittest",
+            "image",
         ],
     ),
     (
