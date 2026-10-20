@@ -80,11 +80,7 @@ fn shell_step(name: &'static str, cmd: &mut Command) -> Step {
             let text = if ok {
                 String::from_utf8_lossy(&out.stdout).into_owned()
             } else {
-                format!(
-                    "{}\n{}",
-                    String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr)
-                )
+                format!("{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
             };
             let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
             let tail = lines.last_page(250).join("\n");
