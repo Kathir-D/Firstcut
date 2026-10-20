@@ -183,48 +183,62 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-19 (v2, M1 complete — the port is on the branch).** The `v2` branch is the
-> pure-Rust rewrite (**`docs/v2-plan.md` is its contract**; agent rules live in the rewritten
-> `AGENTS.md`). Milestone state:
+> **As of 2026-10-20 (v2, M1 vertical slice — the legs are landing one commit at a time).**
+> The `v2` branch is the pure-Rust rewrite (**`docs/v2-plan.md` is its contract**; agent rules
+> live in the rewritten `AGENTS.md`). Milestone state:
 >
 > - **Draft PR open: `v2` → `main` is https://github.com/Kathir-D/Firstcut/pull/6** — stays a draft
 >   until the owner moves it; the owner merges, never an agent.
-> - **M1 port done in ONE commit, `8a01a65` ("port: v1 core folds into the crate ladder; delete
->   the Swift tree and v1 workspaces", pushed):** every v1 core module lives in the ladder
->   (`firstcut-{types,meta,xmp,fileops,batching,catalog,decode,decode-libraw,engine}` — decode +
->   engine were already M0 work); the SAME commit deleted `App/` (all of Swift), most of `core/`,
->   the obsolete workflows (`ci.yml`, `xcode26.yml`, `release.yml`, `screenshots.yml`) and the
->   Xcode build scripts. v1 release-pipeline scripts (`build-app.sh`, `build-core*.sh`,
->   `package-release.sh`, `bump-cask.sh`, …, `tools/contact-sheet`) are deliberately deleted —
->   §6 packaging rebuilds at its own milestone; `scripts/test-with-photos.sh` survives, retargeted
->   as a thin cargo wrapper exporting `FIRSTCUT_TEST_PHOTOS` + `FIRSTCUT_ALLOW_PHOTO_TESTS=1` and
->   running `cargo test --workspace -- --include-ignored`.
-> - **Test parity vs v1: 418 passed + 3 ignored (opt-in photo tests) vs v1's 426 passed (+3
->   opt-in).** The delta is the v1 FFI/uniffi tests that no v2 layer can host; 2 id round-trip
->   tests moved into `firstcut-catalog/src/db.rs`; one test-robustness fix in firstcut-xmp (the
->   symlink-race test now removes a contended attempt's created sidecar, which v1 left behind).
-> - **Never-crash lints (§4.5) swept through all ported code:** checked reads everywhere
->   (helper fns like `read_be32` in meta/cr3.rs), `nix` replaces `libc` (workspace
->   `unsafe_code = "forbid"`), and the one truncated-parser crash became a field skip. Workspace
->   clippy clean at `-D warnings`, `cargo xtask layers` green (13 edges), `cargo xtask ci`
->   pass (12 s). The single unsafe carve-out remains `crates/firstcut-decode-libraw` (D3).
-> - **Port reality is documented in the contract:** `docs/v2-plan.md` has a "Port reality notes,
->   M1" section (nix swap, lint sweep, `test-fixtures` feature on firstcut-meta so
->   firstcut-engine's tests can build byte fixtures, script deletions).
-> - **Follow-up commits (both pushed):** `394eb57` — `docs/contracts/build.md` rewritten to
->   v2.1 for the crate ladder, `.gitignore` trimmed of Xcode/SPM rules, `CHANGELOG.md` gain
->   `## [unreleased — v2]`; `0041b4f` — the stray DerivedData + `App/Generated` uniffi files that
->   leaked into `394eb57` via `git add -A` removed, `build/` + `App/Generated/` ignore lines
->   re-added; `3c0a1f2` — the rest of the v1 remnants deleted (the earlier `git rm` had aborted
->   on the untracked `Firstcut.xcodeproj` pathspec): `core/` workspace files, the
->   uniffi-bindgen binaries, `project.yml`, `tools/contact-sheet/main.swift`. **Repo is clean:
->   125 tracked files, zero core/ or Swift paths, fmt/clippy/layers re-verified after.**
-> - **Stale-doc sweep left for a later task (not this one):** `README.md` (~line 208) and
->   `docs/qa/{qa-checklist,bugs,perf-baselines}.md` + `docs/contracts/pipeline-api.md` still
->   mention xcodebuild/project.yml/UniFFI; `THIRD-PARTY-NOTICES.md` is stale (regenerate at the
->   packaging milestone); `todo.md` §5/§6 still carry v1 script references.
-> - **GitNexus:** the parent session re-indexes (gitnexus analyze --embeddings --pdg) after this
->   restructure; this session did not run gitnexus.
+> - **CI matrix fully GREEN, including Windows, for the first time (run 39456083872, on
+>   `7a6e9a2`).** The windows chain was unmasked one failure at a time: ext4 inode reuse needed
+>   `same_file` size corroboration (`233bd5f`), a failing `sessions_dir()` needed the same
+>   `last_error` treatment as every other open leg (`3445e70`), the fileops free-space test had to
+>   assert the documented windows answer (`41c2265`), and — the last one — `firstcut-meta`'s
+>   `rel_path` used the platform separator. Now **the walk builds separators itself** (`3bd7e73`):
+>   `strip_prefix` is gone from `collect`, which threads `dir_rel` down and joins components with
+>   `/`. A mac file *named* `a\b.JPG` still stays distinct from `a/b.JPG` in folder `a` (the
+>   rewrite would have merged them), so `PhotoId`s match a folder moved across platforms. 458
+>   workspace tests green; all pushes committed and pushed after every commit.
+> - **Settings persistence is ported, wired, and checked against real bytes** (`41c2265` +
+>   `1303b02` + `0d3f4bc`): `crates/firstcut-engine/src/settings.rs` reads v1's
+>   `settings.json` — Swift's keyed enum bytes (`{"case":{}}` / `{"case":{"_0":…}}`), the
+>   all-caps `debugHUD` key, `KeepMapping::{"type":"rating","stars":5}` — with unknown keys
+>   ignored, unknown values resetting the WHOLE file the way v1's `try?` did. `SettingsStore`
+>   writes the whole file back (tempfile + persist) so M3's finish keys survive every save.
+>   `Model::attach_settings_store` seeds the General half; the five general setters call
+>   `persist_settings` (failures land in `last_error`); `toggle_auto_advance` persists nothing
+>   (the session's say, not the app's).
+> - **The REAL v1 settings file is a fixture** (`crates/firstcut-engine/tests/fixtures/v1-settings.json`,
+>   copied from this machine's `~/Library/Application Support/Firstcut/settings.json`): the test
+>   `the_real_v1_file_every_section_loads` pins every section against what Swift's encoder
+>   actually emitted, including the round trip back out.
+> - **UI leg landed (`7a6e9a2`),** the M1 slice's surface: `crates/firstcut-ui/src/cull.rs` —
+>   filmstrip + loupe + keyboard (stars 0–5, arrows, ⌘Z/⌘⇧Z) that dispatches **only** through
+>   `registry::dispatch`, a GPU texture cache keyed by photo id, wheel zoom + drag pan,
+>   double-click reset. `apps/firstcut` now opens a folder argument, attaches the settings store
+>   (next to the Sessions dir, v1's location), and runs a one-worker decode bank (inflight 4,
+>   cache 64, failures never re-requested; the priority window/tiers that replace it are M2).
+>   Smoke-tested on this mac: `HOME=/tmp/… firstcut --smoke <folder>` paints 5 frames, exit 0,
+>   decode errors visible on stderr. egui 0.37's new panel/App APIs took a rewrite (`App::ui`
+>   gives the root `Ui`; `egui::Panel::bottom`; `CentralPanel::show(ui, …)`; `smooth_scroll_delta`).
+> - **A plain JPEG photo now displays from the file itself** (`a505bc1` + `e00c51d`): the exif
+>   reader sets `full_preview` over the whole file for `FileKind::Jpeg` (v1's rule; the loupe had
+>   "has no embedded JPEG to display" on a JPEG-only shoot before).
+> - **CLI `run` leg landed (`d638cd6`):** `firstcut-cli run [--sessions <dir>] <cmd> k=v …` chains
+>   registry commands, one JSON line per command, stops at the first failure; digits coerce to
+>   numbers, `true`/`false` to bools, raw JSON accepted; `--sessions` injects `file.open`'s
+>   `sessionDir` (the tests' isolation pattern); `run help` prints the registry. End-to-end test
+>   opens a synthetic CR3 shoot, rates, reads the state back through the same dispatch.
+> - **Still ahead in the M1 slice (docs/v2-plan.md §6):** the **control channel** (`firstcut
+>   --control <port>`, docs/control-protocol.md), **MCP** (`firstcut-cli mcp`, docs/mcp.md),
+>   the **egui_kittest headless UI snapshot** leg, `docs/parity-checklist.md`, README screenshots
+>   via agent-driven showcase scripts, then the **milestone gate** (`cargo xtask ci`, matrix green)
+>   and the M1 report.
+> - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
+>   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
+>   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).
+>   GitNexus `detect-changes --scope all` ran before the settings and meta commits; the index is
+>   due a re-`analyze` (big new files since: cull.rs, run.rs, settings.rs).
 >
 > **v1 record (pre-rewrite), last state 2026-10-19:** branch cleanup — all branches/worktrees from
 > the 2026-10-14 plan are gone except the kept record `autopilot/firstcut-fixes`; nothing merged
