@@ -8,9 +8,15 @@ rust-version.workspace = true
 
 [dependencies]
 firstcut-decode = { workspace = true }
-# LibRaw itself is added at M2 (docs/v2-plan.md §6); the crate exists now so the
-# unsafe carve-out and the layers exception are in place before any bindings code.
-# libraw-sys = "…" (M2)
+firstcut-meta = { workspace = true }
+
+# `rsraw` vendors LibRaw 0.21.1 and compiles it with `cc`; its build script refuses MSVC
+# outright, and its `-pthread` flag assumes a Unix toolchain. The dependency is therefore
+# target-gated to the two platforms the backend supports today, and `backend()` returns
+# `None` elsewhere (Windows falls back to the embedded JPEG; see the note in
+# docs/v2-plan.md §6).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+rsraw = "0.1.1"
 
 # ── THE SINGLE UNSAFE CARVE-OUT OF THE WORKSPACE ──────────────────────────────
 # docs/v2-plan.md §4.5, decision D3: the owner approved LibRaw (C++) for the v2

@@ -24,12 +24,14 @@
 //!
 //! Keep names and APIs identical to v1 so ported code and tests need no redesign.
 
+pub mod histogram;
 pub mod ids;
 pub mod photo;
 pub mod rating;
 pub mod row;
 pub mod sidecar;
 
+pub use histogram::Histogram;
 pub use ids::{BatchId, PhotoId, batch_id, fnv1a64, fold_to_i64, photo_id};
 pub use photo::{Photo, effective_time_ms, time_is_fallback};
 pub use rating::{

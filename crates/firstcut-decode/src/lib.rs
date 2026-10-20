@@ -58,6 +58,10 @@ pub enum DecodeError {
     SizeMismatch { width: u32, height: u32, expected: usize },
     #[error("{width}x{height} at orientation {orientation} does not fit a pixel buffer")]
     OrientationOverflow { width: u32, height: u32, orientation: u8 },
+    #[error("{path}: the RAW developer refused the file: {message}")]
+    Raw { path: String, message: String },
+    #[error("{path}: the RAW developer returned {width}x{height} with {colors} colour channels, which is not a displayable bitmap")]
+    RawLayout { path: String, width: u32, height: u32, colors: u16 },
 }
 
 /// Decodes the photograph's own pixels: the full-resolution embedded JPEG, falling back to the
@@ -212,30 +216,10 @@ pub fn apply_orientation(image: DecodedImage, orientation: u8) -> Result<Decoded
     Ok(DecodedImage { width: out_width, height: out_height, rgba: out })
 }
 
-/// 64 bins each for red, green, blue and Rec. 601 luma, as fractions of the sampled pixels.
-/// Computed from an already-oriented frame, so a sideways photograph cannot produce a shifted
-/// histogram (the v1 audit's histogram/orientation defect).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Histogram {
-    pub red: [f32; 64],
-    pub green: [f32; 64],
-    pub blue: [f32; 64],
-    pub luma: [f32; 64],
-    /// Pixels the bins were computed over, after the 256 px reduction.
-    pub sampled_pixels: usize,
-}
-
-impl Histogram {
-    /// An empty histogram (a frame with no pixels).
-    pub fn empty() -> Self {
-        Self { red: [0.0; 64], green: [0.0; 64], blue: [0.0; 64], luma: [0.0; 64], sampled_pixels: 0 }
-    }
-
-    /// The luminance bins, which is what the Info panel's default view draws.
-    pub fn luma(&self) -> &[f32; 64] {
-        &self.luma
-    }
-}
+/// The histogram lives in `firstcut-types` so the Info panel can name it without depending on a
+/// decoder. Computed from an already-oriented frame, so a sideways photograph cannot produce a
+/// shifted histogram (the v1 audit's histogram/orientation defect).
+pub use firstcut_types::Histogram;
 
 /// The v1 pipeline's 256-pixel reduction: the longest side is capped at 256 and every sampled
 /// pixel's own colour is counted (nearest-neighbour), so the bins describe the picture the user
