@@ -146,6 +146,14 @@ only, dropped on focus change).
 Tiers: thumbnail → display (T2 display-sized) → Exact RAW (T4 full develop via LibRaw).
 T4's memory (≈92 MB/frame at 6000×4000) is the tier's own budget, as in v1.
 
+**Platform note (M2, recorded when the backend landed):** the LibRaw bridge vendors
+LibRaw 0.21.1 through `rsraw`. Its build script refuses MSVC and assumes a Unix
+toolchain, so the dependency is target-gated to macOS and Linux and
+`firstcut_decode_libraw::backend()` answers `None` on Windows. The Exact RAW tier then
+falls back to the camera's embedded JPEG instead of losing the loupe. Closing this needs
+a Windows build of LibRaw (vcpkg or a vcxproj) wired into the matrix; it is a platform
+gap, not a silent one.
+
 EXIF orientation is applied exactly once, in the decode backend; a develop must not
 re-apply it. This rule is a named test.
 
@@ -213,6 +221,31 @@ baselines or better, on macOS:
 The cold-file-cache trap is the standing rule: **whichever decode runs first pays for the
 read**. Warm or alternate before believing a ratio. `waitUntilIdle`-class invariants get
 dedicated tests (v1's biggest gap).
+
+### 5.1 Measured on this machine (v2, 2026-10-20)
+
+`firstcut-cli bench --decode --folder <game> --repeat 5`, release build, Apple M1 Pro,
+idle machine, real CR3s. These are decode-only timings (no GPU upload), which is why the
+zoom row is labelled as a lower bound.
+
+| Row | Game1JENKS (708) | Game3KC (920) | Gate | Verdict |
+| --- | --- | --- | --- | --- |
+| First photo after open (cold first-touch) | 0.272 s (scan 0.185 + display 0.086) | 0.334 s (scan 0.246 + display 0.088) | ≤ 0.5 s | **OK** |
+| First photo after open (warm re-run) | 0.118 s | (scan warm 0.03 s) | ≤ 0.5 s | **OK** |
+| Arrow → next photo (7 files, median) | 0.070 s | 0.082 s | ≤ 0.09 s | **OK** |
+| 1:1 zoom re-decode (embedded full preview) | 0.195–0.201 s | 0.196 s | v1 parity on GPU | decode half only |
+| Exact RAW develop (LibRaw, warm) | **1.03–1.05 s** | **1.05 s** | ≤ 0.119 s (1.5× v1) | **OVER TARGET** |
+
+**The Exact RAW row cannot meet its gate with a CPU LibRaw develop, and this is an owner
+decision, not a tuning knob.** The 1.05 s is `unpack` 0.20 s + AHD demosaic/develop 0.66 s
++ RGBA expansion 0.02 s + orientation 0.14 s (orientation 8). v1's 0.079 s came from Core
+Image's GPU pipeline (CIRAWFilter); LibRaw is single-threaded CPU here, and
+`rsraw-sys` does not compile LibRaw with OpenMP (its build script passes no `-fopenmp`,
+and macOS clang has no OpenMP runtime by default). Faster demosaics exist — linear 0.34 s,
+PPG 0.30 s — but they visibly degrade pixels, so choosing one to hit a number would
+trade image quality for a benchmark. Options for the owner: accept an on-demand ~1 s
+Exact RAW (it is one photo deep, never in the prefetch), revisit D2, or add a later GPU
+develop path. Recorded here so the gate stays honest.
 
 ## 6. Milestones
 

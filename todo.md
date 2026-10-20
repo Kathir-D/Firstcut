@@ -183,7 +183,7 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-20 (v2, M1 vertical slice — the legs are landing one commit at a time).**
+> **As of 2026-10-20 (v2, M2 pipeline in progress — M1 is green and M2 is landing one commit at a time).**
 > The `v2` branch is the pure-Rust rewrite (**`docs/v2-plan.md` is its contract**; agent rules
 > live in the rewritten `AGENTS.md`). Milestone state:
 >
@@ -271,8 +271,30 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   summary.md), and the matrix is **green on the tip** (run 39465662543 through `86a4c4b`).
 >   PR #6's body describes the M1 status; the only owner-owned remainder in M1 is the README
 >   image itself (run `docs/showcase/m1-screenshot.sh` on an approved shoot — the pixels are
->   the owner's call). M2 next: decode priority window, cancellation, Exact RAW, memory
->   budget, watcher + histogram (which carries the EXIF-orientation rotate), bench rows.
+>   the owner's call).
+> - **M2 pipeline landed (commits `8c424db`, `fd6c784`, `2b574e6`, and the M2 docs commit):**
+>   `firstcut-engine::pipeline` owns the priority window, cancellation generations, per-tier
+>   LRU under a byte budget, pressure shedding and the one-deep Exact RAW tier; its four
+>   audit-defect regression tests are the ones the plan named. The app now runs a worker pool
+>   around it (`apps/firstcut/src/main.rs`), reports `viewport_edge`/zoom/exact-raw from the
+>   model, rebuilds the catalog only on `catalog_revision`, and drops thumbnail Arcs when the
+>   policy evicts them. EXIF orientation is applied exactly once (decode seam; LibRaw develops
+>   with `user_flip = 0`). Histograms ride on the cached `Frame` and come from those oriented
+>   pixels. `notify` watcher + `Model::rescan_folder` reconcile on folder events and keep the
+>   cursor by id; `on_exit` calls `Model::close_session` (flush + checkpoint). Visual
+>   signatures are computed from the same thumbnail pixels the strip shows and submitted to the
+>   session; re-cuts arrive through `drain_session_messages`.
+> - **Exact RAW backend:** `firstcut-decode-libraw` develops through `rsraw`'s vendored LibRaw
+>   0.21.1 on macOS/Linux. **Windows is deliberately `None`** (rsraw's build script refuses
+>   MSVC); the tier falls back to the embedded JPEG there. Note in `docs/v2-plan.md` §4.2.
+> - **§5 decode rows measured** (`docs/v2-plan.md` §5.1, `docs/qa/perf-baselines.md`, both games):
+>   first photo 0.118 s warm / 0.27–0.33 s cold, arrow → next 0.070–0.082 s, zoom decode
+>   0.195 s. **Exact RAW is 1.03–1.05 s against the 0.119 s gate** — v1's 0.079 s was Core
+>   Image on the GPU, LibRaw here is single-threaded CPU. Recorded as an owner decision with
+>   the options; do not "fix" it by choosing a visibly worse demosaic to hit the number.
+> - **M2 still open:** the first-photo fast path (header + preview on screen while the scan
+>   runs), the real-format decode sweep (`scripts/test-with-photos.sh`), the full `cargo xtask
+>   ci` + 3-OS matrix on the M2 tip, and the owner's call on the Exact RAW gate. Then M3.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).

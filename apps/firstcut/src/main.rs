@@ -5,7 +5,7 @@
 //! `--smoke` flag creates the window, paints a few frames and exits 0 — that is
 //! the cross-OS proof the CI matrix runs (docs/v2-plan.md §6, M0/M1).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -225,6 +225,9 @@ impl eframe::App for Shell {
         if self.bank.pump(&self.model, viewport_edge, zoomed) {
             ui.ctx().request_repaint();
         }
+        // Visual signatures may have re-cut unvisited batches; take the latest snapshot before the
+        // screen paints so the strip never shows boundaries the session has already moved.
+        self.model.drain_session_messages();
 
         let current_id = self.model.current_photo_id();
         let current_frame = current_id.and_then(|id| self.bank.frame(id));
@@ -381,6 +384,9 @@ struct DecodeBank {
     thumbnails: HashMap<u64, Arc<egui::ColorImage>>,
     catalog_revision: u64,
     inflight_limit: usize,
+    /// Thumbnails already offered to the batcher. A re-decode after eviction must not submit the
+    /// same signature again; the batcher would no-op, but the work is avoidable.
+    signatures_sent: HashSet<u64>,
 }
 
 impl DecodeBank {
@@ -415,6 +421,7 @@ impl DecodeBank {
             thumbnails: HashMap::new(),
             catalog_revision: u64::MAX,
             inflight_limit: workers.max(1) * 2,
+            signatures_sent: HashSet::new(),
         }
     }
 
@@ -431,6 +438,11 @@ impl DecodeBank {
                     if self.pipeline.complete(&job, Arc::clone(&frame), edge) {
                         if job.tier == Tier::Thumbnail {
                             self.thumbnails.insert(job.id.0, Arc::clone(&frame.image));
+                            // One decode, two consumers: the filmstrip gets the pixels and the
+                            // batcher gets the signature of those exact pixels.
+                            if self.signatures_sent.insert(job.id.0) {
+                                model.submit_thumbnail_pixels(job.id, &decoded.rgba, decoded.width, decoded.height);
+                            }
                         }
                         changed = true;
                     }
@@ -468,8 +480,7 @@ impl DecodeBank {
 
         // Drop the strip's references to thumbnails the policy evicted, so the map is a view of
         // the cache rather than a second unbounded one.
-        let keep: std::collections::HashSet<u64> =
-            self.thumbnails.keys().copied().filter(|id| self.pipeline.contains(PhotoId(*id), Tier::Thumbnail)).collect();
+        let keep: HashSet<u64> = self.thumbnails.keys().copied().filter(|id| self.pipeline.contains(PhotoId(*id), Tier::Thumbnail)).collect();
         self.thumbnails.retain(|id, _| keep.contains(id));
         changed
     }

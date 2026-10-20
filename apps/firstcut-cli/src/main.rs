@@ -108,6 +108,7 @@ COMMANDS
         Time order() + batch() and compare against the 2 s / 1,500-file target.
 
   bench --folder <dir> [--repeat <n>]
+  bench --decode --folder <dir> [--repeat <n>]
         Time the phases that need real files: the header scan, then order() + batch(), then
         the whole thing end to end. Cold and warm are reported separately and scaled to 1,500
         files against the todo.md §7.3 targets. No metadata fixture is needed.
@@ -370,6 +371,11 @@ fn cmd_ground_truth(args: &[String]) -> Result<(), String> {
 // -------------------------------------------------------------------- bench
 
 fn cmd_bench(args: &[String]) -> Result<(), String> {
+    // `--decode` is the §5 pixel rows; `--folder` alone is the scan/db rows.
+    if args.iter().any(|a| a == "--decode") {
+        let (dir, repeat) = bench_folder_args(args).ok_or("bench --decode needs --folder <dir>")?;
+        return bench_decode(&dir, repeat);
+    }
     // `--folder` times the phases that need real files: the header scan, then order + batch on what
     // it returned, then the whole thing end to end. Without it, only order + batch are timed, which
     // is what the committed metadata dumps allow in CI. It is read here rather than through
@@ -613,6 +619,147 @@ fn bench_folder(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
 
 fn verdict(inside: bool) -> &'static str {
     if inside { "OK" } else { "OVER TARGET" }
+}
+
+// ---------------------------------------------------------------- bench --decode
+
+/// The viewer's decode target for "not zoomed". The app asks for the actual backing edge; 2048 is
+/// the plan's fallback (`FALLBACK_DISPLAY_EDGE`) and a retina-class 1200×760 pane's long edge.
+const BENCH_VIEWPORT_EDGE: u32 = 2048;
+/// How many photographs the arrow row steps through (the first is the "first photo" row).
+const ARROW_SAMPLES: usize = 8;
+
+/// Times the §5 decode rows on real files: first photo after open, arrow → next, Exact RAW develop,
+/// and a 1:1 re-decode. The rows alternate the preview and RAW develop across rounds, which is v1's
+/// protocol: whichever decode runs first pays for the cold file read, so a single one-way pass would
+/// make the second row look faster than it is.
+///
+/// This measures the decode work, not the GPU upload or the window's paint. The 100% zoom row is
+/// therefore a lower bound on the interactive cost; the window is measured by the app itself.
+fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Err(format!("{} is not a folder", dir.display()));
+    }
+    let scan_start = std::time::Instant::now();
+    let scan = firstcut_meta::meta::scan_folder(dir).map_err(|e| format!("scan failed: {e}"))?;
+    let scan_secs = scan_start.elapsed().as_secs_f64();
+    let sources: Vec<&firstcut_meta::meta::PhotoMeta> = scan.photos.iter().filter(|photo| photo.full_preview.is_some()).collect();
+    let Some(first) = sources.first().copied() else {
+        return Err("no photograph with an embedded full preview; is this a RAW/JPEG shoot?".to_string());
+    };
+
+    // §5 row 1: open → first photo on screen. What the user waits for is the scan plus the first
+    // display decode, so both are in the number.
+    let first_path = dir.join(&first.rel_path);
+    let decode_start = std::time::Instant::now();
+    let first_image = firstcut_decode::decode_display_at(&first_path, first, BENCH_VIEWPORT_EDGE).map_err(|err| format!("first photo: {err}"))?;
+    let first_decode_secs = decode_start.elapsed().as_secs_f64();
+    std::hint::black_box(&first_image);
+    let first_on_screen_secs = scan_secs + first_decode_secs;
+
+    // §5 row 2: arrow → next. Eight different files, so the first round is genuinely cold.
+    let mut arrow_medians = Vec::new();
+    for run in 0..repeat {
+        let mut times = Vec::new();
+        for photo in sources.iter().skip(1).take(ARROW_SAMPLES.saturating_sub(1)) {
+            let path = dir.join(&photo.rel_path);
+            let start = std::time::Instant::now();
+            let image = firstcut_decode::decode_display_at(&path, photo, BENCH_VIEWPORT_EDGE).map_err(|err| format!("{}: {err}", photo.rel_path))?;
+            times.push(start.elapsed().as_secs_f64());
+            std::hint::black_box(&image);
+        }
+        arrow_medians.push(median(&times));
+        if run == 0 && times.is_empty() {
+            return Err("the shoot has only one photograph; the arrow row needs a second".to_string());
+        }
+    }
+    let Some(arrow_cold) = arrow_medians.first().copied() else {
+        return Err("repeat is at least 1".to_string());
+    };
+    let arrow_warm = arrow_medians.iter().copied().filter(|t| t.is_finite()).fold(f64::MAX, f64::min);
+
+    // §5 row 3: Exact RAW, alternating with a display decode so neither side owns the cold read.
+    let backend = firstcut_decode_libraw::backend();
+    let raw_photo = sources.iter().copied().find(|photo| matches!(photo.kind, firstcut_meta::meta::FileKind::Raw(_)));
+    let mut raw_times = Vec::new();
+    let mut display_times = Vec::new();
+    if let (Some(backend), Some(photo)) = (backend.as_deref(), raw_photo) {
+        for _ in 0..repeat {
+            let start = std::time::Instant::now();
+            let developed = backend.decode_raw(&dir.join(&photo.rel_path), photo).map_err(|err| format!("Exact RAW: {err}"))?;
+            raw_times.push(start.elapsed().as_secs_f64());
+            std::hint::black_box(&developed);
+
+            let start = std::time::Instant::now();
+            let preview = firstcut_decode::decode_display_at(&dir.join(&photo.rel_path), photo, BENCH_VIEWPORT_EDGE)
+                .map_err(|err| format!("the RAW photograph's preview: {err}"))?;
+            display_times.push(start.elapsed().as_secs_f64());
+            std::hint::black_box(&preview);
+        }
+    }
+
+    // §5 row 4's decode half: a 1:1 re-decode of the embedded full preview (the app's zoom path).
+    let mut zoom_times = Vec::new();
+    for _ in 0..repeat {
+        let start = std::time::Instant::now();
+        let full = firstcut_decode::decode_display(&first_path, first).map_err(|err| format!("1:1 re-decode: {err}"))?;
+        zoom_times.push(start.elapsed().as_secs_f64());
+        std::hint::black_box(&full);
+    }
+    let zoom_best = zoom_times.iter().copied().filter(|t| t.is_finite()).fold(f64::MAX, f64::min);
+
+    println!("folder: {}", dir.display());
+    println!("photos: {} ({} with a full preview), {repeat} round(s)", scan.photos.len(), sources.len());
+    println!();
+    println!("§5 decode rows (macOS, release build; decode only, not GPU upload):");
+    println!(
+        "  first photo on screen   {:>7.3} s   (scan {:.3} s + display {:.3} s)   target ≤ 0.500 s  {}",
+        first_on_screen_secs,
+        scan_secs,
+        first_decode_secs,
+        verdict(first_on_screen_secs <= 0.5)
+    );
+    println!(
+        "  arrow → next photo      {:>7.3} s cold, {:>7.3} s warm (median of up to {})   target ≤ 0.090 s  {}",
+        arrow_cold,
+        arrow_warm,
+        ARROW_SAMPLES - 1,
+        verdict(arrow_warm <= 0.09)
+    );
+    match (backend.is_some(), raw_photo, raw_times.iter().copied().reduce(f64::min), display_times.iter().copied().reduce(f64::min)) {
+        (true, Some(photo), Some(raw), Some(display)) => {
+            let ratio = if display > 0.0 { raw / display } else { f64::INFINITY };
+            println!(
+                "  Exact RAW develop       {:>7.3} s warm ({:.2}× the preview's {:.3} s)   target ≤ 0.119 s  {}",
+                raw,
+                ratio,
+                display,
+                verdict(raw <= 0.079 * 1.5)
+            );
+            println!("                          {}", photo.rel_path);
+        }
+        (false, _, _, _) => println!("  Exact RAW develop       unavailable on this platform (the backend answers None; preview fallback)"),
+        _ => println!("  Exact RAW develop       not measured: no RAW photograph in this folder"),
+    }
+    println!("  1:1 zoom re-decode      {:>7.3} s warm (embedded full preview)   GPU upload not included", zoom_best);
+    println!();
+    println!("Cold = the first round; warm = the fastest of {repeat}. The cold-file-cache rule applies:");
+    println!("whichever decode runs first pays for the read, so the warm row is the comparable one.");
+    Ok(())
+}
+
+/// The middle value of a set of timings (`NaN`-free, never indexes).
+fn median(times: &[f64]) -> f64 {
+    let mut sorted: Vec<f64> = times.iter().copied().filter(|t| t.is_finite()).collect();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    match sorted.len() {
+        0 => f64::NAN,
+        len if len % 2 == 1 => sorted.get(len / 2).copied().unwrap_or(f64::NAN),
+        len => match (sorted.get(len / 2 - 1), sorted.get(len / 2)) {
+            (Some(a), Some(b)) => (a + b) / 2.0,
+            _ => f64::NAN,
+        },
+    }
 }
 
 fn no_sigs() -> HashMap<PhotoId, firstcut_batching::batch::VisualSig> {

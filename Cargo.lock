@@ -1010,6 +1010,8 @@ version = "0.2.0-dev"
 dependencies = [
  "firstcut-batching",
  "firstcut-catalog",
+ "firstcut-decode",
+ "firstcut-decode-libraw",
  "firstcut-engine",
  "firstcut-meta",
  "firstcut-types",

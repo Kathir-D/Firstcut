@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 firstcut-batching = { workspace = true }
 firstcut-catalog = { workspace = true }
+firstcut-decode = { workspace = true }
+firstcut-decode-libraw = { workspace = true }
 firstcut-engine = { workspace = true }
 firstcut-meta = { workspace = true }
 firstcut-types = { workspace = true }

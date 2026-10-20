@@ -221,6 +221,16 @@ impl Model {
         self.settings_store.as_ref().map(|store| store.current().performance.clone()).unwrap_or_default()
     }
 
+    /// Offers a thumbnail decode's pixels to the batcher. The signature is computed from the same
+    /// buffer the filmstrip is about to show — the pipeline never decodes a photo twice for it.
+    /// Batches that move are queued on the session listener and arrive through
+    /// [`Model::drain_session_messages`].
+    pub fn submit_thumbnail_pixels(&self, id: PhotoId, rgba: &[u8], width: u32, height: u32) {
+        if let Some(session) = self.session.as_ref() {
+            session.submit_visual_sigs(vec![(id, firstcut_batching::batch::visual_sig(rgba, width, height))]);
+        }
+    }
+
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
@@ -858,5 +868,35 @@ impl SessionListener for SessionForwarder {
         if let Ok(mut queue) = self.errors.lock() {
             queue.push(message);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn synthetic(index: u32) -> Vec<u8> {
+        firstcut_meta::meta::cr3::SyntheticCr3::r8().at("2026:08:27 19:54:00").subsec(&format!("{index:02}")).build()
+    }
+
+    #[test]
+    fn a_rescan_keeps_the_cursor_and_bumps_the_catalog_revision() {
+        let sessions = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        for index in 1..=3u32 {
+            std::fs::write(folder.path().join(format!("IMG_000{index}.CR3")), synthetic(index)).unwrap();
+        }
+        let mut model = Model::new();
+        model.open_folder_in(folder.path(), sessions.path()).unwrap();
+        model.go_to_photo(1);
+        let cursor = model.current_photo_id().expect("the shoot has photographs");
+        let revision = model.catalog_revision();
+
+        std::fs::write(folder.path().join("IMG_0004.CR3"), synthetic(4)).unwrap();
+        model.rescan_folder().expect("the rescan reads the new file");
+
+        assert_eq!(model.photos().len(), 4, "the new photograph is part of the catalog");
+        assert_eq!(model.current_photo_id(), Some(cursor), "the cursor follows its photograph by id");
+        assert!(model.catalog_revision() > revision, "the decode bank must see a catalog change");
     }
 }
