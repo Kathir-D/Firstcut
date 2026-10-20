@@ -74,7 +74,18 @@ fn shell_step(name: &'static str, cmd: &mut Command) -> Step {
     let (ok, message) = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output() {
         Ok(out) => {
             let ok = out.status.success();
-            let text = String::from_utf8_lossy(if ok { &out.stdout } else { &out.stderr });
+            // Both streams matter here: clippy and rustc errors go to stderr, cargo test's
+            // `failures:` report (test names + panic messages) goes to stdout. A failing step
+            // echoes both, so the next reader never has to re-run CI to see what broke.
+            let text = if ok {
+                String::from_utf8_lossy(&out.stdout).into_owned()
+            } else {
+                format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                )
+            };
             let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
             let tail = lines.last_page(250).join("\n");
             (ok, tail)
