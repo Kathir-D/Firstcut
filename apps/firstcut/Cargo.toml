@@ -19,3 +19,7 @@ firstcut-catalog = { workspace = true }
 firstcut-ui = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["snapshot", "wgpu"] }
+tempfile = { workspace = true }

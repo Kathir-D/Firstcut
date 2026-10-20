@@ -250,7 +250,7 @@ fn paint_thumb(row: &mut egui::Ui, thumb: &Thumb, images: &FrameImages<'_>, text
             // rectangle that reads as a blown highlight.
             None => egui::Button::new(RichText::new("…").weak()).min_size(vec2(THUMB_WIDTH - 12.0, THUMB_IMAGE_HEIGHT)),
         };
-        let clicked = card.add(button).clicked();
+        let clicked = card.add(button).on_hover_text(format!("filmstrip: {}", thumb.file_name)).clicked();
         card.label(RichText::new(&thumb.file_name).small().color(if selected { ACCENT } else { FOREGROUND }));
         card.label(RichText::new(stars_label(&thumb.rating)).small().weak());
         clicked
@@ -267,10 +267,12 @@ fn load_texture<'a>(textures: &'a mut HashMap<u64, TextureHandle>, ctx: &egui::C
 }
 
 /// Stars the way v1 drew them under a strip frame; unrated reads as a dot, not an empty line.
+/// ASCII on purpose: egui's bundled fonts carry no U+2605, and the missing-glyph panic must
+/// never be one frame away. v1's vector stars come back with the theme assets leg.
 fn stars_label(rating: &Rating) -> String {
     match rating.stars {
         0 => String::from("·"),
-        stars => "★".repeat(stars as usize),
+        stars => "*".repeat(stars as usize),
     }
 }
 
