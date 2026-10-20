@@ -5,14 +5,18 @@
 //! `--smoke` flag creates the window, paints a few frames and exits 0 — that is
 //! the cross-OS proof the CI matrix runs (docs/v2-plan.md §6, M0/M1).
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc;
 
 use eframe::egui;
+use firstcut_decode::{DecodedImage, Histogram, RawDecode, decode_display, decode_display_at, decode_thumbnail, histogram};
 use firstcut_engine::model::Model;
+use firstcut_engine::pipeline::{FALLBACK_DISPLAY_EDGE, Focus, Job, Pipeline, Source, THUMBNAIL_EDGE, Tier, TierBudgets};
 use firstcut_engine::settings::SettingsStore;
-use firstcut_meta::meta::PhotoMeta;
+use firstcut_engine::watch::{FolderWatcher, watch};
+use firstcut_types::PhotoId;
 use serde_json::json;
 
 mod control;
@@ -109,6 +113,10 @@ struct Shell {
     /// exactly once, so `Option` is not a state machine, it is "before the first paint".
     wake_slot: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
     wake_noticed: bool,
+    /// The live folder watcher and the folder it watches (started on the first frame the model
+    /// has a folder, restarted if the folder changes).
+    watcher: Option<(FolderWatcher, mpsc::Receiver<()>)>,
+    watched_folder: Option<PathBuf>,
 }
 
 impl Shell {
@@ -118,16 +126,65 @@ impl Shell {
         wake_slot: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
         model: Model,
     ) -> Self {
+        let performance = model.performance_settings();
+        let fraction = if performance.memory_budget_fraction.is_finite() && performance.memory_budget_fraction > 0.0 {
+            performance.memory_budget_fraction
+        } else {
+            0.4
+        };
+        // The fraction is of physical RAM (v1 applied it to a measured amount); until a settings
+        // screen offers a byte count, apply it to the same four-gigabyte baseline the pipeline's
+        // default uses.
+        let total_budget = (4.0 * 1024.0 * 1024.0 * 1024.0 * fraction / 0.4) as usize;
+        let threads = if performance.decode_threads == 0 {
+            std::thread::available_parallelism().map_or(4, |count| count.get()).min(4)
+        } else {
+            performance.decode_threads.clamp(1, 8) as usize
+        };
+        let raw: Option<Arc<dyn RawDecode>> = firstcut_decode_libraw::backend();
         Self {
             model,
             screen: firstcut_ui::CullScreen::new(),
-            bank: DecodeBank::new(),
+            bank: DecodeBank::new(TierBudgets::from_total(total_budget), threads, raw),
             frames_painted: 0,
             smoke_logged: false,
             smoke,
             control_receiver,
             wake_slot,
             wake_noticed: false,
+            watcher: None,
+            watched_folder: None,
+        }
+    }
+
+    /// Starts or restarts the watcher when the open folder changes. A watcher that cannot start
+    /// is a logged degradation, not a crash: the user can still reopen the folder by hand.
+    fn sync_watcher(&mut self) {
+        let wanted = self.model.folder().map(Path::to_path_buf);
+        if wanted == self.watched_folder {
+            return;
+        }
+        self.watcher = None;
+        self.watched_folder = wanted.clone();
+        if let Some(folder) = wanted {
+            match watch(&folder) {
+                Ok((watcher, events)) => self.watcher = Some((watcher, events)),
+                Err(err) => eprintln!("firstcut: {err}"),
+            }
+        }
+    }
+
+    /// Drains the watcher's "something changed" token and reconciles. Events that arrive while
+    /// the app is busy coalesce into one rescan, which is what FSEvents gives us anyway.
+    fn poll_watcher(&mut self) {
+        let mut changed = false;
+        if let Some((_, events)) = self.watcher.as_ref() {
+            while events.try_recv().is_ok() {
+                changed = true;
+            }
+        }
+        if changed && let Err(err) = self.model.rescan_folder() {
+            eprintln!("firstcut: rescan failed: {err}");
         }
     }
 }
@@ -158,16 +215,24 @@ impl eframe::App for Shell {
             }
             self.control_receiver = Some(receiver);
         }
-        // Finished decodes land in the cache, then what the surfaces want next
-        // is queued — ahead of repainting, so a decode has the whole frame's
-        // time to get back before the next try.
-        if self.bank.pump(&self.model) {
+        self.sync_watcher();
+        self.poll_watcher();
+
+        // Finished decodes land in the cache, then what the surfaces want next is queued — ahead
+        // of repainting, so a decode has the whole frame's time to get back before the next try.
+        let viewport_edge = self.screen.viewport_edge();
+        let zoomed = self.screen.is_zoomed();
+        if self.bank.pump(&self.model, viewport_edge, zoomed) {
             ui.ctx().request_repaint();
         }
 
         let current_id = self.model.current_photo_id();
-        let current = current_id.and_then(|id| self.bank.image(id.0).map(|pixels| (id, pixels)));
-        let images = firstcut_ui::FrameImages { current, thumbs: &self.bank.cache };
+        let current_frame = current_id.and_then(|id| self.bank.frame(id));
+        let images = firstcut_ui::FrameImages {
+            current: current_id.zip(current_frame).map(|(id, frame)| (id, frame.image.as_ref())),
+            thumbs: &self.bank.thumbnails,
+            histogram: current_frame.map(|frame| &frame.histogram),
+        };
         self.screen.show(ui, &mut self.model, &images);
 
         self.frames_painted += 1;
@@ -179,6 +244,12 @@ impl eframe::App for Shell {
             }
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
+    }
+
+    /// Flush the debounced sidecar queue and checkpoint the database on quit (docs/v2-plan.md
+    /// §4.2: "flush on quit"). A rating in the last second before closing must not be lost.
+    fn on_exit(&mut self) {
+        self.model.close_session();
     }
 }
 
@@ -215,8 +286,12 @@ impl Shell {
         let mut screen = firstcut_ui::CullScreen::new();
         let mut harness = egui_kittest::Harness::builder().with_size(control::HARNESS_SIZE).build_ui(|ui| {
             let current_id = model.current_photo_id();
-            let current = current_id.and_then(|id| bank.image(id.0).map(|pixels| (id, pixels)));
-            let images = firstcut_ui::FrameImages { current, thumbs: &bank.cache };
+            let current_frame = current_id.and_then(|id| bank.frame(id));
+            let images = firstcut_ui::FrameImages {
+                current: current_id.zip(current_frame).map(|(id, frame)| (id, frame.image.as_ref())),
+                thumbs: &bank.thumbnails,
+                histogram: current_frame.map(|frame| &frame.histogram),
+            };
             screen.show(ui, model, &images);
         });
         harness.run();
@@ -253,8 +328,12 @@ impl Shell {
         let mut screen = firstcut_ui::CullScreen::new();
         let mut harness = egui_kittest::Harness::builder().with_size(control::HARNESS_SIZE).build_ui(|ui| {
             let current_id = model.current_photo_id();
-            let current = current_id.and_then(|id| bank.image(id.0).map(|pixels| (id, pixels)));
-            let images = firstcut_ui::FrameImages { current, thumbs: &bank.cache };
+            let current_frame = current_id.and_then(|id| bank.frame(id));
+            let images = firstcut_ui::FrameImages {
+                current: current_id.zip(current_frame).map(|(id, frame)| (id, frame.image.as_ref())),
+                thumbs: &bank.thumbnails,
+                histogram: current_frame.map(|frame| &frame.histogram),
+            };
             screen.show(ui, model, &images);
         });
         harness.run();
@@ -270,134 +349,165 @@ impl Shell {
 
 // ---- decoding -----------------------------------------------------------------------------
 
-/// One decode the UI asked for. The address and the metadata travel together so
-/// the worker never needs the model.
-struct Job {
-    id: u64,
-    path: PathBuf,
-    meta: PhotoMeta,
+/// One decoded frame as the surfaces receive it: the pixels plus the histogram computed from
+/// those exact (already oriented) pixels. Caching them together is what makes the Info panel's
+/// data seam orientation-safe — there is no second decode to disagree with the loupe.
+struct Frame {
+    image: Arc<egui::ColorImage>,
+    histogram: Histogram,
 }
 
-/// The app-side half of the decode pipeline for the slice: one worker thread
-/// and a small cache of the shots the surfaces are looking at right now. The
-/// priority window and tiers that replace this are M2's work.
+fn frame_bytes(frame: &Arc<Frame>) -> usize {
+    frame.image.pixels.len().saturating_mul(std::mem::size_of::<egui::Color32>())
+}
+
+enum DecodeResult {
+    Done(Job, DecodedImage, Box<Histogram>),
+    Failed(Job, String),
+}
+
+/// The app-side half of the decode pipeline: threads and channels around the engine's policy
+/// (`firstcut_engine::pipeline`). The policy owns the window, cancellation, tiers and budgets;
+/// this type only turns jobs into pixels and hands the results back.
 struct DecodeBank {
-    sender: mpsc::Sender<Job>,
-    receiver: mpsc::Receiver<Result<(u64, egui::ColorImage), (u64, String)>>,
-    /// Decoded pixels by photo id; `order` keeps the insertion order for eviction.
-    cache: HashMap<u64, egui::ColorImage>,
-    order: VecDeque<u64>,
-    inflight: HashSet<u64>,
-    /// Decodes that failed are never requested again, so a corrupt file costs
-    /// one attempt, not one attempt per frame.
-    failed: HashSet<u64>,
+    pipeline: Pipeline<Arc<Frame>>,
+    /// One job channel per worker. Separate channels are what let every worker block on recv;
+    /// a shared `Receiver` would leave all but one blocked on the mutex.
+    senders: Vec<mpsc::Sender<Job>>,
+    next_worker: usize,
+    results: mpsc::Receiver<DecodeResult>,
+    /// The filmstrip's pixels, kept as the same `Arc` the pipeline caches, so eviction in the
+    /// policy is the only accounting and this map never holds a private copy.
+    thumbnails: HashMap<u64, Arc<egui::ColorImage>>,
+    catalog_revision: u64,
+    inflight_limit: usize,
 }
-
-/// How many decoded shots the bank holds. The filmstrip plus the loupe need a
-/// screenful; more only keeps pixels nobody can see.
-const CACHE_LIMIT: usize = 64;
-/// Decodes happening at once. A real burst arrive ~50 ms apart on a card; four
-/// keeps the strip filling while the loupe's subject jumps the queue.
-const INFLIGHT_LIMIT: usize = 4;
 
 impl DecodeBank {
-    /// The worker is the only way pixels arrive; a thread that could not start
-    /// is not a crash — the bank just answers "not decoded yet" forever, and
-    /// later sends fail through the closure-dropped `jobs` channel.
-    fn new() -> Self {
-        let (sender, jobs) = mpsc::channel::<Job>();
-        let (results, receiver) = mpsc::channel();
-        if let Err(err) = std::thread::Builder::new().name("firstcut-decode".to_string()).spawn(move || {
-            while let Ok(job) = jobs.recv() {
-                let decoded = firstcut_decode::decode_display(&job.path, &job.meta);
-                let result = decoded
-                    .map(|raw| (job.id, egui::ColorImage::from_rgba_unmultiplied([raw.width as usize, raw.height as usize], &raw.rgba)))
-                    .map_err(|err| (job.id, err.to_string()));
-                if results.send(result).is_err() {
-                    break; // the window closed; the worker is done
+    fn new(budgets: TierBudgets, workers: usize, raw: Option<Arc<dyn RawDecode>>) -> Self {
+        let (results, receiver) = mpsc::channel::<DecodeResult>();
+        let mut senders = Vec::new();
+        for index in 0..workers.max(1) {
+            let (sender, jobs) = mpsc::channel::<Job>();
+            let results = results.clone();
+            let raw = raw.clone();
+            let name = format!("firstcut-decode-{index}");
+            if let Err(err) = std::thread::Builder::new().name(name).spawn(move || {
+                while let Ok(job) = jobs.recv() {
+                    let result = match decode_job(&job, raw.as_deref()) {
+                        Ok((image, histogram)) => DecodeResult::Done(job, image, Box::new(histogram)),
+                        Err(message) => DecodeResult::Failed(job, message),
+                    };
+                    if results.send(result).is_err() {
+                        break; // the window closed; the worker is done
+                    }
                 }
+            }) {
+                eprintln!("firstcut: the decode worker could not start: {err}");
             }
-        }) {
-            eprintln!("firstcut: the decode worker could not start: {err}");
+            senders.push(sender);
         }
-        Self { sender, receiver, cache: HashMap::new(), order: VecDeque::new(), inflight: HashSet::new(), failed: HashSet::new() }
+        Self {
+            pipeline: Pipeline::new(budgets, frame_bytes),
+            senders,
+            next_worker: 0,
+            results: receiver,
+            thumbnails: HashMap::new(),
+            catalog_revision: u64::MAX,
+            inflight_limit: workers.max(1) * 2,
+        }
     }
 
-    /// Drains finished decodes into the cache, then queues what the surfaces
-    /// want next — the loupe's photo first, then the strip's, evicting the
-    /// coldest entries when the cache is over its limit. `true` when pixels
-    /// arrived, so the window repaints while the user is idle.
-    fn pump(&mut self, model: &Model) -> bool {
+    /// Drains finished decodes, reconciles the catalog when the model says it changed, reports
+    /// the focus window, and fills the workers. `true` when pixels arrived.
+    fn pump(&mut self, model: &Model, viewport_edge: u32, zoomed: bool) -> bool {
         let mut changed = false;
         loop {
-            match self.receiver.try_recv() {
-                Ok(Ok((id, image))) => {
-                    self.cache.insert(id, image);
-                    self.order.push_back(id);
-                    self.inflight.remove(&id);
-                    changed = true;
+            match self.results.try_recv() {
+                Ok(DecodeResult::Done(job, decoded, histogram)) => {
+                    let edge = decoded.longest_edge();
+                    let image = Arc::new(egui::ColorImage::from_rgba_unmultiplied([decoded.width as usize, decoded.height as usize], &decoded.rgba));
+                    let frame = Arc::new(Frame { image, histogram: *histogram });
+                    if self.pipeline.complete(&job, Arc::clone(&frame), edge) {
+                        if job.tier == Tier::Thumbnail {
+                            self.thumbnails.insert(job.id.0, Arc::clone(&frame.image));
+                        }
+                        changed = true;
+                    }
                 }
-                Ok(Err((id, message))) => {
+                Ok(DecodeResult::Failed(job, message)) => {
                     eprintln!("firstcut: {message}");
-                    self.failed.insert(id);
-                    self.inflight.remove(&id);
+                    self.pipeline.fail(&job);
                 }
                 Err(_) => break,
             }
         }
 
-        if let Some(folder) = model.folder() {
-            self.queue_requests(model, folder);
+        let revision = model.catalog_revision();
+        if revision != self.catalog_revision {
+            self.catalog_revision = revision;
+            let catalog = model
+                .folder()
+                .map(|folder| {
+                    model.photos().iter().map(|photo| Source { path: folder.join(&photo.meta.rel_path), meta: photo.meta.clone() }).collect()
+                })
+                .unwrap_or_default();
+            self.pipeline.set_catalog(catalog);
         }
-        self.evict(model.current_photo_id().map(|id| id.0));
+
+        let focus = Focus {
+            windows: model.focus_windows(),
+            current: model.current_photo_id(),
+            viewport_edge,
+            zoomed,
+            zoom_lock: model.zoom_lock(),
+            exact_raw: model.exact_raw(),
+        };
+        self.pipeline.set_focus(focus);
+        self.fill_workers();
+
+        // Drop the strip's references to thumbnails the policy evicted, so the map is a view of
+        // the cache rather than a second unbounded one.
+        let keep: std::collections::HashSet<u64> =
+            self.thumbnails.keys().copied().filter(|id| self.pipeline.contains(PhotoId(*id), Tier::Thumbnail)).collect();
+        self.thumbnails.retain(|id, _| keep.contains(id));
         changed
     }
 
-    /// One decode queued for the worker per not-yet-decoded photo, current
-    /// photo first. Queues, never blocks: a worker that is gone is reported
-    /// once and the rest of the frame carries on.
-    fn queue_requests(&mut self, model: &Model, folder: &Path) {
-        let mut wanted: Vec<u64> = Vec::new();
-        if let Some(id) = model.current_photo_id() {
-            wanted.push(id.0);
-        }
-        for batch in model.batches() {
-            wanted.extend(batch.photo_ids.iter().map(|id| id.0));
-        }
-
-        let mut slots = INFLIGHT_LIMIT.saturating_sub(self.inflight.len());
-        for id in wanted {
-            if slots == 0 {
-                return;
-            }
-            if self.cache.contains_key(&id) || self.inflight.contains(&id) || self.failed.contains(&id) {
-                continue;
-            }
-            let Some(photo) = model.photos().iter().find(|photo| photo.meta.id.0 == id) else { continue };
-            let job = Job { id, path: folder.join(&photo.meta.rel_path), meta: photo.meta.clone() };
-            if self.sender.send(job).is_err() {
-                eprintln!("firstcut: the decode worker is not running");
-                return;
-            }
-            self.inflight.insert(id);
-            slots -= 1;
-        }
-    }
-
-    /// When the cache is over its limit, the coldest entries go first — but
-    /// never the photo the loupe is showing, or it would decode in a loop.
-    fn evict(&mut self, current: Option<u64>) {
-        while self.cache.len() > CACHE_LIMIT {
-            let Some(oldest) = self.order.pop_front() else { break };
-            if current == Some(oldest) {
-                self.order.push_back(oldest);
+    fn fill_workers(&mut self) {
+        while self.pipeline.in_flight() < self.inflight_limit {
+            let Some(job) = self.pipeline.next_job() else { break };
+            let Some(sender) = self.senders.get(self.next_worker % self.senders.len().max(1)) else { break };
+            if sender.send(job).is_err() {
+                // A worker that is gone must not wedge the queue: let the next frame retry.
                 break;
             }
-            self.cache.remove(&oldest);
+            self.next_worker = self.next_worker.wrapping_add(1);
         }
     }
 
-    fn image(&self, id: u64) -> Option<&egui::ColorImage> {
-        self.cache.get(&id)
+    /// The display frame under the cursor, if its decode has landed.
+    fn frame(&self, id: PhotoId) -> Option<&Arc<Frame>> {
+        self.pipeline.peek(id, Tier::Display)
     }
+}
+
+/// Decodes one job. The tier decides the source: thumbnails use the small `PRVW` JPEG, display
+/// uses the full-resolution embedded JPEG at the viewer's edge, and Exact RAW develops the
+/// sensor data. Every path applies EXIF orientation in `firstcut_decode`/the backend exactly
+/// once, and the histogram is computed from the result — never from a second decode.
+fn decode_job(job: &Job, raw: Option<&dyn RawDecode>) -> Result<(DecodedImage, Histogram), String> {
+    let image = match job.tier {
+        Tier::Thumbnail => decode_thumbnail(&job.path, &job.meta, THUMBNAIL_EDGE),
+        Tier::Display => decode_display_at(&job.path, &job.meta, if job.target_edge == 0 { FALLBACK_DISPLAY_EDGE } else { job.target_edge }),
+        Tier::ExactRaw => match raw {
+            Some(backend) => backend.decode_raw(&job.path, &job.meta),
+            // No backend on this platform: fall back to the camera's own rendering rather than
+            // blanking the loupe. The exact tier still stays a tier of its own.
+            None => decode_display(&job.path, &job.meta),
+        },
+    }
+    .map_err(|err| format!("{} ({:?}): {err}", job.path.display(), job.tier))?;
+    let histogram = if job.tier == Tier::Thumbnail { Histogram::empty() } else { histogram(&image) };
+    Ok((image, histogram))
 }

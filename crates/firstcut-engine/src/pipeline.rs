@@ -374,6 +374,12 @@ impl<V> Pipeline<V> {
         None
     }
 
+    /// A cached value without touching recency or the stats. UI paint passes use this so
+    /// reading what is on screen does not distort the LRU.
+    pub fn peek(&self, id: PhotoId, tier: Tier) -> Option<&V> {
+        self.cache.get(&Key { id, tier }).map(|entry| &entry.value)
+    }
+
     pub fn contains(&self, id: PhotoId, tier: Tier) -> bool {
         self.cache.contains_key(&Key { id, tier })
     }

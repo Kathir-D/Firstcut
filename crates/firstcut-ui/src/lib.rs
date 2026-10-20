@@ -7,8 +7,9 @@
 //! puts them on screen, with a texture cache so an unchanged frame costs nothing.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use firstcut_types::PhotoId;
+use firstcut_types::{Histogram, PhotoId};
 
 mod cull;
 
@@ -21,14 +22,16 @@ pub struct FrameImages<'a> {
     /// The photo under the cursor — the loupe's subject.
     pub current: Option<(PhotoId, &'a egui::ColorImage)>,
     /// The filmstrip's photos, as far as decided to decode. Absent ids render as a placeholder.
-    pub thumbs: &'a HashMap<u64, egui::ColorImage>,
+    pub thumbs: &'a HashMap<u64, Arc<egui::ColorImage>>,
+    /// The current photo's histogram (already orientation-safe). M3's Info panel paints it.
+    pub histogram: Option<&'a Histogram>,
 }
 
 impl FrameImages<'_> {
     /// The frame before anything is decoded (a fresh Welcome, for instance).
     pub fn empty() -> FrameImages<'static> {
-        FrameImages { current: None, thumbs: &EMPTY_THUMBS }
+        FrameImages { current: None, thumbs: &EMPTY_THUMBS, histogram: None }
     }
 }
 
-static EMPTY_THUMBS: std::sync::LazyLock<std::collections::HashMap<u64, egui::ColorImage>> = std::sync::LazyLock::new(std::collections::HashMap::new);
+static EMPTY_THUMBS: std::sync::LazyLock<HashMap<u64, Arc<egui::ColorImage>>> = std::sync::LazyLock::new(HashMap::new);

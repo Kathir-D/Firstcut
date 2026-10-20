@@ -13,6 +13,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use eframe::egui;
 use firstcut_engine::model::Model;
@@ -33,12 +34,12 @@ fn shoot() -> (tempfile::TempDir, tempfile::TempDir, Model) {
 
 /// Solid-colour 64×48 "photos" keyed by the model's real photo ids — no decoder involved;
 /// the screen paints what the app supplies.
-fn bank(model: &Model, colors: &[(u8, u8, u8)]) -> HashMap<u64, egui::ColorImage> {
+fn bank(model: &Model, colors: &[(u8, u8, u8)]) -> HashMap<u64, Arc<egui::ColorImage>> {
     let mut bank = HashMap::new();
     for (index, photo) in model.photos().iter().enumerate() {
         let (red, green, blue) = colors[index % colors.len()];
         let rgba: Vec<u8> = [red, green, blue, 255].repeat(64 * 48);
-        bank.insert(photo.meta.id.0, egui::ColorImage::from_rgba_unmultiplied([64, 48], &rgba));
+        bank.insert(photo.meta.id.0, Arc::new(egui::ColorImage::from_rgba_unmultiplied([64, 48], &rgba)));
     }
     bank
 }
@@ -56,8 +57,8 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
-        let images = FrameImages { current, thumbs: &bank };
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let images = FrameImages { current, thumbs: &bank, histogram: None };
         screen.show(ui, &mut model, &images);
     });
 

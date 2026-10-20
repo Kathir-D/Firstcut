@@ -8,3 +8,4 @@ pub mod pipeline;
 pub mod registry;
 pub mod session;
 pub mod settings;
+pub mod watch;

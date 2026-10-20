@@ -33,11 +33,16 @@ const THUMB_IMAGE_HEIGHT: f32 = 78.0;
 
 pub struct CullScreen {
     /// Decoded pixels → GPU textures, keyed by photo id, so an unchanged frame reuses them all.
-    textures: HashMap<u64, TextureHandle>,
+    /// The pixel size is kept beside the handle: zooming asks the decode pipeline for a bigger
+    /// copy of the same photo, and a size change must rebuild the texture.
+    textures: HashMap<u64, (usize, usize, TextureHandle)>,
     /// The loupe's zoom, relative to the fit-to-pane size (1.0 = the whole photo shown).
     zoom: f32,
     /// The loupe's pan while zoomed in; the pane centres the photo at rest.
     pan: Vec2,
+    /// The viewer's backing size from the last frame, in physical pixels — the display tier's
+    /// decode target. Zero until the pane has been laid out.
+    viewport_pixels: Vec2,
 }
 
 impl Default for CullScreen {
@@ -48,7 +53,19 @@ impl Default for CullScreen {
 
 impl CullScreen {
     pub fn new() -> Self {
-        Self { textures: HashMap::new(), zoom: 1.0, pan: Vec2::ZERO }
+        Self { textures: HashMap::new(), zoom: 1.0, pan: Vec2::ZERO, viewport_pixels: Vec2::ZERO }
+    }
+
+    /// The viewer's long edge in backing pixels, or 0 before the first layout. The app turns
+    /// this into a display-tier decode target.
+    pub fn viewport_edge(&self) -> u32 {
+        let edge = self.viewport_pixels.x.max(self.viewport_pixels.y);
+        if edge.is_finite() && edge > 0.0 { edge.round().min(u32::MAX as f32) as u32 } else { 0 }
+    }
+
+    /// Whether the loupe is showing pixels beyond fit-to-pane (the 1:1 tier).
+    pub fn is_zoomed(&self) -> bool {
+        self.zoom > 1.01
     }
 
     /// Paints one frame. Takes the model mutable because dispatching is this surface's only way
@@ -156,6 +173,11 @@ impl CullScreen {
                 );
             }
 
+            // The display tier decodes at exactly the viewer's backing size, so record it even
+            // while the first frame is still missing.
+            let available = panel.max_rect();
+            self.viewport_pixels = available.size() * panel.ctx().pixels_per_point();
+
             let Some((id, pixels)) = images.current else {
                 panel.vertical_centered(|panel| {
                     panel.add_space(panel.available_height() / 2.0 - 20.0);
@@ -165,7 +187,6 @@ impl CullScreen {
             };
 
             let texture = load_texture(&mut self.textures, panel.ctx(), id.0, pixels);
-            let available = panel.max_rect();
             let image_size = vec2(pixels.width() as f32, pixels.height() as f32);
             let fit = fit_into(available.size(), image_size);
             let display = fit * self.zoom;
@@ -234,10 +255,16 @@ fn queued_keys(ui: &egui::Ui) -> Vec<Queued> {
 
 /// One filmstrip frame: the photo's pixels (or the honest placeholder), its name and stars, an
 /// outline when it is the cursor's photo. Returns whether it was clicked.
-fn paint_thumb(row: &mut egui::Ui, thumb: &Thumb, images: &FrameImages<'_>, textures: &HashMap<u64, TextureHandle>, current_id: Option<u64>) -> bool {
+fn paint_thumb(
+    row: &mut egui::Ui,
+    thumb: &Thumb,
+    images: &FrameImages<'_>,
+    textures: &HashMap<u64, (usize, usize, TextureHandle)>,
+    current_id: Option<u64>,
+) -> bool {
     let selected = current_id == Some(thumb.id);
     row.vertical(|card| {
-        let button = match images.thumbs.get(&thumb.id).and_then(|_| textures.get(&thumb.id)) {
+        let button = match images.thumbs.get(&thumb.id).and_then(|_| textures.get(&thumb.id)).map(|(_, _, handle)| handle) {
             Some(texture) => {
                 let image = Image::new(texture).fit_to_exact_size(vec2(THUMB_WIDTH - 12.0, THUMB_IMAGE_HEIGHT));
                 let mut button = egui::Button::image(image);
@@ -259,19 +286,31 @@ fn paint_thumb(row: &mut egui::Ui, thumb: &Thumb, images: &FrameImages<'_>, text
 }
 
 /// GPU texture for one photo's pixels, decoded once and cached until the photo is gone.
-/// GPU texture for one photo's pixels, decoded once and cached until the photo is gone.
 ///
 /// Oversized frames are downsampled before the upload: egui asserts a texture no wider than
 /// the device's `max_texture_side`, and a real 6000×4000 R8 preview crashes the first loupe
 /// otherwise (the showcase run on Game1JENKS proved it). The nearest-neighbour stride keeps
 /// every sampled pixel's colour and costs nothing next to the decode; M2's decode tiers
 /// deliver properly-sized previews and this becomes a safety net rather than the rule.
-fn load_texture<'a>(textures: &'a mut HashMap<u64, TextureHandle>, ctx: &egui::Context, id: u64, pixels: &egui::ColorImage) -> &'a TextureHandle {
-    textures.entry(id).or_insert_with(|| {
+fn load_texture<'a>(
+    textures: &'a mut HashMap<u64, (usize, usize, TextureHandle)>,
+    ctx: &egui::Context,
+    id: u64,
+    pixels: &egui::ColorImage,
+) -> &'a TextureHandle {
+    let size = (pixels.size[0], pixels.size[1]);
+    // A zoomed re-decode changes the pixel dimensions under the same photo id; egui textures are
+    // fixed-size, so the old handle is dropped and a fresh upload replaces it.
+    let stale = textures.get(&id).is_some_and(|(width, height, _)| (*width, *height) != size);
+    if stale {
+        textures.remove(&id);
+    }
+    let entry = textures.entry(id).or_insert_with(|| {
         let name = format!("photo-{id}");
         let max_side = ctx.input(|input| input.max_texture_side);
-        ctx.load_texture(name, fit_to_max_side(pixels, max_side), egui::TextureOptions::LINEAR)
-    })
+        (size.0, size.1, ctx.load_texture(name, fit_to_max_side(pixels, max_side), egui::TextureOptions::LINEAR))
+    });
+    &entry.2
 }
 
 /// The largest copy of `pixels` whose sides respect `max_side`: ONE stride chosen from the

@@ -132,6 +132,10 @@ pub struct Model {
     /// Present only when a surface asked for persistence; the model then seeds its General
     /// settings from the loaded file and writes back on every general setter.
     settings_store: Option<crate::settings::SettingsStore>,
+    /// Bumped whenever the photo catalog changes (open, rescan). The decode pipeline rebuilds
+    /// its catalog on a change and keeps its cache otherwise, which is what stops a file landing
+    /// in the folder from blanking the strip.
+    catalog_revision: u64,
 }
 
 impl Model {
@@ -152,6 +156,7 @@ impl Model {
             pending_errors: Arc::new(Mutex::new(Vec::new())),
             pending_batches: Arc::new(Mutex::new(Vec::new())),
             settings_store: None,
+            catalog_revision: 0,
         }
     }
 
@@ -201,6 +206,21 @@ impl Model {
         &self.settings
     }
 
+    /// Settings → Viewer → "Develop the sensor data, not the embedded preview" (T4).
+    pub fn exact_raw(&self) -> bool {
+        self.settings_store.as_ref().is_some_and(|store| store.current().viewer.exact_raw)
+    }
+
+    /// Settings → Viewer → zoom lock: keep the loupe's pixel size while stepping through photos.
+    pub fn zoom_lock(&self) -> bool {
+        self.settings_store.as_ref().is_some_and(|store| store.current().viewer.zoom_lock)
+    }
+
+    /// Settings → Performance, for the decode bank's budgets and worker count.
+    pub fn performance_settings(&self) -> crate::settings::PerformanceJson {
+        self.settings_store.as_ref().map(|store| store.current().performance.clone()).unwrap_or_default()
+    }
+
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
@@ -226,6 +246,27 @@ impl Model {
     /// The image the loupe shows next (M2's priority target).
     pub fn current_photo_id(&self) -> Option<PhotoId> {
         self.current_photo().map(|photo| photo.meta.id)
+    }
+
+    /// The decode priority window (docs/v2-plan.md §4.2): the current batch, then the next
+    /// batch, then the previous one — nearest-first with next before previous. Only the first
+    /// three are guaranteed; the pipeline may prefetch more.
+    pub fn focus_windows(&self) -> Vec<Vec<PhotoId>> {
+        let mut windows = Vec::new();
+        for index in [Some(self.current_batch_index), self.current_batch_index.checked_add(1), self.current_batch_index.checked_sub(1)] {
+            let Some(index) = index else { continue };
+            if let Some(batch) = self.batches.get(index)
+                && !batch.photo_ids.is_empty()
+            {
+                windows.push(batch.photo_ids.clone());
+            }
+        }
+        windows
+    }
+
+    /// Changes when the photo catalog does; the app's decode bank watches it.
+    pub fn catalog_revision(&self) -> u64 {
+        self.catalog_revision
     }
 
     fn photo_before(&self, batch: &BatchVm) -> Option<&PhotoVm> {
@@ -320,6 +361,55 @@ impl Model {
         self.session = Some(session);
         self.phase = Phase::Culling;
         self.last_error = None;
+        self.catalog_revision = self.catalog_revision.saturating_add(1);
+    }
+
+    /// Reconciles the open folder with the disk (the watcher calls this, and `file.rescan` does).
+    /// Photos that stayed keep their cache entries; the cursor follows its photo by id.
+    pub fn rescan_folder(&mut self) -> Result<(), String> {
+        let current = self.current_photo_id();
+        let rescanned = match self.session.as_ref() {
+            Some(session) => session.rescan().map(|_| session.snapshot()),
+            None => return Ok(()),
+        };
+        let snapshot = match rescanned {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                let message = err.to_string();
+                self.last_error = Some(message.clone());
+                return Err(message);
+            }
+        };
+        self.photo_index = snapshot.photos.iter().enumerate().map(|(position, meta)| (meta.id, position)).collect();
+        self.photos = snapshot
+            .photos
+            .into_iter()
+            .map(|meta| {
+                let rating = snapshot.ratings.get(&meta.id.0).copied().unwrap_or_default();
+                PhotoVm { meta, rating }
+            })
+            .collect();
+        self.batches = snapshot.batches.iter().map(|batch| BatchVm::of(batch, snapshot.visited.contains(&batch.id.0))).collect();
+        if let Some(photo) = current
+            && let Some(position) = self.batches.iter().position(|batch| batch.photo_ids.contains(&photo))
+        {
+            self.current_batch_index = position;
+            self.current_photo_index = self.batches.get(position).and_then(|batch| batch_position_of(batch, photo)).unwrap_or(0);
+        }
+        self.current_batch_index = self.current_batch_index.min(self.batches.len().saturating_sub(1));
+        self.current_photo_index = self.current_photo_index.min(self.current_batch().map_or(0, BatchVm::count).saturating_sub(1));
+        self.catalog_revision = self.catalog_revision.saturating_add(1);
+        self.last_error = None;
+        self.drain_session_messages();
+        Ok(())
+    }
+
+    /// Flushes the sidecar writer and checkpoints the database. Called on quit: the queue is
+    /// debounced, so a window closing within a second of a rating would otherwise lose it.
+    pub fn close_session(&self) {
+        if let Some(session) = self.session.as_ref() {
+            session.close();
+        }
     }
 
     // ---- navigation ------------------------------------------------------------------------
