@@ -3,7 +3,9 @@
 
 use std::path::Path;
 
-use firstcut_decode::{DecodeError, decode_display, decode_jpeg, read_range};
+use firstcut_decode::{
+    DecodeError, DecodedImage, apply_orientation, decode_display, decode_display_at, decode_jpeg, histogram, orientation_swaps_axes, read_range,
+};
 use firstcut_meta::meta::{ByteRange, EmbeddedPreview, FileKind, PhotoMeta, RawFormat};
 
 fn fixture_jpeg() -> Vec<u8> {
@@ -147,4 +149,126 @@ fn a_file_with_no_embedded_jpeg_reports_itself() {
 fn garbage_jpeg_bytes_error() {
     let error = decode_jpeg(&[0u8; 64]).unwrap_err();
     assert!(matches!(error, DecodeError::Jpeg(_)), "got: {error:?}");
+}
+
+// ---- orientation and histogram (the v1 audit's fourth defect) ------------------------------
+
+/// A `width`×`height` frame with pixel `(x, y)` set to `(r, g, b, 255)` and everything else black.
+fn framed(width: u32, height: u32, pixels: &[(u32, u32, [u8; 3])]) -> DecodedImage {
+    let mut rgba = vec![0u8; (width as usize) * (height as usize) * 4];
+    for (x, y, [r, g, b]) in pixels {
+        let index = ((*y as usize) * (width as usize) + (*x as usize)) * 4;
+        if let Some(slot) = rgba.get_mut(index..index.saturating_add(4)) {
+            slot.copy_from_slice(&[*r, *g, *b, 255]);
+        }
+    }
+    DecodedImage { width, height, rgba }
+}
+
+fn pixel(image: &DecodedImage, x: u32, y: u32) -> [u8; 4] {
+    let index = ((y as usize) * (image.width as usize) + (x as usize)) * 4;
+    let mut out = [0u8; 4];
+    if let Some(slot) = image.rgba.get(index..index.saturating_add(4)) {
+        out.copy_from_slice(slot);
+    }
+    out
+}
+
+#[test]
+fn every_exif_orientation_maps_the_corners_the_way_the_spec_says() {
+    // A 3×2 frame whose six pixels are all distinct, so every transform is unambiguous.
+    // Source layout (x, y):
+    //   (0,0)=1 (1,0)=2 (2,0)=3
+    //   (0,1)=4 (1,1)=5 (2,1)=6
+    let source = framed(3, 2, &[(0, 0, [1, 0, 0]), (1, 0, [2, 0, 0]), (2, 0, [3, 0, 0]), (0, 1, [4, 0, 0]), (1, 1, [5, 0, 0]), (2, 1, [6, 0, 0])]);
+    let expected: &[(u8, u32, u32, u8)] = &[
+        // orientation, output width, output height, red channel at (0,0)
+        (1, 3, 2, 1),
+        (2, 3, 2, 3),
+        (3, 3, 2, 6),
+        (4, 3, 2, 4),
+        (5, 2, 3, 1),
+        (6, 2, 3, 4),
+        (7, 2, 3, 6),
+        (8, 2, 3, 3),
+    ];
+    for (orientation, width, height, corner) in expected {
+        let oriented = apply_orientation(source.clone(), *orientation).unwrap();
+        assert_eq!((oriented.width, oriented.height), (*width, *height), "orientation {orientation} geometry");
+        assert_eq!(pixel(&oriented, 0, 0)[0], *corner, "orientation {orientation}: the top-left source pixel must land top-left");
+        // The transforms are bijections: every source pixel survives exactly once.
+        let mut seen: Vec<u8> =
+            (0..oriented.width).flat_map(|x| (0..oriented.height).map(move |y| (x, y))).map(|(x, y)| pixel(&oriented, x, y)[0]).collect();
+        seen.sort_unstable();
+        assert_eq!(seen, vec![1, 2, 3, 4, 5, 6], "orientation {orientation} loses or duplicates a pixel");
+        assert_eq!(orientation_swaps_axes(*orientation), *orientation >= 5);
+    }
+}
+
+#[test]
+fn orientation_one_and_invalid_values_leave_the_frame_alone() {
+    let source = framed(3, 2, &[(0, 0, [9, 9, 9])]);
+    for orientation in [0, 1, 9, 255] {
+        assert_eq!(apply_orientation(source.clone(), orientation).unwrap(), source, "orientation {orientation}");
+    }
+}
+
+#[test]
+fn a_corrupt_dimension_at_a_rotated_orientation_errors_instead_of_panicking() {
+    // width×height×4 does not match the buffer: the checked path reports it.
+    let broken = DecodedImage { width: 3, height: 2, rgba: vec![0; 3] };
+    let error = apply_orientation(broken, 6).unwrap_err();
+    assert!(matches!(error, DecodeError::SizeMismatch { .. }), "got: {error:?}");
+}
+
+#[test]
+fn decode_display_applies_the_exif_orientation_exactly_once() {
+    let container = Container::with_two_jpegs();
+    let meta = photo_meta("IMG_0001.CR3".to_string(), Some(EmbeddedPreview { range: container.full, width: 8, height: 8 }), None);
+    let upright = decode_display(&container, &meta).unwrap();
+    let mut rotated = meta.clone();
+    rotated.orientation = 6;
+    let shown = decode_display(&container, &rotated).unwrap();
+    // The 8×8 fixture is square, so geometry alone cannot see the rotation; the pixels can.
+    let expected = apply_orientation(upright, 6).unwrap();
+    assert_eq!(shown, expected, "decode_display must apply the tag, and only once");
+}
+
+#[test]
+fn decode_display_at_caps_the_decoded_size() {
+    let container = Container::with_two_jpegs();
+    let meta = photo_meta("IMG_0001.CR3".to_string(), Some(EmbeddedPreview { range: container.full, width: 8, height: 8 }), None);
+    let thumb = decode_display_at(&container, &meta, 4).unwrap();
+    assert!(thumb.longest_edge() <= 4, "got {}×{}", thumb.width, thumb.height);
+    assert!(thumb.longest_edge() >= 1);
+}
+
+#[test]
+fn the_histogram_is_computed_from_the_oriented_frame() {
+    // Big enough for the 256 px reduction to stride by 4. Two uniquely coloured pixels are
+    // placed so each is sampled by exactly one of the two orientations' grids:
+    //  - source (4, 0) is on the un-oriented grid and falls off it once rotated;
+    //  - source (0, 1019) is off the un-oriented grid and lands on (4, 0) after orientation 6.
+    // A histogram path that re-decoded without the tag would report GREEN; the oriented frame
+    // reports MAGENTA.
+    let image = framed(512, 1024, &[(4, 0, [0, 255, 0]), (0, 1019, [255, 0, 255])]);
+    let oriented = apply_orientation(image, 6).unwrap();
+    assert_eq!((oriented.width, oriented.height), (1024, 512));
+    let bins = histogram(&oriented);
+    // Magenta (255, 0, 255) lands in red bin 63 and blue bin 63, with no green at all.
+    assert!(bins.red[63] > 0.0 && bins.blue[63] > 0.0, "the magenta pixel must be sampled");
+    assert_eq!(bins.red[63], bins.blue[63], "magenta contributes equally to red and blue");
+    assert_eq!(bins.green[63], 0.0, "the green pixel fell off the oriented sampling grid");
+    let green_only = framed(512, 1024, &[(4, 0, [0, 255, 0])]);
+    let unoriented_bins = histogram(&green_only);
+    assert!(unoriented_bins.green[63] > 0.0, "control: the un-oriented grid samples the green pixel");
+    assert_eq!(bins.sampled_pixels, unoriented_bins.sampled_pixels, "the reduction samples the same count either way");
+}
+
+#[test]
+fn a_histogram_of_nothing_is_empty_not_a_panic() {
+    let empty = DecodedImage { width: 0, height: 0, rgba: Vec::new() };
+    let bins = histogram(&empty);
+    assert_eq!(bins.sampled_pixels, 0);
+    assert!(bins.luma.iter().all(|bin| *bin == 0.0));
 }
