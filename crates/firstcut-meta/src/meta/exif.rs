@@ -72,6 +72,11 @@ fn read_from<R: Read + Seek>(file: &mut R, kind: FileKind, size: u64, label: &st
             let mut meta = far.unwrap_or(meta);
             if matches!(kind, FileKind::Raw(_)) {
                 meta.preview = best_preview(file, size, &head, &meta.preview_candidates).or_else(|| scanned_preview(&head));
+            } else if kind == FileKind::Jpeg {
+                // A JPEG photo *is* its own image: the display source is the whole file, the way
+                // v1 treated plain JPEGs (there is nothing "embedded" here to fall back to). Every
+                // JPEG decoder skips the APP segments the Exif reads came from.
+                meta.full_preview = Some(EmbeddedPreview { range: ByteRange { offset: 0, len: size }, width: meta.width, height: meta.height });
             }
             return Ok(meta);
         }
@@ -1194,6 +1199,22 @@ mod tests {
         assert_read(&meta);
         // The SOF is the real pixel size and beats the Exif tag.
         assert_eq!((meta.width, meta.height), (4000, 3000));
+    }
+
+    #[test]
+    fn a_jpeg_photo_displays_from_the_file_itself() {
+        // The scanner alone decides this is a JPEG shoot — no RAW companion exists. The display
+        // bytes are the file's own, end to end, or the loupe has nothing to decode.
+        let bytes = fixtures::jpeg(&tiff_bytes(), 4000, 3000);
+        let size = bytes.len() as u64;
+        let mut file = tempfile::tempdir().unwrap();
+        let path = file.path().join("IMG_0001.jpg");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let meta = read(&path, FileKind::Jpeg, size).unwrap();
+        let Some(preview) = meta.full_preview else { panic!("a JPEG is its own display source") };
+        assert_eq!((preview.range.offset, preview.range.len), (0, size));
+        assert_eq!((preview.width, preview.height), (4000, 3000), "the display announces the photo's size");
     }
 
     #[test]
