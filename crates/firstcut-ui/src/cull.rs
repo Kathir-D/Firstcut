@@ -327,25 +327,71 @@ impl CullScreen {
 
     // ---- toolbar -------------------------------------------------------------------------
 
-    /// The one toolbar control M1/M2 lacked: which rating mode the next P press means. v1's
-    /// toolbar also carried batch arrows and Finish; those arrive with their own rows.
-    fn toolbar(&self, ui: &mut egui::Ui, model: &mut Model) {
+    /// v1's toolbar skeleton (todo.md §9.5): batch back/forward, the batch/file title, the
+    /// mode switch, and the three view buttons. Finish joins it with its own milestone.
+    fn toolbar(&mut self, ui: &mut egui::Ui, model: &mut Model) {
         let mode = model.settings().rating_mode;
-        let mut chosen = None;
+        let folder = model.folder_name().to_string();
+        let batch_count = model.batches().len();
+        let batch_index = model.current_batch_index();
+        let title = model.current_photo().map_or_else(
+            || format!("Batch {} of {batch_count}", batch_index + 1),
+            |photo| format!("Batch {} of {batch_count} — {}", batch_index + 1, file_name_of(&photo.meta.rel_path)),
+        );
+        let mut navigate: Option<i32> = None;
+        let mut chosen_mode = None;
+        let mut chosen_view = None;
+        let mut toggle_info = false;
         egui::Panel::top("toolbar").exact_size(38.0).frame(egui::Frame::new().fill(STRIP).inner_margin(8.0)).show(ui, |bar| {
             bar.horizontal(|bar| {
-                bar.label(RichText::new(model.folder_name()).strong().color(FOREGROUND));
-                bar.add_space(12.0);
-                if bar.selectable_label(mode == RatingMode::Stars, RichText::new("Stars").small().color(FOREGROUND)).clicked() {
-                    chosen = Some(RatingMode::Stars);
+                if bar.button(RichText::new("‹").size(18.0)).on_hover_text("Previous batch").clicked() {
+                    navigate = Some(-1);
                 }
-                if bar.selectable_label(mode == RatingMode::KeepNotKeep, RichText::new("Keep").small().color(FOREGROUND)).clicked() {
-                    chosen = Some(RatingMode::KeepNotKeep);
+                if bar.button(RichText::new("›").size(18.0)).on_hover_text("Next batch").clicked() {
+                    navigate = Some(1);
                 }
+                bar.add_space(6.0);
+                bar.label(RichText::new(&folder).small().weak());
+                bar.label(RichText::new(title).strong().color(FOREGROUND));
+                bar.with_layout(egui::Layout::right_to_left(egui::Align::Center), |bar| {
+                    if bar.selectable_label(self.info_visible, RichText::new("Info").small().color(FOREGROUND)).clicked() {
+                        toggle_info = true;
+                    }
+                    if bar.selectable_label(matches!(self.view, ScreenView::Compare(_)), RichText::new("Compare").small().color(FOREGROUND)).clicked()
+                    {
+                        chosen_view = Some(ScreenView::Compare(2));
+                    }
+                    if bar.selectable_label(self.view == ScreenView::Grid, RichText::new("Grid").small().color(FOREGROUND)).clicked() {
+                        chosen_view = Some(ScreenView::Grid);
+                    }
+                    if bar.selectable_label(self.view == ScreenView::Loupe, RichText::new("Loupe").small().color(FOREGROUND)).clicked() {
+                        chosen_view = Some(ScreenView::Loupe);
+                    }
+                    bar.add_space(10.0);
+                    if bar.selectable_label(mode == RatingMode::KeepNotKeep, RichText::new("Keep").small().color(FOREGROUND)).clicked() {
+                        chosen_mode = Some(RatingMode::KeepNotKeep);
+                    }
+                    if bar.selectable_label(mode == RatingMode::Stars, RichText::new("Stars").small().color(FOREGROUND)).clicked() {
+                        chosen_mode = Some(RatingMode::Stars);
+                    }
+                });
             });
         });
-        if let Some(mode) = chosen {
+        if let Some(step) = navigate {
+            let _ = dispatch(model, if step < 0 { "batch.previous" } else { "batch.next" }, &Json::Null);
+        }
+        if let Some(mode) = chosen_mode {
             let _ = dispatch(model, "settings.ratingMode", &json!({ "mode": mode.as_str() }));
+        }
+        if let Some(view) = chosen_view {
+            if matches!(view, ScreenView::Compare(_)) || matches!(self.view, ScreenView::Compare(_)) {
+                self.zoom = 1.0;
+                self.pan = Vec2::ZERO;
+            }
+            self.view = view;
+        }
+        if toggle_info {
+            self.info_visible = !self.info_visible;
         }
     }
 
