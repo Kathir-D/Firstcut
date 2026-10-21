@@ -164,6 +164,12 @@ The registry: every user-visible action has a stable string id and typed paramet
 scripted loop, multi-photo reject — is one undo step). Menus, the shortcut cheat-sheet and
 the MCP tool list are **generated** from the registry; nothing hand-maintains a second list.
 
+**View state is not engine state.** Loupe/grid/compare, panel/overlay/HUD visibility, zoom
+and pan are the screen's own fields (v1 kept `hudVisible` and friends on its app model too).
+The View menu and the keymap's `view.*` / `panel.*` / `overlay.*` / `hud.toggle` ids change
+those fields directly. Everything that changes ratings, navigation, files or settings still
+goes through `registry::dispatch`, which is the rule this chapter protects.
+
 Surfaces:
 - **UI**: widget ids are stable strings; menus/panels dispatch commands only.
 - **CLI**: `firstcut-cli run <command> key=value …` chains commands headlessly, one JSON
@@ -187,6 +193,17 @@ and persistence, session backend calls (the v1 UniFFI conversion layer collapses
 Rust), Finish Cull flow (summary → options → dry run → typed DELETE → report → undo),
 live folder watching, flush on quit, welcome/recents/resume.
 
+- **Keymap (M3).** `firstcut-engine::keymap` owns the map: the shipped
+  `crates/firstcut-engine/resources/DefaultKeymap.json` compiled in with `include_str!`, plus
+  `keymap.json` overrides beside `settings.json`, read at start and written atomically by the
+  recorder. Layering is v1's exactly: a user binding replaces the default on the same chord and
+  every default chord of the same command; mode-specific rows (`flag.pick` in Stars,
+  `keep.toggle` in Keep) beat a global row on the same chord. The window routes every key
+  through `Keymap::binding`, and menus, the cheat sheet and Settings → Keyboard read the same
+  map, so a rebound key is never shown twice. Two honest gaps from the platform: egui has no
+  Caps Lock transition, so v1's default Caps Lock binding for `settings.autoAdvance.toggle`
+  round-trips through the file but never fires (record another key); egui reports keypad Enter
+  as Return, so both default `cull.finish` chords resolve to the same event.
 - **Recent shoots (M3) have no `recents.json`.** Each shoot's session database already carries its
   folder, photo count and last-open time, and reopening it restores the cursor, so the Welcome
   list is a read-only sweep of `Sessions/*.sqlite` (`firstcut-catalog/src/recents.rs`). A folder

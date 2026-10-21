@@ -325,3 +325,70 @@ fn the_settings_window_edits_general_and_viewer_through_the_model() {
     assert!(reread.current().general.auto_advance);
     assert!(reread.current().viewer.zoom_lock);
 }
+
+/// Settings → Keyboard records a chord into the user's `keymap.json`; the effective map then
+/// routes the new key and the old one is gone.
+#[test]
+fn the_keyboard_tab_records_a_chord_into_the_user_keymap() {
+    let (_sessions, _root, mut model) = shoot();
+    let keymap_dir = tempfile::tempdir().unwrap();
+    let keymap_file = keymap_dir.path().join("keymap.json");
+    model.attach_keymap_store(firstcut_engine::keymap::KeymapStore::at(&keymap_file));
+    let state = std::cell::RefCell::new(model);
+    let screen = std::cell::RefCell::new(CullScreen::new());
+    let bank = bank(&state.borrow(), &[(160, 32, 32), (32, 96, 160), (32, 160, 96)]);
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let current_id = model.current_photo_id();
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+    harness.run();
+    harness.get_by_label("Keyboard").click();
+    harness.run();
+    harness.run();
+    harness.snapshot("settings-keyboard");
+
+    // Record the second row (→, Next Photo) again as Shift+Cmd+A. It is on screen without
+    // scrolling, unlike the commands further down the list.
+    harness.get_by_label("Right").click();
+    harness.run();
+    let modifiers = egui::Modifiers { command: true, shift: true, ..Default::default() };
+    harness.key_press_modifiers(modifiers, egui::Key::A);
+    harness.run();
+
+    let chord = firstcut_engine::keymap::KeyChord::new(
+        firstcut_engine::keymap::KeyName::A,
+        vec![firstcut_engine::keymap::Modifier::Shift, firstcut_engine::keymap::Modifier::Command],
+    );
+    let bound = state.borrow().keymap().binding(&chord, firstcut_types::RatingMode::Stars).map(|binding| binding.command.clone());
+    assert_eq!(bound.as_deref(), Some("photo.next"));
+
+    let reread = firstcut_engine::keymap::KeymapStore::at(&keymap_file);
+    assert!(
+        reread.overrides().bindings.iter().any(|binding| binding.command == "photo.next" && binding.key == firstcut_engine::keymap::KeyName::A),
+        "the recorder writes the override file"
+    );
+    assert_eq!(
+        reread.effective().primary_chord("photo.next", None, firstcut_types::RatingMode::Stars).map(|chord| chord.display()),
+        Some("Shift+Cmd+A".to_string())
+    );
+
+    // Close Settings and prove the new chord routes: Shift+Cmd+A steps forward, the old Right
+    // arrow no longer does.
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    harness.run();
+    harness.key_press_modifiers(modifiers, egui::Key::A);
+    harness.run();
+    assert_eq!(state.borrow().current_photo_index(), 1, "the recorded chord runs photo.next");
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run();
+    assert_eq!(state.borrow().current_photo_index(), 1, "the replaced chord no longer runs it");
+}

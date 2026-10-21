@@ -16,6 +16,7 @@ use firstcut_catalog::recents::RecentShoot;
 use firstcut_meta::meta::PhotoMeta;
 use firstcut_types::{ColorLabel, Flag, PhotoId, Rating, RatingMode, Tier};
 
+use crate::keymap::{KeyChord, Keymap, KeymapStore};
 use crate::session::{Cursor, Session, SessionListener};
 
 /// What phase the app is in (app-model.md). `Loading` is v1's first-photo fast path: the
@@ -148,6 +149,10 @@ pub struct Model {
     /// Where those databases live. The app attaches it at construction; `open_folder_in` records
     /// the directory it was handed, so the CLI and tests get the list without extra wiring.
     sessions_dir: Option<PathBuf>,
+    /// The keyboard map the window routes through (defaults until a store attaches).
+    keymap: Keymap,
+    /// Defaults + the user's own chords, and the file that holds them.
+    keymap_store: Option<KeymapStore>,
 }
 
 impl Model {
@@ -172,7 +177,100 @@ impl Model {
             pending_signatures: Vec::new(),
             recents: Vec::new(),
             sessions_dir: None,
+            keymap: Keymap::defaults(),
+            keymap_store: None,
         }
+    }
+
+    /// Attaches the user's keymap file and makes its layered result the map the window routes.
+    pub fn attach_keymap_store(&mut self, store: KeymapStore) {
+        self.keymap = store.effective();
+        self.keymap_store = Some(store);
+    }
+
+    /// The effective map (defaults with the user's overrides on top).
+    pub fn keymap(&self) -> &Keymap {
+        &self.keymap
+    }
+
+    /// The user's `keymap.json`, when one was attached.
+    pub fn keymap_path(&self) -> Option<&Path> {
+        self.keymap_store.as_ref().map(KeymapStore::path)
+    }
+
+    /// Binds `chord` to a command and saves the user's map. The command's existing modes carry
+    /// over, so rebinding Stars-mode P does not make it fire in Keep mode. A command's old chords
+    /// are replaced, which is v1's "write the command's complete chord set" rule.
+    pub fn rebind_keymap(&mut self, command: &str, argument: Option<i64>, chord: &KeyChord) -> Result<(), String> {
+        let mode = self.keymap.modes_for(command, argument).and_then(|modes| if modes.len() == 1 { modes.first().copied() } else { None });
+        if let Some(store) = self.keymap_store.as_mut() {
+            let mut overrides = store.overrides().clone();
+            overrides.remove_command(command, argument);
+            overrides.bind(chord, command, argument, mode);
+            if let Err(err) = store.set_overrides(overrides) {
+                let message = err.to_string();
+                self.last_error = Some(message.clone());
+                return Err(message);
+            }
+            self.keymap = store.effective();
+        } else {
+            self.keymap.remove_command(command, argument);
+            self.keymap.bind(chord, command, argument, mode);
+        }
+        Ok(())
+    }
+
+    /// Throws the user's overrides away and returns to the shipped map.
+    pub fn reset_keymap(&mut self) -> Result<(), String> {
+        if let Some(store) = self.keymap_store.as_mut() {
+            if let Err(err) = store.reset_to_defaults() {
+                let message = err.to_string();
+                self.last_error = Some(message.clone());
+                return Err(message);
+            }
+            self.keymap = store.effective();
+        } else {
+            self.keymap = Keymap::defaults();
+        }
+        Ok(())
+    }
+
+    /// Replaces the user's map with an imported file (v1's `importKeymap`).
+    pub fn import_keymap(&mut self, path: &Path) -> Result<(), String> {
+        let outcome = if let Some(store) = self.keymap_store.as_mut() {
+            match store.import(path) {
+                Ok(()) => {
+                    self.keymap = store.effective();
+                    Ok(())
+                }
+                Err(err) => Err(err.to_string()),
+            }
+        } else {
+            match std::fs::read_to_string(path) {
+                Ok(text) => Keymap::from_json(&text).map(|map| self.keymap = map),
+                Err(err) => Err(format!("reading {}: {err}", path.display())),
+            }
+        };
+        if let Err(message) = &outcome {
+            self.last_error = Some(message.clone());
+        }
+        outcome
+    }
+
+    /// Writes the effective map (defaults + overrides) to `path` (v1's `exportKeymap`).
+    pub fn export_keymap(&mut self, path: &Path) -> Result<(), String> {
+        let outcome = if let Some(store) = self.keymap_store.as_ref() {
+            store.export(path).map_err(|err| err.to_string())
+        } else {
+            self.keymap
+                .to_json()
+                .map_err(|err| format!("writing {}: {err}", path.display()))
+                .and_then(|json| std::fs::write(path, json).map_err(|err| format!("writing {}: {err}", path.display())))
+        };
+        if let Err(message) = &outcome {
+            self.last_error = Some(message.clone());
+        }
+        outcome
     }
 
     /// Points the Welcome screen at the sessions directory and loads its recent shoots. Safe to
@@ -1083,6 +1181,35 @@ mod tests {
         assert_eq!(model.phase(), Phase::Welcome);
         assert!(model.photos().is_empty());
         assert_eq!(model.last_error(), Some("boom"));
+    }
+
+    #[test]
+    fn a_rebound_key_reaches_the_effective_map_and_the_user_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("keymap.json");
+        let mut model = Model::new();
+        model.attach_keymap_store(crate::keymap::KeymapStore::at(&path));
+        let chord = crate::keymap::KeyChord::new(crate::keymap::KeyName::N, vec![crate::keymap::Modifier::Command]);
+        model.rebind_keymap("photo.next", None, &chord).unwrap();
+
+        let mode = RatingMode::Stars;
+        assert_eq!(model.keymap().binding(&chord, mode).map(|binding| binding.command.as_str()), Some("photo.next"));
+        assert_eq!(model.keymap().chords_for("photo.next", None).len(), 1, "the default arrow is replaced");
+
+        let reread = crate::keymap::KeymapStore::at(&path);
+        assert_eq!(reread.effective().binding(&chord, mode).map(|binding| binding.command.as_str()), Some("photo.next"));
+        assert_eq!(reread.overrides().bindings.len(), 1, "only the command the user changed is written");
+    }
+
+    #[test]
+    fn rebinding_a_mode_specific_command_keeps_its_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut model = Model::new();
+        model.attach_keymap_store(crate::keymap::KeymapStore::at(&directory.path().join("keymap.json")));
+        let chord = crate::keymap::KeyChord::new(crate::keymap::KeyName::Q, vec![]);
+        model.rebind_keymap("flag.pick", None, &chord).unwrap();
+        assert_eq!(model.keymap().binding(&chord, RatingMode::Stars).map(|binding| binding.command.as_str()), Some("flag.pick"));
+        assert!(model.keymap().binding(&chord, RatingMode::KeepNotKeep).is_none(), "Stars-only P stays Stars-only");
     }
 
     #[test]

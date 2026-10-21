@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use egui::{Color32, FontId, Image, Key, RichText, Sense, Stroke, TextureHandle, Vec2, pos2, vec2};
+use firstcut_engine::keymap::{KeyBinding, KeyChord, KeyName, Modifier};
 use firstcut_engine::model::{Model, Phase};
 use firstcut_engine::registry::{REGISTRY, dispatch};
 use firstcut_types::{Flag, Histogram, Rating, RatingMode, Tier};
@@ -152,26 +153,12 @@ impl CullScreen {
         let gray = (viewer.background_gray.clamp(0.0, 1.0) * 255.0).round();
         self.background = Color32::from_gray(u8::try_from(gray as i64).unwrap_or(31));
 
-        // Global keys work in every phase, including Welcome. While Settings is over the window
-        // they are inert (a typed path or a checkbox must not rate the photo behind it).
-        let (open, question, comma, escape, command) = ui.ctx().input(|input| {
-            (
-                input.key_pressed(Key::O),
-                input.key_pressed(Key::Questionmark),
-                input.key_pressed(Key::Comma),
-                input.key_pressed(Key::Escape),
-                input.modifiers.command || input.modifiers.ctrl,
-            )
-        });
-        if comma && command {
-            self.settings.visible = !self.settings.visible;
-        }
-        if escape && self.settings.visible {
+        // "?" is not a keymap binding (v1 put it in the Help menu): it opens the cheat sheet from
+        // every phase. Escape closes Settings before it can leave a grid.
+        let (question, escape) = ui.ctx().input(|input| (input.key_pressed(Key::Questionmark), input.key_pressed(Key::Escape)));
+        if escape && self.settings.visible && !self.settings.is_capturing() {
             self.settings.visible = false;
             self.escape_consumed = true;
-        }
-        if open && command && !self.settings.visible {
-            self.open_dialog = true;
         }
         if question && !self.open_dialog && !self.settings.visible {
             self.cheatsheet = !self.cheatsheet;
@@ -179,10 +166,17 @@ impl CullScreen {
 
         self.menu_bar(ui, model);
         if self.cheatsheet {
-            self.shortcut_screen(ui);
+            self.shortcut_screen(ui, model);
         } else {
             match model.phase() {
-                Phase::Welcome => self.show_welcome(ui, model),
+                Phase::Welcome => {
+                    // Global commands (⌘O, ⌘,, ⌃⌘F) work from Welcome too; there is no culling
+                    // screen to route them, so the window does it here.
+                    if !self.settings.visible && !self.open_dialog {
+                        self.route_keys(ui, model);
+                    }
+                    self.show_welcome(ui, model);
+                }
                 // The fast path paints the placeholder through the same culling screen; dispatch
                 // refuses actions until the scan finishes (`canAct` is false).
                 Phase::Loading | Phase::Culling => self.show_culling(ui, model, images),
@@ -219,16 +213,22 @@ impl CullScreen {
     /// [`REGISTRY`], so a new command cannot appear in the app and stay undocumented.
     fn menu_bar(&mut self, ui: &mut egui::Ui, model: &mut Model) {
         let mode = model.settings().rating_mode;
+        // One label helper: every menu item shows the chord the keymap actually has, so a
+        // rebinding in Settings → Keyboard is reflected here without a second table.
+        let label = |command: &str, argument: Option<i64>, text: &str| match model.keymap().primary_label(command, argument, mode) {
+            Some(chord) => format!("{text}    {chord}"),
+            None => text.to_string(),
+        };
         let mut actions: Vec<(&'static str, Json)> = Vec::new();
         let panel = egui::Panel::top("menu-bar").exact_size(26.0).frame(egui::Frame::new().fill(STRIP).inner_margin(4.0));
         panel.show(ui, |bar| {
             egui::MenuBar::new().ui(bar, |bar| {
                 bar.menu_button("File", |menu| {
-                    if menu.button("Open Folder…    Cmd+O").clicked() {
+                    if menu.button(label("file.open", None, "Open Folder…")).clicked() {
                         self.open_dialog = true;
                         menu.close();
                     }
-                    if menu.button("Settings…    Cmd+,").clicked() {
+                    if menu.button(label("settings.open", None, "Settings…")).clicked() {
                         self.settings.visible = true;
                         menu.close();
                     }
@@ -237,56 +237,62 @@ impl CullScreen {
                     }
                 });
                 bar.menu_button("Edit", |menu| {
-                    if menu.button("Undo    Cmd+Z").clicked() {
+                    if menu.button(label("edit.undo", None, "Undo")).clicked() {
                         actions.push(("edit.undo", Json::Null));
                         menu.close();
                     }
-                    if menu.button("Redo    Shift+Cmd+Z").clicked() {
+                    if menu.button(label("edit.redo", None, "Redo")).clicked() {
                         actions.push(("edit.redo", Json::Null));
                         menu.close();
                     }
                 });
                 bar.menu_button("View", |menu| {
-                    if menu.selectable_label(self.view == ScreenView::Loupe, "Loupe    E").clicked() {
+                    if menu.selectable_label(self.view == ScreenView::Loupe, label("view.loupe", None, "Loupe")).clicked() {
                         self.view = ScreenView::Loupe;
                         menu.close();
                     }
-                    if menu.selectable_label(self.view == ScreenView::Grid, "Grid    G").clicked() {
+                    if menu.selectable_label(self.view == ScreenView::Grid, label("view.grid", None, "Grid")).clicked() {
                         self.view = ScreenView::Grid;
                         menu.close();
                     }
-                    if menu.selectable_label(matches!(self.view, ScreenView::Compare(2)), "Compare 2-up    C").clicked() {
+                    if menu.selectable_label(matches!(self.view, ScreenView::Compare(2)), label("view.compare", Some(2), "Compare 2-up")).clicked() {
                         self.view = ScreenView::Compare(2);
                         self.zoom = 1.0;
                         self.pan = Vec2::ZERO;
                         menu.close();
                     }
-                    if menu.button("Compare 3-up    Opt+C").clicked() {
+                    if menu.button(label("view.compare", Some(3), "Compare 3-up")).clicked() {
                         self.view = ScreenView::Compare(3);
                         self.zoom = 1.0;
                         self.pan = Vec2::ZERO;
                         menu.close();
                     }
-                    if menu.button("Compare 4-up    Shift+Opt+C").clicked() {
+                    if menu.button(label("view.compare", Some(4), "Compare 4-up")).clicked() {
                         self.view = ScreenView::Compare(4);
                         self.zoom = 1.0;
                         self.pan = Vec2::ZERO;
                         menu.close();
                     }
                     menu.separator();
-                    if menu.selectable_label(self.info_visible, "Info panel    I").clicked() {
+                    if menu.selectable_label(self.info_visible, label("panel.info", None, "Info panel")).clicked() {
                         self.info_visible = !self.info_visible;
                         menu.close();
                     }
-                    if menu.selectable_label(self.hud_visible, "Progress HUD    H").clicked() {
+                    if menu.selectable_label(self.hud_visible, label("hud.toggle", None, "Progress HUD")).clicked() {
                         self.hud_visible = !self.hud_visible;
                         menu.close();
                     }
-                    if menu.selectable_label(self.af_overlay.unwrap_or_else(|| model.viewer_settings().af_overlay), "AF points    A").clicked() {
+                    if menu
+                        .selectable_label(
+                            self.af_overlay.unwrap_or_else(|| model.viewer_settings().af_overlay),
+                            label("overlay.af", None, "AF points"),
+                        )
+                        .clicked()
+                    {
                         self.af_overlay = Some(!self.af_overlay.unwrap_or_else(|| model.viewer_settings().af_overlay));
                         menu.close();
                     }
-                    if menu.selectable_label(self.clipping_overlay, "Clipping    J").clicked() {
+                    if menu.selectable_label(self.clipping_overlay, label("overlay.clipping", None, "Clipping")).clicked() {
                         self.clipping_overlay = !self.clipping_overlay;
                         menu.close();
                     }
@@ -297,57 +303,67 @@ impl CullScreen {
                     }
                 });
                 bar.menu_button("Photo", |menu| {
-                    if menu.button("Previous Photo    Left").clicked() {
+                    if menu.button(label("photo.previous", None, "Previous Photo")).clicked() {
                         actions.push(("photo.previous", Json::Null));
                         menu.close();
                     }
-                    if menu.button("Next Photo    Right").clicked() {
+                    if menu.button(label("photo.next", None, "Next Photo")).clicked() {
                         actions.push(("photo.next", Json::Null));
                         menu.close();
                     }
-                    if menu.button("Previous Batch    Cmd+Left").clicked() {
+                    if menu.button(label("batch.previous", None, "Previous Batch")).clicked() {
                         actions.push(("batch.previous", Json::Null));
                         menu.close();
                     }
-                    if menu.button("Next Batch    Cmd+Right").clicked() {
+                    if menu.button(label("batch.next", None, "Next Batch")).clicked() {
                         actions.push(("batch.next", Json::Null));
                         menu.close();
                     }
                     menu.separator();
-                    if menu.button("Pick Flag    P").clicked() {
+                    if menu.button(label("flag.pick", None, "Pick Flag")).clicked() {
                         actions.push(("flag.pick", Json::Null));
                         menu.close();
                     }
-                    if menu.button("Reject    X").clicked() {
+                    if menu.button(label("flag.reject", None, "Reject")).clicked() {
                         actions.push(("flag.reject", Json::Null));
                         menu.close();
                     }
-                    if menu.add_enabled(model.settings().reject_whole_batch, egui::Button::new("Reject Whole Batch    Shift+X")).clicked() {
+                    if menu
+                        .add_enabled(model.settings().reject_whole_batch, egui::Button::new(label("batch.reject", None, "Reject Whole Batch")))
+                        .clicked()
+                    {
                         self.reject_dialog = true;
                         menu.close();
                     }
-                    if menu.button("Unflag    U").clicked() {
+                    if menu.button(label("flag.clear", None, "Unflag")).clicked() {
                         actions.push(("flag.clear", Json::Null));
                         menu.close();
                     }
-                    if menu.button("Toggle Flag").clicked() {
+                    if menu.button(label("flag.toggle", None, "Toggle Flag")).clicked() {
                         actions.push(("flag.toggle", Json::Null));
                         menu.close();
                     }
-                    if menu.button(if mode == RatingMode::KeepNotKeep { "Keep / Not Keep    P" } else { "Keep    K" }).clicked() {
+                    if menu
+                        .button(if mode == RatingMode::KeepNotKeep {
+                            label("keep.toggle", None, "Keep / Not Keep")
+                        } else {
+                            label("keep.toggle", None, "Keep")
+                        })
+                        .clicked()
+                    {
                         actions.push(("keep.toggle", Json::Null));
                         menu.close();
                     }
                     menu.menu_button("Color Label", |labels| {
-                        for (name, color) in [
-                            ("Red    6", "red"),
-                            ("Yellow    7", "yellow"),
-                            ("Green    8", "green"),
-                            ("Blue    9", "blue"),
-                            ("Purple", "purple"),
-                            ("None", "none"),
+                        for (name, color, argument) in [
+                            ("Red", "red", Some(6i64)),
+                            ("Yellow", "yellow", Some(7)),
+                            ("Green", "green", Some(8)),
+                            ("Blue", "blue", Some(9)),
+                            ("Purple", "purple", None),
+                            ("None", "none", None),
                         ] {
-                            if labels.button(name).clicked() {
+                            if labels.button(label("label.set", argument, name)).clicked() {
                                 actions.push(("label.set", json!({ "color": color })));
                                 labels.close();
                             }
@@ -370,7 +386,7 @@ impl CullScreen {
                         actions.push(("settings.ratingMode", json!({ "mode": "keep" })));
                         menu.close();
                     }
-                    if menu.selectable_label(model.auto_advance(), "Auto-advance").clicked() {
+                    if menu.selectable_label(model.auto_advance(), label("settings.autoAdvance.toggle", None, "Auto-advance")).clicked() {
                         actions.push(("settings.autoAdvance.toggle", Json::Null));
                         menu.close();
                     }
@@ -426,10 +442,10 @@ impl CullScreen {
         }
     }
 
-    /// The ? cheat sheet: one row per registry command, with the default shortcut the UI binds
-    /// to it. Empty shortcuts are commands without a key (menus, control channel, MCP). It is a
-    /// screen of its own, so long lists never fight the window or panel layout.
-    fn shortcut_screen(&mut self, ui: &mut egui::Ui) {
+    /// The ? cheat sheet: one row per command this window knows, with the chords the keymap
+    /// actually has (a rebound key shows its new chord). Commands with no key — the control
+    /// channel, MCP, internal helpers — simply show none.
+    fn shortcut_screen(&mut self, ui: &mut egui::Ui, model: &Model) {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(self.background).inner_margin(18.0)).show(ui, |panel| {
             panel.horizontal(|row| {
                 row.heading(RichText::new("Keyboard Shortcuts").color(FOREGROUND));
@@ -440,10 +456,12 @@ impl CullScreen {
             });
             panel.add_space(10.0);
             egui::ScrollArea::vertical().show(panel, |list| {
-                for command in REGISTRY {
+                for (id, description) in REGISTRY.iter().map(|command| (command.id, command.description)).chain(VIEW_COMMANDS.iter().copied()) {
+                    let chords = model.keymap().chords_ignoring_argument(id);
+                    let keys = chords.iter().map(KeyChord::display).collect::<Vec<_>>().join(", ");
                     list.horizontal(|row| {
-                        row.add_sized(vec2(110.0, 16.0), egui::Label::new(RichText::new(shortcut_for(command.id)).monospace().small().color(ACCENT)));
-                        row.add(egui::Label::new(RichText::new(command.description).small().color(FOREGROUND)).wrap());
+                        row.add_sized(vec2(180.0, 16.0), egui::Label::new(RichText::new(keys).monospace().small().color(ACCENT)));
+                        row.add(egui::Label::new(RichText::new(description).small().color(FOREGROUND)).wrap());
                     });
                     list.add_space(2.0);
                 }
@@ -489,60 +507,17 @@ impl CullScreen {
             self.hud_visible = model.viewer_settings().hud_visible;
             self.hud_initialized = true;
         }
-        let keys = !self.settings.visible;
-        // The HUD is view state, not engine state: v1 kept `hudVisible` on the app model and the
-        // view toggles it, so no command crosses the registry for it.
-        if keys && ui.ctx().input(|input| input.key_pressed(Key::H)) {
-            self.hud_visible = !self.hud_visible;
-        }
-        if keys && ui.ctx().input(|input| input.key_pressed(Key::I)) {
-            self.info_visible = !self.info_visible;
-        }
-        if keys && ui.ctx().input(|input| input.key_pressed(Key::G)) {
-            self.view = if self.view == ScreenView::Grid { ScreenView::Loupe } else { ScreenView::Grid };
-        }
-        if ui.ctx().input(|input| input.key_pressed(Key::C)) {
-            // v1's defaults: C 2-up, Option-C 3-up, Option-Shift-C 4-up (todo.md §10).
-            let (shift, alt) = ui.ctx().input(|input| (input.modifiers.shift, input.modifiers.alt));
-            let count = if shift {
-                4
-            } else if alt {
-                3
-            } else {
-                2
-            };
-            if matches!(self.view, ScreenView::Compare(_)) {
-                self.view = ScreenView::Loupe;
-            } else {
-                // Compare starts at fit; its zoom is shared across the panes from there.
-                self.zoom = 1.0;
-                self.pan = Vec2::ZERO;
-                self.view = ScreenView::Compare(count);
-            }
-        }
-        if ui.ctx().input(|input| input.key_pressed(Key::Escape) || input.key_pressed(Key::E)) {
+        // The keymap is the only door for a keystroke. While Settings, the open dialog or the
+        // reject confirmation is up the keys are inert: typing a path must not rate the photo
+        // behind it. Escape is not a binding; it always leaves the current view.
+        let keys = !self.settings.visible && !self.open_dialog && !self.reject_dialog;
+        if !self.escape_consumed && ui.ctx().input(|input| input.key_pressed(Key::Escape)) && self.view != ScreenView::Loupe {
             self.view = ScreenView::Loupe;
-        }
-        // A and J are session toggles (todo.md §10); A starts from the Viewer setting, J off.
-        if keys && ui.ctx().input(|input| input.key_pressed(Key::A)) {
-            let current = self.af_overlay.unwrap_or_else(|| model.viewer_settings().af_overlay);
-            self.af_overlay = Some(!current);
-        }
-        if keys && ui.ctx().input(|input| input.key_pressed(Key::J)) {
-            self.clipping_overlay = !self.clipping_overlay;
-        }
-        // ⇧X is v1's whole-batch reject, but only when Settings → General enables it. The dialog
-        // comes first: the command is destructive to ratings, even though nothing leaves the disk
-        // until Finish.
-        let shift_reject =
-            ui.ctx().input(|input| input.key_pressed(Key::X) && input.modifiers.shift && !input.modifiers.command && !input.modifiers.ctrl);
-        if shift_reject && model.settings().reject_whole_batch {
-            self.reject_dialog = true;
+            self.zoom = 1.0;
+            self.pan = Vec2::ZERO;
         }
         if keys {
-            for (id, params) in queued_keys(ui, model.settings().rating_mode) {
-                let _ = dispatch(model, id, &params);
-            }
+            self.route_keys(ui, model);
         }
         self.toolbar(ui, model);
         match self.view {
@@ -557,6 +532,27 @@ impl CullScreen {
             ScreenView::Compare(count) => self.compare(ui, model, images, count),
         }
         self.batch_reject_window(ui.ctx(), model);
+    }
+
+    /// Feeds this frame's key presses through the keymap: one event, at most one command. The
+    /// keymap decides mode (Stars' P vs Keep's P) and whether a held key repeats.
+    fn route_keys(&mut self, ui: &egui::Ui, model: &mut Model) {
+        let events = ui.ctx().input(|input| input.events.clone());
+        for event in events {
+            let egui::Event::Key { key, pressed: true, repeat, modifiers, .. } = event else {
+                continue;
+            };
+            let Some(chord) = chord_from_event(key, modifiers) else {
+                continue;
+            };
+            let Some(binding) = model.keymap().binding(&chord, model.settings().rating_mode).cloned() else {
+                continue;
+            };
+            if repeat && !repeatable(&binding.command) {
+                continue;
+            }
+            perform(self, ui.ctx(), model, &binding);
+        }
     }
 
     /// The ⇧X confirmation. One Reject press dispatches `batch.reject`, which the engine records
@@ -1147,41 +1143,6 @@ struct Thumb {
     rating: Rating,
 }
 
-/// One queued command from the keyboard: the id and its parameters.
-type Queued = (&'static str, Json);
-
-/// The keys v1's DefaultKeymap puts on this slice: stars 0–5, arrows, P/X, undo/redo. "Command"
-/// is the platform's own — command on the mac, ctrl elsewhere. P is mode-aware exactly as
-/// todo.md §6 describes: Keep mode toggles keep, Stars mode toggles the pick flag.
-fn queued_keys(ui: &egui::Ui, mode: RatingMode) -> Vec<Queued> {
-    let mut queued: Vec<Queued> = Vec::new();
-    ui.ctx().input(|input| {
-        let command = input.modifiers.command || input.modifiers.ctrl;
-        if input.key_pressed(Key::ArrowLeft) {
-            queued.push((if command { "batch.previous" } else { "photo.previous" }, Json::Null));
-        }
-        if input.key_pressed(Key::ArrowRight) {
-            queued.push((if command { "batch.next" } else { "photo.next" }, Json::Null));
-        }
-        for (key, stars) in [(Key::Num0, 0u8), (Key::Num1, 1), (Key::Num2, 2), (Key::Num3, 3), (Key::Num4, 4), (Key::Num5, 5)] {
-            if input.key_pressed(key) {
-                queued.push(("rate.stars", json!({ "stars": stars })));
-            }
-        }
-        if input.key_pressed(Key::P) {
-            queued.push((if mode == RatingMode::KeepNotKeep { "keep.toggle" } else { "flag.pick" }, Json::Null));
-        }
-        if input.key_pressed(Key::X) && !input.modifiers.command && !input.modifiers.ctrl && !input.modifiers.shift {
-            queued.push(("flag.reject", Json::Null));
-        }
-        if input.key_pressed(Key::Z) && (input.modifiers.command || input.modifiers.ctrl) {
-            let id = if input.modifiers.shift { "edit.redo" } else { "edit.undo" };
-            queued.push((id, Json::Null));
-        }
-    });
-    queued
-}
-
 /// Moves the cursor to a photo that may live in another batch: landing in another batch walks
 /// batch by batch (each entry lands where the entering rule says), then `photo.goto` steps to the
 /// exact photo inside that batch. The guard turns a misplaced click into a stopped walk, never a
@@ -1196,38 +1157,210 @@ fn select_photo(model: &mut Model, batch_index: usize, photo_index: usize) {
     let _ = dispatch(model, "photo.goto", &json!({ "index": photo_index }));
 }
 
-/// The default key(s) the UI binds to a registry command. Commands with no key (control channel,
-/// MCP, internal helpers) answer the empty string on purpose: the cheat sheet still lists them.
-pub(crate) fn shortcut_for(id: &str) -> &'static str {
-    match id {
-        "file.open" => "Cmd+O",
-        "photo.previous" => "Left",
-        "photo.next" => "Right",
-        "photo.goto" => "",
-        "batch.previous" => "Cmd+Left",
-        "batch.next" => "Cmd+Right",
-        "batch.jump" => "double-click",
-        "rate.stars" => "0 - 5",
-        "rate.starsAndAdvance" => "Shift+0 - Shift+5",
-        "flag.pick" => "P (stars mode)",
-        "flag.reject" => "X",
-        "flag.clear" => "U",
-        "flag.toggle" => "`",
-        "keep.set" => "",
-        "keep.unset" => "",
-        "keep.toggle" => "P (keep mode)",
-        "label.set" => "6 7 8 9",
-        "batch.reject" => "Shift+X",
-        "edit.undo" => "Cmd+Z",
-        "edit.redo" => "Shift+Cmd+Z",
-        "settings.ratingMode" => "",
-        "settings.autoAdvance" => "Caps Lock",
-        "settings.autoAdvance.toggle" => "Caps Lock",
-        "settings.arrowsAtBatchEnd" => "",
-        "settings.keepStars" => "",
-        "engine.state" => "",
-        "engine.commands" => "",
-        _ => "",
+/// The screen-state commands the keymap may bind. They live in the UI because the engine has no
+/// business knowing a window has a grid; the cheat sheet and the Settings keyboard tab list them
+/// beside the registry's, and [`crate::cull::perform`] is where they run.
+pub(crate) const VIEW_COMMANDS: &[(&str, &str)] = &[
+    ("view.loupe", "Show the loupe"),
+    ("view.grid", "Show the grid"),
+    ("view.compare", "Compare 2-up (Opt for 3, Opt+Shift for 4)"),
+    ("panel.info", "Show or hide the info panel"),
+    ("overlay.clipping", "Show or hide the clipping overlay"),
+    ("overlay.af", "Show or hide the AF point overlay"),
+    ("hud.toggle", "Show or hide the progress HUD"),
+    ("zoom.lock.toggle", "Keep the loupe's pixels while stepping"),
+    ("settings.open", "Open Settings"),
+    ("app.fullScreen", "Toggle full screen"),
+];
+
+/// The registry's description for a command, or the UI's for a view command. `None` means an
+/// imported keymap names a command this build does not have (kept in the file, never fired).
+pub(crate) fn command_description(id: &str) -> Option<&'static str> {
+    REGISTRY
+        .iter()
+        .find(|command| command.id == id)
+        .map(|command| command.description)
+        .or_else(|| VIEW_COMMANDS.iter().find(|(known, _)| *known == id).map(|(_, description)| *description))
+}
+
+/// A physical key, spelled the way the keymap file spells it. Keys with no entry here cannot be
+/// recorded or bound (egui has no Caps Lock transition, so that default never fires; v1's file
+/// still round-trips it).
+fn key_name(key: Key) -> Option<KeyName> {
+    Some(match key {
+        Key::A => KeyName::A,
+        Key::B => KeyName::B,
+        Key::C => KeyName::C,
+        Key::D => KeyName::D,
+        Key::E => KeyName::E,
+        Key::F => KeyName::F,
+        Key::G => KeyName::G,
+        Key::H => KeyName::H,
+        Key::I => KeyName::I,
+        Key::J => KeyName::J,
+        Key::K => KeyName::K,
+        Key::L => KeyName::L,
+        Key::M => KeyName::M,
+        Key::N => KeyName::N,
+        Key::O => KeyName::O,
+        Key::P => KeyName::P,
+        Key::Q => KeyName::Q,
+        Key::R => KeyName::R,
+        Key::S => KeyName::S,
+        Key::T => KeyName::T,
+        Key::U => KeyName::U,
+        Key::V => KeyName::V,
+        Key::W => KeyName::W,
+        Key::X => KeyName::X,
+        Key::Y => KeyName::Y,
+        Key::Z => KeyName::Z,
+        Key::Num0 => KeyName::Zero,
+        Key::Num1 => KeyName::One,
+        Key::Num2 => KeyName::Two,
+        Key::Num3 => KeyName::Three,
+        Key::Num4 => KeyName::Four,
+        Key::Num5 => KeyName::Five,
+        Key::Num6 => KeyName::Six,
+        Key::Num7 => KeyName::Seven,
+        Key::Num8 => KeyName::Eight,
+        Key::Num9 => KeyName::Nine,
+        Key::ArrowLeft => KeyName::LeftArrow,
+        Key::ArrowRight => KeyName::RightArrow,
+        Key::ArrowUp => KeyName::UpArrow,
+        Key::ArrowDown => KeyName::DownArrow,
+        Key::Escape => KeyName::Escape,
+        Key::Enter => KeyName::Return,
+        Key::Tab => KeyName::Tab,
+        Key::Space => KeyName::Space,
+        Key::Backspace => KeyName::Delete,
+        Key::Delete => KeyName::ForwardDelete,
+        Key::Home => KeyName::Home,
+        Key::End => KeyName::End,
+        Key::PageUp => KeyName::PageUp,
+        Key::PageDown => KeyName::PageDown,
+        Key::Backtick => KeyName::Backtick,
+        Key::Minus => KeyName::Minus,
+        Key::Equals => KeyName::Equal,
+        Key::OpenBracket => KeyName::LeftBracket,
+        Key::CloseBracket => KeyName::RightBracket,
+        Key::Backslash => KeyName::Backslash,
+        Key::Semicolon => KeyName::Semicolon,
+        Key::Quote => KeyName::Quote,
+        Key::Comma => KeyName::Comma,
+        Key::Period => KeyName::Period,
+        Key::Slash => KeyName::Slash,
+        _ => return None,
+    })
+}
+
+/// The chord an egui key event means. `command` is the platform shortcut modifier (⌘ on the mac,
+/// Ctrl elsewhere); physical Ctrl is only separate on the mac, where ⌃⌘F must not read as ⌘F.
+pub(crate) fn chord_from_event(key: Key, modifiers: egui::Modifiers) -> Option<KeyChord> {
+    let key = key_name(key)?;
+    if key.is_modifier_key() {
+        return None;
+    }
+    let mut names = Vec::new();
+    let mac = cfg!(target_os = "macos");
+    if modifiers.ctrl && (mac || !modifiers.command) {
+        names.push(Modifier::Control);
+    }
+    if modifiers.alt {
+        names.push(Modifier::Option);
+    }
+    if modifiers.shift {
+        names.push(Modifier::Shift);
+    }
+    if modifiers.command {
+        names.push(Modifier::Command);
+    }
+    Some(KeyChord::new(key, names))
+}
+
+/// Holding these keys repeats (v1's `Command.isRepeatable`): navigation, ratings, flags, labels.
+/// A modal or file-affecting command fires exactly once per press.
+fn repeatable(command: &str) -> bool {
+    matches!(
+        command,
+        "photo.previous"
+            | "photo.next"
+            | "batch.previous"
+            | "batch.next"
+            | "rate.stars"
+            | "rate.starsAndAdvance"
+            | "flag.pick"
+            | "keep.toggle"
+            | "flag.reject"
+            | "flag.clear"
+            | "flag.toggle"
+            | "label.set"
+    )
+}
+
+/// Runs one binding. Engine commands go through the registry; the view commands are the screen's
+/// own state, which is why they do not need a command arm.
+fn perform(cull: &mut CullScreen, ctx: &egui::Context, model: &mut Model, binding: &KeyBinding) {
+    match binding.command.as_str() {
+        "view.loupe" => {
+            cull.view = ScreenView::Loupe;
+        }
+        "view.grid" => {
+            cull.view = if cull.view == ScreenView::Grid { ScreenView::Loupe } else { ScreenView::Grid };
+        }
+        "view.compare" => {
+            if matches!(cull.view, ScreenView::Compare(_)) {
+                cull.view = ScreenView::Loupe;
+            } else {
+                let count = usize::try_from(binding.argument.unwrap_or(2)).unwrap_or(2).clamp(2, 4);
+                cull.zoom = 1.0;
+                cull.pan = Vec2::ZERO;
+                cull.view = ScreenView::Compare(count);
+            }
+        }
+        "panel.info" => cull.info_visible = !cull.info_visible,
+        "overlay.clipping" => cull.clipping_overlay = !cull.clipping_overlay,
+        "overlay.af" => {
+            let current = cull.af_overlay.unwrap_or_else(|| model.viewer_settings().af_overlay);
+            cull.af_overlay = Some(!current);
+        }
+        "hud.toggle" => cull.hud_visible = !cull.hud_visible,
+        "zoom.lock.toggle" => {
+            let mut viewer = model.viewer_settings();
+            viewer.zoom_lock = !viewer.zoom_lock;
+            model.set_viewer_settings(viewer);
+        }
+        "file.open" => cull.open_dialog = true,
+        "settings.open" => cull.settings.visible = true,
+        "app.fullScreen" => {
+            let fullscreen = ctx.input(|input| input.viewport().fullscreen.unwrap_or(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+        }
+        "batch.reject" => {
+            if model.settings().reject_whole_batch {
+                cull.reject_dialog = true;
+            }
+        }
+        "label.set" => {
+            let color = match binding.argument {
+                Some(6) => "red",
+                Some(7) => "yellow",
+                Some(8) => "green",
+                Some(9) => "blue",
+                _ => return,
+            };
+            let _ = dispatch(model, "label.set", &json!({ "color": color }));
+        }
+        "rate.stars" | "rate.starsAndAdvance" => {
+            if let Some(stars) = binding.argument {
+                let _ = dispatch(model, &binding.command, &json!({ "stars": stars }));
+            }
+        }
+        // Finish is the M4 workflow. The chord stays reserved so muscle memory is not silently
+        // reassigned before the workflow exists.
+        "cull.finish" => {}
+        command => {
+            let _ = dispatch(model, command, &Json::Null);
+        }
     }
 }
 

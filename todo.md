@@ -183,12 +183,18 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-21 (v2, M2 closed — full pipeline green on all three OSes; M3 is next).**
+> **As of 2026-10-21 (v2, M3 feature-complete on local gates — the M3 milestone gate is next).**
 > The `v2` branch is the pure-Rust rewrite (**`docs/v2-plan.md` is its contract**; agent rules
 > live in the rewritten `AGENTS.md`). Milestone state:
 >
 > - **Draft PR open: `v2` → `main` is https://github.com/Kathir-D/Firstcut/pull/6** — stays a draft
 >   until the owner moves it; the owner merges, never an agent.
+> - **Where this session stopped:** working tree clean; the tip is the keymap commit (Settings
+>   screens + keyboard recorder/import/export). Every commit passed fmt, workspace clippy
+>   `-D warnings`, `cargo xtask layers`, and `cargo test --workspace` (458+ tests, snapshots
+>   included). **Next action:** the M3 milestone gate — run full `cargo xtask ci` on this
+>   machine, push, then watch the 3-OS workflow for the new tip. Green closes M3 and M4 (Finish
+>   Cull) starts. Nothing is blocked; the Exact RAW §5 gate still waits on the owner.
 > - **CI matrix fully GREEN, including Windows, for the first time (run 39456083872, on
 >   `7a6e9a2`).** The windows chain was unmasked one failure at a time: ext4 inode reuse needed
 >   `same_file` size corroboration (`233bd5f`), a failing `sessions_dir()` needed the same
@@ -348,8 +354,16 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   one half of `settings.json` atomically; the Viewer background, zoom lock, HUD-on-open, AF
 >   default, clipping thresholds and info-field selections are read by the culling screen.
 >   Snapshots `settings-general.png` / `settings-viewer.png` click the widgets and re-read the file.
-> - **M3 remaining** — the keyboard recorder with keymap import/export (the Settings → Keyboard
->   tab is the read-only registry list until then). Live watch + flush-on-quit landed in M2.
+> - **Keymap:** `firstcut-engine::keymap` ships `DefaultKeymap.json`, layers the user's
+>   `keymap.json` exactly as v1 (same chord + command replace defaults; mode-specific P wins),
+>   and the window routes every key through it. Settings → Keyboard records a chord on click
+>   (Escape cancels) and has Import…/Export…/Reset All; menus and the cheat sheet read the same
+>   map. Snapshot `settings-keyboard.png`; the harness test re-reads the file and checks that the
+>   new chord routes while the replaced one does not. egui cannot see Caps Lock, so v1's Caps
+>   Lock default stays in the file but never fires (plan §4.4).
+> - **M3 is now feature-complete on local gates.** Next: the M3 milestone gate — full
+>   `cargo xtask ci` on this machine and the 3-OS workflow on the pushed tip — then M4 (Finish
+>   Cull). Live watch + flush-on-quit landed in M2.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).

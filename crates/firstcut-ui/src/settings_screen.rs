@@ -6,16 +6,19 @@
 //! live settings. The engine owns every value and every save — this module only draws the shapes
 //! and calls the setter for the half it changed.
 //!
-//! Keyboard is a read-only list until the keymap engine lands; the recorder, import and export
-//! replace it there, not here.
+//! Keyboard is the keymap editor: click a chord to record a new one, or import/export the file.
+//! The map itself lives in `firstcut-engine::keymap`; this screen only asks it for what is bound
+//! and hands the recorded chord back through the model.
 
-use egui::{Color32, RichText, vec2};
+use std::path::PathBuf;
+
+use egui::{Color32, RichText};
 use firstcut_engine::model::Model;
 use firstcut_engine::registry::REGISTRY;
 use firstcut_engine::settings::{InfoFieldJson, KeepMappingJson, MetadataJson, PerformanceJson, XmpWriteModeJson};
 use firstcut_types::RatingMode;
 
-use crate::cull::shortcut_for;
+use crate::cull::{VIEW_COMMANDS, chord_from_event, command_description};
 
 const FOREGROUND: Color32 = Color32::from_rgb(232, 232, 236);
 const ACCENT: Color32 = Color32::from_rgb(244, 200, 0);
@@ -69,24 +72,75 @@ impl SettingsTab {
     }
 }
 
-/// The window's own state: visible, which tab, nothing else. Every value it shows comes from the
-/// model each frame, so an external change (the CLI, a menu action) cannot leave it stale.
+/// One command waiting for the next chord. `label` is what the banner names.
+struct Recording {
+    command: String,
+    argument: Option<i64>,
+    label: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeymapDialog {
+    Import,
+    Export,
+}
+
+/// The window's own state: visible, which tab, and the recorder/dialog in flight. Every value it
+/// shows comes from the model each frame, so an external change (the CLI, a menu action) cannot
+/// leave it stale.
 pub(crate) struct SettingsScreen {
     pub(crate) visible: bool,
     tab: SettingsTab,
+    recording: Option<Recording>,
+    keymap_dialog: Option<KeymapDialog>,
+    keymap_path: String,
+    status: Option<String>,
 }
 
 impl Default for SettingsScreen {
     fn default() -> Self {
-        Self { visible: false, tab: SettingsTab::General }
+        Self { visible: false, tab: SettingsTab::General, recording: None, keymap_dialog: None, keymap_path: String::new(), status: None }
     }
 }
 
 impl SettingsScreen {
+    /// True while a chord is being recorded: the window must not close on the Escape that
+    /// cancels it, and the culling screen must not route the key that is being recorded.
+    pub(crate) fn is_capturing(&self) -> bool {
+        self.recording.is_some()
+    }
+
     pub(crate) fn show(&mut self, ctx: &egui::Context, model: &mut Model) {
         if !self.visible {
+            self.recording = None;
+            self.keymap_dialog = None;
             return;
         }
+
+        // The recorder reads the frame's key events before anything else; a key event cannot
+        // also reach the culling screen (route_keys is gated on Settings being visible).
+        if self.recording.is_some() {
+            let pressed = ctx.input(|input| {
+                input.events.iter().find_map(|event| match event {
+                    egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } => Some((*key, *modifiers)),
+                    _ => None,
+                })
+            });
+            if let Some((key, modifiers)) = pressed {
+                if key == egui::Key::Escape {
+                    self.recording = None;
+                    self.status = Some("Recording cancelled".to_string());
+                } else if let Some(chord) = chord_from_event(key, modifiers)
+                    && let Some(recording) = self.recording.take()
+                {
+                    self.status = Some(match model.rebind_keymap(&recording.command, recording.argument, &chord) {
+                        Ok(()) => format!("{} is now {}", recording.label, chord.display()),
+                        Err(err) => err,
+                    });
+                }
+            }
+        }
+
         let mut open = self.visible;
         egui::Window::new("Settings")
             .collapsible(false)
@@ -105,13 +159,170 @@ impl SettingsScreen {
                 window.separator();
                 egui::ScrollArea::vertical().max_height(440.0).auto_shrink([false, true]).show(window, |body| match self.tab {
                     SettingsTab::General => general_tab(body, model),
-                    SettingsTab::Keyboard => keyboard_tab(body),
+                    SettingsTab::Keyboard => self.keyboard_tab(body, model),
                     SettingsTab::Viewer => viewer_tab(body, model),
                     SettingsTab::Metadata => metadata_tab(body, model),
                     SettingsTab::Performance => performance_tab(body, model),
                 });
             });
+        if !open {
+            self.recording = None;
+            self.keymap_dialog = None;
+        }
         self.visible = open;
+        self.keymap_dialog_window(ctx, model);
+    }
+
+    /// The Keyboard tab: one row per live binding, plus a row for every command that has no
+    /// key yet. Clicking the chord (or "Record") arms the recorder; the next non-modifier key
+    /// becomes the new chord. Escape cancels without changing anything.
+    fn keyboard_tab(&mut self, body: &mut egui::Ui, model: &mut Model) {
+        body.horizontal(|row| {
+            if row.button("Import…").clicked() {
+                self.keymap_path = model.keymap_path().map(|path| path.display().to_string()).unwrap_or_default();
+                self.keymap_dialog = Some(KeymapDialog::Import);
+            }
+            if row.button("Export…").clicked() {
+                self.keymap_path =
+                    model.keymap_path().map(|path| path.with_file_name("keymap-export.json").display().to_string()).unwrap_or_default();
+                self.keymap_dialog = Some(KeymapDialog::Export);
+            }
+            if row.button("Reset All").clicked() {
+                self.status = Some(match model.reset_keymap() {
+                    Ok(()) => "Every shortcut is back to its default".to_string(),
+                    Err(err) => err,
+                });
+            }
+        });
+        body.add_space(4.0);
+        body.label(
+            RichText::new("Click a shortcut to record a new one. Changes apply immediately and are written to your keymap.json; a key already in use is taken over.")
+                .small()
+                .weak(),
+        );
+        if let Some(recording) = &self.recording {
+            body.add_space(4.0);
+            body.label(RichText::new(format!("Press the new shortcut for {} — Escape cancels.", recording.label)).color(ACCENT));
+        } else if let Some(status) = &self.status {
+            body.add_space(4.0);
+            body.label(RichText::new(status).small().weak());
+        }
+        body.separator();
+
+        struct Row {
+            command: String,
+            argument: Option<i64>,
+            label: String,
+            chord: Option<String>,
+        }
+
+        let mut rows: Vec<Row> = Vec::new();
+        let mut seen: Vec<(String, Option<i64>)> = Vec::new();
+        for binding in model.keymap().bindings.clone() {
+            let mut label = binding_label(&binding.command, binding.argument);
+            if let Some(modes) = &binding.modes {
+                let names = modes
+                    .iter()
+                    .map(|mode| match mode {
+                        firstcut_engine::keymap::ModeName::Stars => "Stars",
+                        firstcut_engine::keymap::ModeName::Keep => "Keep",
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" / ");
+                label.push_str(&format!(" — {names} mode"));
+            }
+            seen.push((binding.command.clone(), binding.argument));
+            let chord = Some(binding.chord().display());
+            rows.push(Row { command: binding.command, argument: binding.argument, label, chord });
+        }
+        for (id, description) in REGISTRY.iter().map(|command| (command.id, command.description)).chain(VIEW_COMMANDS.iter().copied()) {
+            if id.starts_with("engine.") || seen.iter().any(|(command, _)| command == id) {
+                continue;
+            }
+            // A command that takes an argument cannot be offered without one; the bindings
+            // above already carry every argument the shipped map uses.
+            if REGISTRY.iter().any(|command| command.id == id && !command.params.is_empty()) {
+                continue;
+            }
+            rows.push(Row { command: id.to_string(), argument: None, label: description.to_string(), chord: None });
+        }
+
+        let mut record: Option<(String, Option<i64>, String)> = None;
+        for row in rows {
+            body.horizontal_wrapped(|line| {
+                let text = row.chord.clone().unwrap_or_else(|| "Record".to_string());
+                let button = egui::Button::new(RichText::new(text).monospace().small().color(ACCENT));
+                if line.add(button).on_hover_text("Click to record a new shortcut").clicked() {
+                    record = Some((row.command.clone(), row.argument, row.label.clone()));
+                }
+                line.add(egui::Label::new(RichText::new(row.label.clone()).small().color(FOREGROUND)).wrap());
+            });
+            body.add_space(2.0);
+        }
+        if let Some((command, argument, label)) = record {
+            self.recording = Some(Recording { command, argument, label });
+            self.status = None;
+        }
+    }
+
+    fn keymap_dialog_window(&mut self, ctx: &egui::Context, model: &mut Model) {
+        let Some(dialog) = self.keymap_dialog else {
+            return;
+        };
+        let mut open = true;
+        let mut submit = false;
+        let mut cancel = false;
+        let title = match dialog {
+            KeymapDialog::Import => "Import Keymap",
+            KeymapDialog::Export => "Export Keymap",
+        };
+        egui::Window::new(title).collapsible(false).resizable(false).open(&mut open).show(ctx, |window| {
+            window.label(
+                RichText::new(match dialog {
+                    KeymapDialog::Import => "A keymap.json from another Firstcut, or an exported copy.",
+                    KeymapDialog::Export => "Writes the shortcuts this app actually runs, defaults included.",
+                })
+                .small()
+                .weak(),
+            );
+            window.add(egui::TextEdit::singleline(&mut self.keymap_path).desired_width(420.0));
+            window.horizontal(|row| {
+                if row
+                    .button(match dialog {
+                        KeymapDialog::Import => "Import",
+                        KeymapDialog::Export => "Export",
+                    })
+                    .clicked()
+                {
+                    submit = true;
+                }
+                if row.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if submit {
+            let path = PathBuf::from(self.keymap_path.trim());
+            let outcome = match dialog {
+                KeymapDialog::Import => model.import_keymap(&path),
+                KeymapDialog::Export => model.export_keymap(&path),
+            };
+            match outcome {
+                Ok(()) => {
+                    let verb = match dialog {
+                        KeymapDialog::Import => "Imported",
+                        KeymapDialog::Export => "Exported",
+                    };
+                    self.status = Some(format!("{verb} {}", path.display()));
+                    self.keymap_dialog = None;
+                    return;
+                }
+                Err(err) => self.status = Some(err),
+            }
+        }
+        if cancel || !open {
+            self.keymap_dialog = None;
+        }
     }
 }
 
@@ -262,15 +473,22 @@ fn performance_tab(body: &mut egui::Ui, model: &mut Model) {
     }
 }
 
-fn keyboard_tab(body: &mut egui::Ui) {
-    body.label(RichText::new("Every command in the registry and its bound key.").weak());
-    body.add_space(4.0);
-    for command in REGISTRY {
-        body.horizontal_wrapped(|row| {
-            row.add_sized(vec2(120.0, 16.0), egui::Label::new(RichText::new(shortcut_for(command.id)).monospace().small().color(ACCENT)));
-            row.label(RichText::new(command.description).small().color(FOREGROUND));
-        });
-        body.add_space(2.0);
+/// What a binding row says: the command's description, but arguments spelled out where the
+/// registry's generic text (`Set the current photo's stars (0..=5)`) would be vague.
+fn binding_label(command: &str, argument: Option<i64>) -> String {
+    match (command, argument) {
+        ("rate.stars", Some(0)) => "Clear the rating".to_string(),
+        ("rate.stars", Some(stars)) => format!("Rate {stars} stars"),
+        ("rate.starsAndAdvance", Some(stars)) => format!("Rate {stars} stars and advance"),
+        ("label.set", Some(6)) => "Colour label: red".to_string(),
+        ("label.set", Some(7)) => "Colour label: yellow".to_string(),
+        ("label.set", Some(8)) => "Colour label: green".to_string(),
+        ("label.set", Some(9)) => "Colour label: blue".to_string(),
+        _ => match (command_description(command), argument) {
+            (Some(description), Some(argument)) => format!("{description}  ({argument})"),
+            (Some(description), None) => description.to_string(),
+            (None, _) => format!("{command} (not in this build)"),
+        },
     }
 }
 

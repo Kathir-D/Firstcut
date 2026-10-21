@@ -95,6 +95,13 @@ fn settings_store() -> Option<SettingsStore> {
     Some(SettingsStore::at(&file))
 }
 
+/// The user's keymap overrides live beside `settings.json` (v1's `KeymapStore.defaultDirectory`).
+fn keymap_store() -> Option<firstcut_engine::keymap::KeymapStore> {
+    let sessions = firstcut_catalog::sessions_dir().ok()?;
+    let file = sessions.parent()?.join("keymap.json");
+    Some(firstcut_engine::keymap::KeymapStore::at(&file))
+}
+
 struct Shell {
     model: Model,
     screen: firstcut_ui::CullScreen,
@@ -162,6 +169,9 @@ impl Shell {
         // argument still wins and opens immediately.
         if let Some(dir) = shell.sessions_dir.clone() {
             shell.model.attach_sessions_dir(&dir);
+        }
+        if let Some(store) = keymap_store() {
+            shell.model.attach_keymap_store(store);
         }
         if let Some(folder) = folder {
             shell.start_open(folder);
