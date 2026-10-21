@@ -74,7 +74,7 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
         let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
-        let images = FrameImages { current, thumbs: &bank, histogram: Some(&histogram) };
+        let images = FrameImages { current, thumbs: &bank, histogram: Some(&histogram), display: &bank };
         screen.show(ui, &mut model, &images);
     });
 
@@ -133,4 +133,9 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
         let model = state.borrow();
         assert_eq!(model.current_photo_index(), 0, "the grid click moved the cursor");
     }
+
+    // Compare 2-up from the grid: the batch's frames side by side with shared zoom/pan.
+    harness.key_press(egui::Key::C);
+    harness.run();
+    harness.snapshot("culling-compare");
 }

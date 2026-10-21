@@ -304,6 +304,7 @@ impl eframe::App for Shell {
             current: current_id.zip(current_frame).map(|(id, frame)| (id, frame.image.as_ref())),
             thumbs: &self.bank.thumbnails,
             histogram: current_frame.map(|frame| &frame.histogram),
+            display: &self.bank.displays,
         };
         self.screen.show(ui, &mut self.model, &images);
 
@@ -363,6 +364,7 @@ impl Shell {
                 current: current_id.zip(current_frame).map(|(id, frame)| (id, frame.image.as_ref())),
                 thumbs: &bank.thumbnails,
                 histogram: current_frame.map(|frame| &frame.histogram),
+                display: &bank.displays,
             };
             screen.show(ui, model, &images);
         });
@@ -405,6 +407,7 @@ impl Shell {
                 current: current_id.zip(current_frame).map(|(id, frame)| (id, frame.image.as_ref())),
                 thumbs: &bank.thumbnails,
                 histogram: current_frame.map(|frame| &frame.histogram),
+                display: &bank.displays,
             };
             screen.show(ui, model, &images);
         });
@@ -451,6 +454,8 @@ struct DecodeBank {
     /// The filmstrip's pixels, kept as the same `Arc` the pipeline caches, so eviction in the
     /// policy is the only accounting and this map never holds a private copy.
     thumbnails: HashMap<u64, Arc<egui::ColorImage>>,
+    /// Display-tier pixels by photo id, kept in step with the pipeline's cache.
+    displays: HashMap<u64, Arc<egui::ColorImage>>,
     catalog_revision: u64,
     inflight_limit: usize,
     /// Thumbnails already offered to the batcher. A re-decode after eviction must not submit the
@@ -488,6 +493,7 @@ impl DecodeBank {
             next_worker: 0,
             results: receiver,
             thumbnails: HashMap::new(),
+            displays: HashMap::new(),
             catalog_revision: u64::MAX,
             inflight_limit: workers.max(1) * 2,
             signatures_sent: HashSet::new(),
@@ -512,6 +518,11 @@ impl DecodeBank {
                             if self.signatures_sent.insert(job.id.0) {
                                 model.submit_thumbnail_pixels(job.id, &decoded.rgba, decoded.width, decoded.height);
                             }
+                        }
+                        if job.tier == Tier::Display {
+                            // Compare shows frames other than the cursor's; keep the same Arcs the
+                            // loupe already paints rather than decoding anything twice.
+                            self.displays.insert(job.id.0, Arc::clone(&frame.image));
                         }
                         changed = true;
                     }
@@ -551,6 +562,8 @@ impl DecodeBank {
         // the cache rather than a second unbounded one.
         let keep: HashSet<u64> = self.thumbnails.keys().copied().filter(|id| self.pipeline.contains(PhotoId(*id), Tier::Thumbnail)).collect();
         self.thumbnails.retain(|id, _| keep.contains(id));
+        // Display Arcs are views of the pipeline's cache too: drop the ones it evicted.
+        self.displays.retain(|id, _| self.pipeline.contains(PhotoId(*id), Tier::Display));
         changed
     }
 

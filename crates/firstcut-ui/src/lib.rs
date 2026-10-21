@@ -25,12 +25,15 @@ pub struct FrameImages<'a> {
     pub thumbs: &'a HashMap<u64, Arc<egui::ColorImage>>,
     /// The current photo's histogram (already orientation-safe). M3's Info panel paints it.
     pub histogram: Option<&'a Histogram>,
+    /// Display-tier pixels by photo id, for screens that show more than the cursor's photo
+    /// (Compare). Absent ids fall back to the thumbnail, then to the honest placeholder.
+    pub display: &'a HashMap<u64, Arc<egui::ColorImage>>,
 }
 
 impl FrameImages<'_> {
     /// The frame before anything is decoded (a fresh Welcome, for instance).
     pub fn empty() -> FrameImages<'static> {
-        FrameImages { current: None, thumbs: &EMPTY_THUMBS, histogram: None }
+        FrameImages { current: None, thumbs: &EMPTY_THUMBS, histogram: None, display: &EMPTY_THUMBS }
     }
 }
 

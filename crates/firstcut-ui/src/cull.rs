@@ -39,6 +39,8 @@ const GRID_WIDTH: f32 = 168.0;
 enum ScreenView {
     Loupe,
     Grid,
+    /// 2-, 3- or 4-up compare of the current batch.
+    Compare(usize),
 }
 
 pub struct CullScreen {
@@ -133,6 +135,25 @@ impl CullScreen {
         if ui.ctx().input(|input| input.key_pressed(Key::G)) {
             self.view = if self.view == ScreenView::Grid { ScreenView::Loupe } else { ScreenView::Grid };
         }
+        if ui.ctx().input(|input| input.key_pressed(Key::C)) {
+            // v1's defaults: C 2-up, Option-C 3-up, Option-Shift-C 4-up (todo.md §10).
+            let (shift, alt) = ui.ctx().input(|input| (input.modifiers.shift, input.modifiers.alt));
+            let count = if shift {
+                4
+            } else if alt {
+                3
+            } else {
+                2
+            };
+            if matches!(self.view, ScreenView::Compare(_)) {
+                self.view = ScreenView::Loupe;
+            } else {
+                // Compare starts at fit; its zoom is shared across the panes from there.
+                self.zoom = 1.0;
+                self.pan = Vec2::ZERO;
+                self.view = ScreenView::Compare(count);
+            }
+        }
         if ui.ctx().input(|input| input.key_pressed(Key::Escape)) {
             self.view = ScreenView::Loupe;
         }
@@ -149,6 +170,108 @@ impl CullScreen {
                 self.loupe(ui, model, images);
             }
             ScreenView::Grid => self.grid(ui, model, images),
+            ScreenView::Compare(count) => self.compare(ui, model, images, count),
+        }
+    }
+
+    // ---- compare -------------------------------------------------------------------------
+
+    /// v1's Compare (todo.md §9.6): 2–4 frames of the current batch side by side, one shared
+    /// zoom and pan. The window starts at the cursor and clamps so it never runs off the batch;
+    /// arrows move the cursor and slide it. A click makes a frame current; a double-click
+    /// returns to the loupe.
+    fn compare(&mut self, ui: &mut egui::Ui, model: &mut Model, images: &FrameImages<'_>, count: usize) {
+        let count = count.clamp(2, 4);
+        let batch_count = model.current_batch().map_or(0, |batch| batch.photo_ids.len());
+        if batch_count == 0 {
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND)).show(ui, |panel| {
+                panel.centered_and_justified(|panel| panel.label(RichText::new("No batch to compare").weak()));
+            });
+            return;
+        }
+        let current_index = model.current_photo_index().min(batch_count.saturating_sub(1));
+        let start = current_index.min(batch_count.saturating_sub(count));
+        let current_id = model.current_photo_id().map(|id| id.0);
+        let batch_index = model.current_batch_index();
+
+        // Plain copies: the paint closure only reads, the dispatches come after it.
+        let mut panes: Vec<Thumb> = Vec::new();
+        if let Some(batch) = model.current_batch() {
+            for (photo_index, photo_id) in batch.photo_ids.iter().enumerate().skip(start).take(count) {
+                let Some(photo) = model.photos().iter().find(|photo| photo.meta.id == *photo_id) else { continue };
+                panes.push(Thumb { id: photo_id.0, batch_index, photo_index, file_name: file_name_of(&photo.meta.rel_path), rating: photo.rating });
+            }
+        }
+        let pane_count = panes.len().max(1) as f32;
+        let mut chosen: Option<usize> = None;
+        let mut opened = false;
+
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND).inner_margin(8.0)).show(ui, |panel| {
+            let area = panel.max_rect();
+            let gap = 6.0;
+            let width = ((area.width() - gap * (pane_count - 1.0)) / pane_count).max(1.0);
+            let scroll = panel.ctx().input(|input| input.smooth_scroll_delta.y);
+            if scroll != 0.0 {
+                self.zoom = (self.zoom * (1.0 - scroll / 1_500.0)).clamp(0.2, 12.0);
+            }
+            for (position, pane) in panes.iter().enumerate() {
+                let rect = egui::Rect::from_min_size(pos2(area.left() + position as f32 * (width + gap), area.top()), vec2(width, area.height()));
+                panel.painter().rect_filled(rect, 4.0, Color32::from_rgb(24, 24, 26));
+                let pixels = images
+                    .display
+                    .get(&pane.id)
+                    .map(|pixels| pixels.as_ref())
+                    .or_else(|| images.current.filter(|(id, _)| id.0 == pane.id).map(|(_, pixels)| pixels))
+                    .or_else(|| images.thumbs.get(&pane.id).map(|pixels| pixels.as_ref()));
+                if let Some(pixels) = pixels {
+                    let texture = load_texture(&mut self.textures, panel.ctx(), pane.id, pixels);
+                    let image_size = vec2(pixels.width() as f32, pixels.height() as f32);
+                    let fit = fit_into(rect.size() - vec2(0.0, 22.0), image_size);
+                    let display = fit * self.zoom;
+                    let image_rect = egui::Rect::from_center_size(rect.center() - vec2(0.0, 8.0) + self.pan, display);
+                    let uv = egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                    panel.painter().with_clip_rect(rect).image(texture.id(), image_rect, uv, Color32::WHITE);
+                } else {
+                    panel.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "decoding…",
+                        FontId::proportional(13.0),
+                        Color32::from_gray(120),
+                    );
+                }
+                let name_color = if Some(pane.id) == current_id { ACCENT } else { FOREGROUND };
+                panel.painter().text(
+                    rect.left_bottom() + vec2(6.0, -5.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    format!("{}   {}", pane.file_name, stars_label(&pane.rating)),
+                    FontId::proportional(12.0),
+                    name_color,
+                );
+
+                let response = panel.interact(rect, egui::Id::unique(("compare-pane", position)), Sense::click_and_drag());
+                if response.dragged() {
+                    self.pan += response.drag_delta();
+                    let slack = (rect.size() * self.zoom).max(Vec2::ZERO) + rect.size();
+                    self.pan = self.pan.clamp(-slack, slack);
+                }
+                if response.clicked() {
+                    chosen = Some(pane.photo_index);
+                }
+                if response.double_clicked() {
+                    chosen = Some(pane.photo_index);
+                    opened = true;
+                }
+            }
+        });
+
+        if let Some(index) = chosen {
+            select_photo(model, batch_index, index);
+        }
+        if opened {
+            self.zoom = 1.0;
+            self.pan = Vec2::ZERO;
+            self.view = ScreenView::Loupe;
         }
     }
 
@@ -157,8 +280,11 @@ impl CullScreen {
     /// The whole shoot as a contact sheet. A click moves the cursor (through the same batch-walk
     /// rule the filmstrip uses); a double-click lands in the loupe on that photo.
     fn grid(&mut self, ui: &mut egui::Ui, model: &mut Model, images: &FrameImages<'_>) {
+        // v1's grid is the CURRENT batch, not the whole shoot (todo.md §9.6): compare candidates
+        // sit next to each other, and the strip is the way to travel elsewhere.
+        let batch_index = model.current_batch_index();
         let mut cells: Vec<Thumb> = Vec::new();
-        for (batch_index, batch) in model.batches().iter().enumerate() {
+        if let Some(batch) = model.current_batch() {
             for (photo_index, photo_id) in batch.photo_ids.iter().enumerate() {
                 let Some(photo) = model.photos().iter().find(|photo| photo.meta.id == *photo_id) else { continue };
                 cells.push(Thumb { id: photo_id.0, batch_index, photo_index, file_name: file_name_of(&photo.meta.rel_path), rating: photo.rating });

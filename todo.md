@@ -322,7 +322,10 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - **Grid (G / Escape):** a wrapping contact sheet of the whole shoot, same textures and
 >   cursor accent as the strip; click selects through the registry walk, double-click opens the
 >   loupe. Snapshot `culling-grid.png`.
-> - **M3 remaining** — compare, batch
+> - **Compare (C / ⌥C / ⌥⇧C):** 2-, 3- or 4-up of the current batch, one shared zoom/pan,
+>   click selects, double-click returns to the loupe. Snapshots use display-tier pixels from the
+>   app's cache (`FrameImages.display`). `culling-compare.png`.
+> - **M3 remaining** — batch
 >   navigation (⌘←/→, double-click jump), zoom lock, AF/clipping overlays, keymap recorder,
 >   menus, Welcome recents/resume, Settings screens, error alerts. Live watch + flush-on-quit
 >   already landed in M2.
