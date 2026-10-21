@@ -47,6 +47,8 @@ pub struct CullScreen {
     hud_visible: bool,
     /// The Info panel's visibility (v1's `infoPanelVisible`, toggled with I).
     info_visible: bool,
+    /// The photo the loupe framed last, so a move can reset zoom unless zoom lock is on.
+    last_photo: Option<u64>,
 }
 
 impl Default for CullScreen {
@@ -57,7 +59,15 @@ impl Default for CullScreen {
 
 impl CullScreen {
     pub fn new() -> Self {
-        Self { textures: HashMap::new(), zoom: 1.0, pan: Vec2::ZERO, viewport_pixels: Vec2::ZERO, hud_visible: true, info_visible: false }
+        Self {
+            textures: HashMap::new(),
+            zoom: 1.0,
+            pan: Vec2::ZERO,
+            viewport_pixels: Vec2::ZERO,
+            hud_visible: true,
+            info_visible: false,
+            last_photo: None,
+        }
     }
 
     /// The viewer's long edge in backing pixels, or 0 before the first layout. The app turns
@@ -253,6 +263,16 @@ impl CullScreen {
                 return;
             };
 
+            // Zoom lock keeps the same level and position across a move (todo.md §7.1); with it
+            // off, the next photo opens at fit.
+            if self.last_photo != Some(id.0) {
+                if self.last_photo.is_some() && !model.zoom_lock() {
+                    self.zoom = 1.0;
+                    self.pan = Vec2::ZERO;
+                }
+                self.last_photo = Some(id.0);
+            }
+
             let texture = load_texture(&mut self.textures, panel.ctx(), id.0, pixels);
             let image_size = vec2(pixels.width() as f32, pixels.height() as f32);
             let fit = fit_into(available.size(), image_size);
@@ -271,8 +291,29 @@ impl CullScreen {
                 self.pan = self.pan.clamp(-slack, slack);
             }
             if response.double_clicked() {
+                // v1: double-click jumps a whole batch, in the direction of the half clicked
+                // (todo.md §7.2). It leaves the batch, so `enteringBatchBehavior` does not apply.
                 self.zoom = 1.0;
                 self.pan = Vec2::ZERO;
+                let forward = response.interact_pointer_pos().is_none_or(|at| at.x >= rect.center().x);
+                let _ = dispatch(model, "batch.jump", &json!({ "direction": if forward { "forward" } else { "back" } }));
+            } else if response.clicked() {
+                if self.zoom > 1.01 {
+                    self.zoom = 1.0;
+                    self.pan = Vec2::ZERO;
+                } else {
+                    // A click turns the fit view into 1:1: one sensor pixel per physical pixel,
+                    // centred where the click landed (v1's one-step click zoom).
+                    let at = response.interact_pointer_pos().unwrap_or(available.center());
+                    let sensor_edge = model.current_photo().map_or(0, |photo| photo.meta.width.max(photo.meta.height));
+                    let points_per_pixel = panel.ctx().pixels_per_point();
+                    let fit_edge = fit.x.max(fit.y);
+                    if let Some(target) = native_zoom(sensor_edge, fit_edge, points_per_pixel) {
+                        let offset = at - available.center();
+                        self.pan = zoom_anchor(self.pan, offset, self.zoom, target);
+                        self.zoom = target;
+                    }
+                }
             }
             let scroll = panel.ctx().input(|input| input.smooth_scroll_delta.y);
             if scroll != 0.0 {
@@ -458,11 +499,12 @@ type Queued = (&'static str, Json);
 fn queued_keys(ui: &egui::Ui, mode: RatingMode) -> Vec<Queued> {
     let mut queued: Vec<Queued> = Vec::new();
     ui.ctx().input(|input| {
+        let command = input.modifiers.command || input.modifiers.ctrl;
         if input.key_pressed(Key::ArrowLeft) {
-            queued.push(("photo.previous", Json::Null));
+            queued.push((if command { "batch.previous" } else { "photo.previous" }, Json::Null));
         }
         if input.key_pressed(Key::ArrowRight) {
-            queued.push(("photo.next", Json::Null));
+            queued.push((if command { "batch.next" } else { "photo.next" }, Json::Null));
         }
         for (key, stars) in [(Key::Num0, 0u8), (Key::Num1, 1), (Key::Num2, 2), (Key::Num3, 3), (Key::Num4, 4), (Key::Num5, 5)] {
             if input.key_pressed(key) {
@@ -581,6 +623,26 @@ fn file_name_of(rel_path: &str) -> String {
     rel_path.rsplit('/').next().unwrap_or(rel_path).to_string()
 }
 
+/// The zoom that maps one sensor pixel to one physical pixel: the sensor's long edge over the
+/// fit view's long edge in physical pixels. `None` before layout or for a zero-sized sensor.
+fn native_zoom(sensor_edge: u32, fit_edge_points: f32, points_per_pixel: f32) -> Option<f32> {
+    let fit_edge = fit_edge_points * points_per_pixel;
+    if sensor_edge == 0 || !fit_edge.is_finite() || fit_edge <= 0.0 {
+        return None;
+    }
+    Some((sensor_edge as f32 / fit_edge).clamp(1.0, 12.0))
+}
+
+/// The pan that keeps the image point under `offset` (from the pane's centre) fixed when the
+/// zoom changes from `zoom` to `next`. At zoom z the point under `offset` is
+/// `(offset - pan) / z`; solving for the new pan is `offset - (offset - pan) * next / z`.
+fn zoom_anchor(pan: Vec2, offset: Vec2, zoom: f32, next: f32) -> Vec2 {
+    if zoom <= 0.0 {
+        return pan;
+    }
+    offset - (offset - pan) * (next / zoom)
+}
+
 /// The largest `[image size]` that fits `[into]`, keeping the aspect.
 fn fit_into(into: Vec2, image: Vec2) -> Vec2 {
     if image.x <= 0.0 || image.y <= 0.0 {
@@ -650,6 +712,24 @@ mod tests {
         assert_eq!(tier_line(&counts), "keep 2 · good 0 · maybe 0 · unrated 5");
         counts.insert(Tier::Rejected, 1);
         assert_eq!(tier_line(&counts), "keep 2 · good 0 · maybe 0 · unrated 5 · rejected 1");
+    }
+
+    #[test]
+    fn a_click_zoom_maps_one_sensor_pixel_to_one_physical_pixel() {
+        assert_eq!(native_zoom(6000, 800.0, 2.0), Some(3.75));
+        assert_eq!(native_zoom(1000, 800.0, 2.0), Some(1.0), "a small frame is never enlarged by the click");
+        assert_eq!(native_zoom(6000, 0.0, 2.0), None, "no layout yet");
+        assert_eq!(native_zoom(0, 800.0, 2.0), None, "a nameless frame");
+    }
+
+    #[test]
+    fn zoom_anchoring_keeps_the_point_under_the_cursor() {
+        let pan = vec2(12.0, -8.0);
+        let offset = vec2(100.0, -50.0);
+        let anchored = zoom_anchor(pan, offset, 1.0, 2.0);
+        let before = (offset - pan) / 1.0;
+        let after = (offset - anchored) / 2.0;
+        assert!((before - after).length() < 1e-4, "{before:?} vs {after:?}");
     }
 
     #[test]

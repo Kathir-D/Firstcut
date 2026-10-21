@@ -317,6 +317,8 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   Snapshot `culling-info-panel.png`.
 > - **Rating modes on screen:** toolbar Stars / Keep (dispatches `settings.ratingMode`); P is
 >   mode-aware (keep in Keep mode, pick in Stars mode), X rejects. Snapshot `culling-keep-mode.png`.
+> - **Loupe zoom rules:** click to 1:1 anchored where clicked, double-click jumps a batch by the
+>   half clicked, and zoom/pan survive a move only under zoom lock. ⌘←/→ move between batches.
 > - **M3 remaining** — grid, compare, batch
 >   navigation (⌘←/→, double-click jump), zoom lock, AF/clipping overlays, keymap recorder,
 >   menus, Welcome recents/resume, Settings screens, error alerts. Live watch + flush-on-quit
