@@ -183,7 +183,7 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-20 (v2, M2 pipeline in progress — M1 is green and M2 is landing one commit at a time).**
+> **As of 2026-10-21 (v2, M2 closed — full pipeline green on all three OSes; M3 is next).**
 > The `v2` branch is the pure-Rust rewrite (**`docs/v2-plan.md` is its contract**; agent rules
 > live in the rewritten `AGENTS.md`). Milestone state:
 >
@@ -301,8 +301,16 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - **Real-photo sweep green:** `every_sampled_photo_displays_in_display_orientation` (12
 >   photos across the four games) and `a_real_raw_develops_in_sensor_orientation_and_is_rotated_once`
 >   (orientation 8 → 3999×5999 portrait) pass with `scripts/test-with-photos.sh`'s env.
-> - **M2 still open:** the full `cargo xtask ci` + 3-OS matrix on the M2 tip, and the owner's call
->   on the Exact RAW gate. Then M3.
+> - **M2 gate GREEN (2026-10-21):** `cargo xtask ci` passes on this machine
+>   (`target/ci/summary.md`) and the 3-OS matrix passed on `ce1fbf5` (run 39671606523:
+>   macos, windows, ubuntu all success). The Windows leg had caught one real bug the local
+>   gate could not: target-gated imports in `firstcut-decode-libraw` were unused on Windows
+>   (fixed in `ce1fbf5`, now also checked locally with
+>   `cargo clippy -p firstcut-decode-libraw --target x86_64-pc-windows-msvc`). The only
+>   M2 remainder is the owner's call on the Exact RAW gate, which is a decision, not work.
+> - **Next: M3 (full screen set)** — grid, compare, info/histogram, progress HUD, both
+>   rating modes, batch navigation, zoom lock, overlays, keymap recorder, menus, Welcome
+>   recents/resume, Settings, error alerts. Live watch + flush-on-quit already landed in M2.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).
