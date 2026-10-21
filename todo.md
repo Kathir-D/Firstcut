@@ -315,7 +315,9 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - **Info panel + histogram:** right-hand inspector (I toggles), capture fields and the
 >   64-bin luma area with RGB traces; the data is the decode seam's already-oriented histogram.
 >   Snapshot `culling-info-panel.png`.
-> - **M3 remaining** — grid, compare, both rating-mode controls, batch
+> - **Rating modes on screen:** toolbar Stars / Keep (dispatches `settings.ratingMode`); P is
+>   mode-aware (keep in Keep mode, pick in Stars mode), X rejects. Snapshot `culling-keep-mode.png`.
+> - **M3 remaining** — grid, compare, batch
 >   navigation (⌘←/→, double-click jump), zoom lock, AF/clipping overlays, keymap recorder,
 >   menus, Welcome recents/resume, Settings screens, error alerts. Live watch + flush-on-quit
 >   already landed in M2.

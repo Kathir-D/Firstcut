@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use eframe::egui;
+use egui_kittest::kittest::Queryable;
 use firstcut_engine::model::Model;
 use firstcut_types::Histogram;
 use firstcut_ui::{CullScreen, FrameImages};
@@ -23,14 +24,18 @@ use firstcut_ui::{CullScreen, FrameImages};
 /// Three synthetic CR3s 10 ms apart (one burst, so one batch) in a scratch shoot, opened.
 fn shoot() -> (tempfile::TempDir, tempfile::TempDir, Model) {
     let sessions = tempfile::tempdir().unwrap();
-    let folder = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    // A fixed shoot name: the toolbar shows it, and the snapshots must not carry a random
+    // temp-directory suffix.
+    let folder = root.path().join("Game1JENKS");
+    std::fs::create_dir(&folder).unwrap();
     for index in 1..=3u32 {
         let bytes = firstcut_meta::meta::cr3::SyntheticCr3::r8().at("2026:08:27 19:54:00").subsec(&format!("{index:02}")).build();
-        std::fs::write(folder.path().join(format!("IMG_000{index}.CR3")), bytes).unwrap();
+        std::fs::write(folder.join(format!("IMG_000{index}.CR3")), bytes).unwrap();
     }
     let mut model = Model::new();
-    model.open_folder_in(folder.path(), sessions.path()).unwrap_or_else(|err| panic!("the test shoot opens: {err}"));
-    (sessions, folder, model)
+    model.open_folder_in(&folder, sessions.path()).unwrap_or_else(|err| panic!("the test shoot opens: {err}"));
+    (sessions, root, model)
 }
 
 /// Solid-colour 64×48 "photos" keyed by the model's real photo ids — no decoder involved;
@@ -99,4 +104,21 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
     harness.key_press(egui::Key::I);
     harness.run();
     harness.snapshot("culling-info-panel");
+
+    // The toolbar switches the mode through the registry; in Keep mode P means keep/not-keep,
+    // not the pick flag.
+    harness.get_by_label("Keep").click();
+    harness.run();
+    {
+        let model = state.borrow();
+        assert_eq!(model.settings().rating_mode, firstcut_types::RatingMode::KeepNotKeep);
+        assert!(!model.current_photo().unwrap().rating.keep, "the current photo starts not kept");
+    }
+    harness.key_press(egui::Key::P);
+    harness.run();
+    {
+        let model = state.borrow();
+        assert!(model.current_photo().unwrap().rating.keep, "P kept the current photo in Keep mode");
+    }
+    harness.snapshot("culling-keep-mode");
 }

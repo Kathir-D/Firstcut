@@ -107,14 +107,39 @@ impl CullScreen {
         if ui.ctx().input(|input| input.key_pressed(Key::I)) {
             self.info_visible = !self.info_visible;
         }
-        for (id, params) in queued_keys(ui) {
+        for (id, params) in queued_keys(ui, model.settings().rating_mode) {
             let _ = dispatch(model, id, &params);
         }
+        self.toolbar(ui, model);
         self.filmstrip(ui, model, images);
         if self.info_visible {
             self.info_panel(ui, model, images.histogram);
         }
         self.loupe(ui, model, images);
+    }
+
+    // ---- toolbar -------------------------------------------------------------------------
+
+    /// The one toolbar control M1/M2 lacked: which rating mode the next P press means. v1's
+    /// toolbar also carried batch arrows and Finish; those arrive with their own rows.
+    fn toolbar(&self, ui: &mut egui::Ui, model: &mut Model) {
+        let mode = model.settings().rating_mode;
+        let mut chosen = None;
+        egui::Panel::top("toolbar").exact_size(38.0).frame(egui::Frame::new().fill(STRIP).inner_margin(8.0)).show(ui, |bar| {
+            bar.horizontal(|bar| {
+                bar.label(RichText::new(model.folder_name()).strong().color(FOREGROUND));
+                bar.add_space(12.0);
+                if bar.selectable_label(mode == RatingMode::Stars, RichText::new("Stars").small().color(FOREGROUND)).clicked() {
+                    chosen = Some(RatingMode::Stars);
+                }
+                if bar.selectable_label(mode == RatingMode::KeepNotKeep, RichText::new("Keep").small().color(FOREGROUND)).clicked() {
+                    chosen = Some(RatingMode::KeepNotKeep);
+                }
+            });
+        });
+        if let Some(mode) = chosen {
+            let _ = dispatch(model, "settings.ratingMode", &json!({ "mode": mode.as_str() }));
+        }
     }
 
     // ---- info panel ----------------------------------------------------------------------
@@ -427,9 +452,10 @@ struct Thumb {
 /// One queued command from the keyboard: the id and its parameters.
 type Queued = (&'static str, Json);
 
-/// The keys v1's DefaultKeymap puts on this slice: stars 0–5, arrows, undo/redo. "Command" is the
-/// platform's own — command on the mac, ctrl elsewhere.
-fn queued_keys(ui: &egui::Ui) -> Vec<Queued> {
+/// The keys v1's DefaultKeymap puts on this slice: stars 0–5, arrows, P/X, undo/redo. "Command"
+/// is the platform's own — command on the mac, ctrl elsewhere. P is mode-aware exactly as
+/// todo.md §6 describes: Keep mode toggles keep, Stars mode toggles the pick flag.
+fn queued_keys(ui: &egui::Ui, mode: RatingMode) -> Vec<Queued> {
     let mut queued: Vec<Queued> = Vec::new();
     ui.ctx().input(|input| {
         if input.key_pressed(Key::ArrowLeft) {
@@ -442,6 +468,12 @@ fn queued_keys(ui: &egui::Ui) -> Vec<Queued> {
             if input.key_pressed(key) {
                 queued.push(("rate.stars", json!({ "stars": stars })));
             }
+        }
+        if input.key_pressed(Key::P) {
+            queued.push((if mode == RatingMode::KeepNotKeep { "keep.toggle" } else { "flag.pick" }, Json::Null));
+        }
+        if input.key_pressed(Key::X) && !input.modifiers.command && !input.modifiers.ctrl {
+            queued.push(("flag.reject", Json::Null));
         }
         if input.key_pressed(Key::Z) && (input.modifiers.command || input.modifiers.ctrl) {
             let id = if input.modifiers.shift { "edit.redo" } else { "edit.undo" };
