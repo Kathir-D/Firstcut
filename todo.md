@@ -325,6 +325,9 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - **Compare (C / ⌥C / ⌥⇧C):** 2-, 3- or 4-up of the current batch, one shared zoom/pan,
 >   click selects, double-click returns to the loupe. Snapshots use display-tier pixels from the
 >   app's cache (`FrameImages.display`). `culling-compare.png`.
+> - **Overlays:** A shows the in-focus AF boxes mapped through EXIF orientation, J marks
+>   highlight/shadow clipping from the display pixels using the Viewer thresholds.
+>   Snapshot `culling-clipping.png` plus the mapping/clip unit tests.
 > - **M3 remaining** — batch
 >   navigation (⌘←/→, double-click jump), zoom lock, AF/clipping overlays, keymap recorder,
 >   menus, Welcome recents/resume, Settings screens, error alerts. Live watch + flush-on-quit

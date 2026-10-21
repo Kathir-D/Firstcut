@@ -63,6 +63,10 @@ pub struct CullScreen {
     last_photo: Option<u64>,
     /// Loupe or grid (G toggles; Escape returns to the loupe).
     view: ScreenView,
+    /// The AF overlay's session toggle; `None` means "use the Viewer setting".
+    af_overlay: Option<bool>,
+    /// The clipping overlay's session toggle (J), off by default like v1.
+    clipping_overlay: bool,
 }
 
 impl Default for CullScreen {
@@ -82,6 +86,8 @@ impl CullScreen {
             info_visible: false,
             last_photo: None,
             view: ScreenView::Loupe,
+            af_overlay: None,
+            clipping_overlay: false,
         }
     }
 
@@ -154,8 +160,16 @@ impl CullScreen {
                 self.view = ScreenView::Compare(count);
             }
         }
-        if ui.ctx().input(|input| input.key_pressed(Key::Escape)) {
+        if ui.ctx().input(|input| input.key_pressed(Key::Escape) || input.key_pressed(Key::E)) {
             self.view = ScreenView::Loupe;
+        }
+        // A and J are session toggles (todo.md §10); A starts from the Viewer setting, J off.
+        if ui.ctx().input(|input| input.key_pressed(Key::A)) {
+            let current = self.af_overlay.unwrap_or_else(|| model.viewer_settings().af_overlay);
+            self.af_overlay = Some(!current);
+        }
+        if ui.ctx().input(|input| input.key_pressed(Key::J)) {
+            self.clipping_overlay = !self.clipping_overlay;
         }
         for (id, params) in queued_keys(ui, model.settings().rating_mode) {
             let _ = dispatch(model, id, &params);
@@ -515,6 +529,18 @@ impl CullScreen {
 
             let uv = egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
             panel.painter().image(texture.id(), rect, uv, Color32::WHITE);
+
+            // Overlays paint over the oriented frame. AF coordinates arrive in SENSOR space and
+            // are mapped through the same EXIF transform the decoder applied; clipping samples
+            // the display pixels that are already oriented.
+            let viewer = model.viewer_settings();
+            let af_visible = self.af_overlay.unwrap_or(viewer.af_overlay);
+            if af_visible && let Some(photo) = model.current_photo() {
+                draw_af_overlay(panel.painter(), rect, photo);
+            }
+            if self.clipping_overlay {
+                draw_clipping_overlay(panel.painter(), rect, pixels, viewer.clipping_shadow_threshold, viewer.clipping_highlight_threshold);
+            }
 
             let response = panel.allocate_rect(rect, Sense::click_and_drag());
             if response.dragged() {
@@ -902,6 +928,88 @@ fn file_name_of(rel_path: &str) -> String {
     rel_path.rsplit('/').next().unwrap_or(rel_path).to_string()
 }
 
+/// Maps a normalized point in the stored (sensor) frame into display orientation, using the same
+/// transform as `firstcut_decode::apply_orientation` (EXIF 1..=8).
+fn map_orientation(u: f32, v: f32, orientation: u8) -> (f32, f32) {
+    match orientation {
+        2 => (1.0 - u, v),
+        3 => (1.0 - u, 1.0 - v),
+        4 => (u, 1.0 - v),
+        5 => (v, u),
+        6 => (1.0 - v, u),
+        7 => (1.0 - v, 1.0 - u),
+        8 => (v, 1.0 - u),
+        _ => (u, v),
+    }
+}
+
+/// Whether an orientation swaps the sensor's axes, so a point's `w`/`h` swap with them.
+fn orientation_swaps(orientation: u8) -> bool {
+    matches!(orientation, 5..=8)
+}
+
+/// Draws the camera's in-focus AF points, mapped through orientation. Points the camera did not
+/// report as in focus stay undrawn: the overlay's claim is "here is what it focused on".
+fn draw_af_overlay(painter: &egui::Painter, image: egui::Rect, photo: &firstcut_engine::model::PhotoVm) {
+    let Some(af) = photo.meta.af.as_ref() else { return };
+    let swaps = orientation_swaps(photo.meta.orientation);
+    let clipped = painter.with_clip_rect(image);
+    for point in af.points.iter().filter(|point| point.in_focus) {
+        let (u, v) = map_orientation(point.x, point.y, photo.meta.orientation);
+        let (w, h) = if swaps { (point.h, point.w) } else { (point.w, point.h) };
+        let center = pos2(image.left() + u * image.width(), image.top() + v * image.height());
+        let box_rect = egui::Rect::from_center_size(center, vec2((w * image.width()).max(6.0), (h * image.height()).max(6.0)));
+        clipped.rect_stroke(box_rect, 1.0, Stroke::new(1.5, ACCENT), egui::StrokeKind::Inside);
+    }
+}
+
+/// v1's clipping overlay: red where a channel is at the highlight threshold, blue where the
+/// frame is crushed to shadow. Sampling is capped so a 6000 px frame cannot cost more than a
+/// coarse grid of checks per paint.
+fn draw_clipping_overlay(painter: &egui::Painter, image: egui::Rect, pixels: &egui::ColorImage, shadow: f64, highlight: f64) {
+    let low = (shadow.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let high = (highlight.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let [width, height] = [pixels.width(), pixels.height()];
+    if width == 0 || height == 0 {
+        return;
+    }
+    let stride = (width.max(height) / 400).max(1);
+    let clipped = painter.with_clip_rect(image);
+    let cell = vec2((image.width() / width as f32 * stride as f32).max(2.0), (image.height() / height as f32 * stride as f32).max(2.0));
+    for y in (0..height).step_by(stride) {
+        for x in (0..width).step_by(stride) {
+            let Some(pixel) = pixels.pixels.get(y * width + x) else { continue };
+            let [r, g, b, _] = pixel.to_array();
+            let mark = clip_marks(r, g, b, low, high);
+            let color = match mark {
+                Some(Clip::Highlight) => Color32::from_rgba_unmultiplied(255, 60, 60, 210),
+                Some(Clip::Shadow) => Color32::from_rgba_unmultiplied(70, 130, 255, 210),
+                None => continue,
+            };
+            let at = pos2(image.left() + x as f32 / width as f32 * image.width(), image.top() + y as f32 / height as f32 * image.height());
+            clipped.rect_filled(egui::Rect::from_min_size(at, cell), 0.0, color);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Clip {
+    Highlight,
+    Shadow,
+}
+
+/// Highlight wins when a channel is at the top; shadow needs all three crushed, so a single
+/// black channel in a saturated colour is not called a clipped shadow.
+fn clip_marks(r: u8, g: u8, b: u8, low: u8, high: u8) -> Option<Clip> {
+    if r >= high || g >= high || b >= high {
+        Some(Clip::Highlight)
+    } else if r <= low && g <= low && b <= low {
+        Some(Clip::Shadow)
+    } else {
+        None
+    }
+}
+
 /// The zoom that maps one sensor pixel to one physical pixel: the sensor's long edge over the
 /// fit view's long edge in physical pixels. `None` before layout or for a zero-sized sensor.
 fn native_zoom(sensor_edge: u32, fit_edge_points: f32, points_per_pixel: f32) -> Option<f32> {
@@ -991,6 +1099,25 @@ mod tests {
         assert_eq!(tier_line(&counts), "keep 2 · good 0 · maybe 0 · unrated 5");
         counts.insert(Tier::Rejected, 1);
         assert_eq!(tier_line(&counts), "keep 2 · good 0 · maybe 0 · unrated 5 · rejected 1");
+    }
+
+    #[test]
+    fn af_points_follow_the_exif_orientation() {
+        assert_eq!(map_orientation(0.25, 0.1, 1), (0.25, 0.1));
+        assert_eq!(map_orientation(0.25, 0.1, 3), (0.75, 0.9));
+        assert_eq!(map_orientation(0.25, 0.1, 6), (0.9, 0.25));
+        assert_eq!(map_orientation(0.25, 0.1, 8), (0.1, 0.75));
+        assert!(orientation_swaps(5) && orientation_swaps(8));
+        assert!(!orientation_swaps(1) && !orientation_swaps(4));
+    }
+
+    #[test]
+    fn clipping_marks_follow_the_thresholds() {
+        assert_eq!(clip_marks(255, 0, 0, 5, 250), Some(Clip::Highlight));
+        assert_eq!(clip_marks(0, 0, 0, 5, 250), Some(Clip::Shadow));
+        assert_eq!(clip_marks(128, 128, 128, 5, 250), None);
+        assert_eq!(clip_marks(250, 10, 10, 5, 250), Some(Clip::Highlight), "the highlight threshold is inclusive");
+        assert_eq!(clip_marks(5, 6, 5, 5, 250), None, "one channel above the shadow threshold is not crushed");
     }
 
     #[test]

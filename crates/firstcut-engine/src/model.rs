@@ -228,6 +228,12 @@ impl Model {
         self.settings_store.as_ref().map(|store| store.current().performance.clone()).unwrap_or_default()
     }
 
+    /// The viewer half of the settings: overlay defaults and their clipping thresholds. The app
+    /// and the UI read them without reaching into the settings store.
+    pub fn viewer_settings(&self) -> crate::settings::ViewerJson {
+        self.settings_store.as_ref().map(|store| store.current().viewer.clone()).unwrap_or_default()
+    }
+
     /// Offers a thumbnail decode's pixels to the batcher. The signature is computed from the same
     /// buffer the filmstrip is about to show — the pipeline never decodes a photo twice for it.
     /// Batches that move are queued on the session listener and arrive through

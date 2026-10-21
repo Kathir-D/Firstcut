@@ -139,3 +139,28 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
     harness.run();
     harness.snapshot("culling-compare");
 }
+
+/// The clipping overlay (J) is painted from the display pixels the loupe already has: a white
+/// frame is entirely at the highlight threshold, so every sampled cell is marked. The thresholds
+/// themselves come from the Viewer settings (250/255 and 5/255 by default).
+#[test]
+fn the_clipping_overlay_marks_highlight_clipped_pixels() {
+    let (_sessions, _folder, model) = shoot();
+    let bank = bank(&model, &[(255, 255, 255)]);
+    let state = std::cell::RefCell::new(model);
+    let screen = std::cell::RefCell::new(CullScreen::new());
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let current_id = model.current_photo_id();
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.key_press(egui::Key::J);
+    harness.run();
+    harness.snapshot("culling-clipping");
+}
