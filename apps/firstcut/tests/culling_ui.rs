@@ -255,3 +255,28 @@ fn the_whole_batch_reject_asks_first_and_flags_every_frame() {
     harness.run();
     assert!(state.borrow().photos().iter().all(|photo| photo.rating.flag == firstcut_types::Flag::Reject), "confirming flags the batch");
 }
+
+/// Errors become an alert window that stays until Dismiss, and Dismiss is the registry's
+/// `error.dismiss` (the UI never clears engine state directly).
+#[test]
+fn an_error_shows_a_dismissible_alert() {
+    let (_sessions, _root, model) = shoot();
+    let state = std::cell::RefCell::new(model);
+    state.borrow_mut().fail_open("the folder could not be read".to_string());
+    let screen = std::cell::RefCell::new(CullScreen::new());
+    let empty: HashMap<u64, Arc<egui::ColorImage>> = HashMap::new();
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let images = FrameImages { current: None, thumbs: &empty, histogram: None, display: &empty };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.snapshot("error-alert");
+    assert_eq!(state.borrow().last_error(), Some("the folder could not be read"));
+    harness.get_by_label("Dismiss").click();
+    harness.run();
+    assert_eq!(state.borrow().last_error(), None, "Dismiss goes through error.dismiss");
+}

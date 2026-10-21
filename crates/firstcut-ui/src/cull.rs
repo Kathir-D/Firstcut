@@ -154,7 +154,26 @@ impl CullScreen {
                 Phase::Loading | Phase::Culling => self.show_culling(ui, model, images),
             }
         }
+        self.error_alert(ui.ctx(), model);
         self.open_folder_window(ui.ctx());
+    }
+
+    /// v1's error alert: the message stays on screen, modal to the window's attention, until
+    /// Dismiss dispatches `error.dismiss`. Success clears it in the engine on the next command.
+    fn error_alert(&mut self, ctx: &egui::Context, model: &mut Model) {
+        let Some(message) = model.last_error().map(str::to_string) else { return };
+        let mut dismiss = false;
+        egui::Window::new("Error").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO).show(ctx, |window| {
+            window.set_max_width(560.0);
+            window.label(RichText::new(message).color(Color32::from_rgb(240, 128, 128)));
+            window.add_space(8.0);
+            if window.button("Dismiss").clicked() {
+                dismiss = true;
+            }
+        });
+        if dismiss {
+            let _ = dispatch(model, "error.dismiss", &Json::Null);
+        }
     }
 
     // ---- menus, dialogs, cheat sheet ------------------------------------------------------
@@ -405,10 +424,6 @@ impl CullScreen {
                 panel.add_space(12.0);
                 if panel.button(RichText::new("Open Folder…")).clicked() {
                     self.open_dialog = true;
-                }
-                if let Some(error) = model.last_error() {
-                    panel.add_space(12.0);
-                    panel.label(RichText::new(error).small().color(Color32::from_rgb(240, 128, 128)));
                 }
 
                 let recents = model.recents();
@@ -833,18 +848,6 @@ impl CullScreen {
 
     fn loupe(&mut self, ui: &mut egui::Ui, model: &mut Model, images: &FrameImages<'_>) {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND)).show(ui, |panel| {
-            if let Some(error) = model.last_error() {
-                // v1 showed the message over the photo; the next successful command clears it.
-                // Same corner, same convention.
-                panel.painter().text(
-                    pos2(12.0, panel.max_rect().height() - 12.0),
-                    egui::Align2::LEFT_BOTTOM,
-                    error,
-                    FontId::proportional(13.0),
-                    Color32::from_rgb(240, 128, 128),
-                );
-            }
-
             // The display tier decodes at exactly the viewer's backing size, so record it even
             // while the first frame is still missing.
             let available = panel.max_rect();

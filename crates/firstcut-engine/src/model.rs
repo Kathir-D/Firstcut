@@ -282,6 +282,11 @@ impl Model {
         self.last_error.as_deref()
     }
 
+    /// v1's `dismissError()`: the alert stays until the user says so.
+    pub fn dismiss_error(&mut self) {
+        self.last_error = None;
+    }
+
     /// Photos of a batch in capture order (app-model.md `photos(inBatch:)`).
     pub fn photos_in_batch(&self, index: usize) -> Vec<&PhotoVm> {
         match self.batches.get(index) {

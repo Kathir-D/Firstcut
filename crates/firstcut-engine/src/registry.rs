@@ -65,6 +65,7 @@ pub const REGISTRY: &[CommandDef] = &[
     // Edits
     CommandDef { id: "edit.undo", description: "Undo one rating step (navigates back to it)", params: &[] },
     CommandDef { id: "edit.redo", description: "Redo one rating step (navigates back to it)", params: &[] },
+    CommandDef { id: "error.dismiss", description: "Dismiss the error alert", params: &[] },
     // Settings the slice moves
     CommandDef { id: "settings.ratingMode", description: "Stars or Keep/Not-keep", params: &[("mode", r#""stars" | "keep""#)] },
     CommandDef { id: "settings.autoAdvance", description: "Auto-advance after every rating change", params: &[("on", "bool")] },
@@ -200,6 +201,11 @@ fn dispatch_inner(model: &mut Model, id: &str, params: &Value) -> Result<Value, 
             let stars = uint_param(params, "stars")?;
             model.set_keep_stars(stars as u8);
             Ok(json!({ "keepStars": model.settings().keep_stars }))
+        }
+
+        "error.dismiss" => {
+            model.dismiss_error();
+            Ok(json!({ "dismissed": true }))
         }
 
         "engine.state" => Ok(state(model)),

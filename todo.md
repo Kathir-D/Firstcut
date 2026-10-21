@@ -340,8 +340,11 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - **Reject Whole Batch:** off by default; when enabled the Photo menu item and ⇧X open a
 >   confirmation sheet, and confirming dispatches `batch.reject` (one engine undo step).
 >   Snapshot `reject-batch-dialog.png` plus the model test.
-> - **M3 remaining** — the Settings screens, the keyboard recorder with keymap import/export,
->   and error alerts. Live watch + flush-on-quit already landed in M2.
+> - **Error alerts:** the model's `last_error` paints as a centered, dismissible alert in every
+>   phase; Dismiss is a registry command (`error.dismiss`), so the UI still never clears engine
+>   state itself. Snapshot `error-alert.png`.
+> - **M3 remaining** — the Settings screens and the keyboard recorder with keymap
+>   import/export. Live watch + flush-on-quit already landed in M2.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).
