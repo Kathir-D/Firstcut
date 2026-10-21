@@ -629,6 +629,23 @@ impl SettingsStore {
         self.save()
     }
 
+    /// Replaces one half the Settings screens edit. The halves they do not touch stay exactly as
+    /// loaded (a v1 file's Finish actions are never rewritten because a checkbox moved).
+    pub fn set_viewer(&mut self, viewer: ViewerJson) -> Result<(), SettingsError> {
+        self.current.viewer = viewer;
+        self.save()
+    }
+
+    pub fn set_metadata(&mut self, metadata: MetadataJson) -> Result<(), SettingsError> {
+        self.current.metadata = metadata;
+        self.save()
+    }
+
+    pub fn set_performance(&mut self, performance: PerformanceJson) -> Result<(), SettingsError> {
+        self.current.performance = performance;
+        self.save()
+    }
+
     /// One temp file + rename, so a crash mid-save leaves the previous file intact.
     pub fn save(&self) -> Result<(), SettingsError> {
         let path_string = self.path.display().to_string();

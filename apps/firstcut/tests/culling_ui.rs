@@ -280,3 +280,48 @@ fn an_error_shows_a_dismissible_alert() {
     harness.run();
     assert_eq!(state.borrow().last_error(), None, "Dismiss goes through error.dismiss");
 }
+
+/// Settings opens with ⌘, over whatever is showing, applies immediately through the model, and
+/// writes the file: the General tab's checkbox and the Viewer tab's zoom lock both come back
+/// after a fresh read.
+#[test]
+fn the_settings_window_edits_general_and_viewer_through_the_model() {
+    let (_sessions, _root, mut model) = shoot();
+    let settings_dir = tempfile::tempdir().unwrap();
+    let settings_file = settings_dir.path().join("settings.json");
+    model.attach_settings_store(firstcut_engine::settings::SettingsStore::at(&settings_file));
+    let state = std::cell::RefCell::new(model);
+    let screen = std::cell::RefCell::new(CullScreen::new());
+    let bank = bank(&state.borrow(), &[(160, 32, 32), (32, 96, 160), (32, 160, 96)]);
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let current_id = model.current_photo_id();
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+    harness.run();
+    harness.snapshot("settings-general");
+    harness.get_by_label("Auto-advance after every rating change").click();
+    harness.run();
+    assert!(state.borrow().settings().auto_advance, "the General tab writes through the model");
+
+    harness.get_by_label("Viewer").click();
+    harness.run();
+    harness.run();
+    harness.snapshot("settings-viewer");
+    harness.get_by_label("Zoom lock (keep the loupe's pixels while stepping)").click();
+    harness.run();
+    assert!(state.borrow().zoom_lock(), "the Viewer tab writes through the model");
+
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+    harness.run();
+    let reread = firstcut_engine::settings::SettingsStore::at(&settings_file);
+    assert!(reread.current().general.auto_advance);
+    assert!(reread.current().viewer.zoom_lock);
+}

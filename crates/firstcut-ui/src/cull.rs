@@ -20,6 +20,7 @@ use firstcut_types::{Flag, Histogram, Rating, RatingMode, Tier};
 use serde_json::{Value as Json, json};
 
 use crate::FrameImages;
+use crate::settings_screen::SettingsScreen;
 
 /// v1's viewer background (Settings → Viewer → backgroundGray): 0.12 on the grey ramp.
 const BACKGROUND: Color32 = Color32::from_rgb(31, 31, 31);
@@ -75,6 +76,15 @@ pub struct CullScreen {
     open_request: Option<PathBuf>,
     /// The ? cheat sheet, generated from the registry.
     cheatsheet: bool,
+    /// Settings → General / Keyboard / Viewer / Metadata / Performance, opened with ⌘,.
+    settings: SettingsScreen,
+    /// The viewer's canvas colour, from Settings → Viewer. Defaults to v1's 0.12 gray.
+    background: Color32,
+    /// `hud_visible` is view state that starts from Settings → Viewer; this makes the setting
+    /// apply once, on the first culling frame, without fighting H for the rest of the session.
+    hud_initialized: bool,
+    /// Set when Escape closed the Settings window, so the same key does not also leave a grid.
+    escape_consumed: bool,
     /// Shift+X's confirmation, and the batch it will flag if confirmed. The engine owns the
     /// command; this only asks first (v1's `rejectBatch` sheet).
     reject_dialog: bool,
@@ -103,6 +113,10 @@ impl CullScreen {
             open_path: String::new(),
             open_request: None,
             cheatsheet: false,
+            settings: SettingsScreen::default(),
+            background: BACKGROUND,
+            hud_initialized: false,
+            escape_consumed: false,
             reject_dialog: false,
         }
     }
@@ -132,14 +146,34 @@ impl CullScreen {
         let known: Vec<u64> = model.photos().iter().map(|photo| photo.meta.id.0).collect();
         self.textures.retain(|id, _| known.contains(id));
 
-        // Global keys work in every phase, including Welcome.
-        let (open, question, command) = ui
-            .ctx()
-            .input(|input| (input.key_pressed(Key::O), input.key_pressed(Key::Questionmark), input.modifiers.command || input.modifiers.ctrl));
-        if open && command {
+        // The viewer's canvas follows the setting every frame; 0.12 gray is v1's default, and
+        // `from_gray(31)` is the value the hardcoded background used before this screen existed.
+        let viewer = model.viewer_settings();
+        let gray = (viewer.background_gray.clamp(0.0, 1.0) * 255.0).round();
+        self.background = Color32::from_gray(u8::try_from(gray as i64).unwrap_or(31));
+
+        // Global keys work in every phase, including Welcome. While Settings is over the window
+        // they are inert (a typed path or a checkbox must not rate the photo behind it).
+        let (open, question, comma, escape, command) = ui.ctx().input(|input| {
+            (
+                input.key_pressed(Key::O),
+                input.key_pressed(Key::Questionmark),
+                input.key_pressed(Key::Comma),
+                input.key_pressed(Key::Escape),
+                input.modifiers.command || input.modifiers.ctrl,
+            )
+        });
+        if comma && command {
+            self.settings.visible = !self.settings.visible;
+        }
+        if escape && self.settings.visible {
+            self.settings.visible = false;
+            self.escape_consumed = true;
+        }
+        if open && command && !self.settings.visible {
             self.open_dialog = true;
         }
-        if question && !self.open_dialog {
+        if question && !self.open_dialog && !self.settings.visible {
             self.cheatsheet = !self.cheatsheet;
         }
 
@@ -154,8 +188,10 @@ impl CullScreen {
                 Phase::Loading | Phase::Culling => self.show_culling(ui, model, images),
             }
         }
+        self.settings.show(ui.ctx(), model);
         self.error_alert(ui.ctx(), model);
         self.open_folder_window(ui.ctx());
+        self.escape_consumed = false;
     }
 
     /// v1's error alert: the message stays on screen, modal to the window's attention, until
@@ -190,6 +226,10 @@ impl CullScreen {
                 bar.menu_button("File", |menu| {
                     if menu.button("Open Folder…    Cmd+O").clicked() {
                         self.open_dialog = true;
+                        menu.close();
+                    }
+                    if menu.button("Settings…    Cmd+,").clicked() {
+                        self.settings.visible = true;
                         menu.close();
                     }
                     if menu.button("Quit").clicked() {
@@ -390,7 +430,7 @@ impl CullScreen {
     /// to it. Empty shortcuts are commands without a key (menus, control channel, MCP). It is a
     /// screen of its own, so long lists never fight the window or panel layout.
     fn shortcut_screen(&mut self, ui: &mut egui::Ui) {
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND).inner_margin(18.0)).show(ui, |panel| {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(self.background).inner_margin(18.0)).show(ui, |panel| {
             panel.horizontal(|row| {
                 row.heading(RichText::new("Keyboard Shortcuts").color(FOREGROUND));
                 row.add_space(12.0);
@@ -415,7 +455,7 @@ impl CullScreen {
     /// chrome. Recent shoots come from the session databases; choosing one leaves an open request
     /// for the app, exactly like the File → Open dialog, and the database restores the cursor.
     fn show_welcome(&mut self, ui: &mut egui::Ui, model: &Model) {
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND)).show(ui, |panel| {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(self.background)).show(ui, |panel| {
             panel.vertical_centered(|panel| {
                 panel.add_space(56.0);
                 panel.heading(RichText::new("Firstcut").color(FOREGROUND));
@@ -445,15 +485,20 @@ impl CullScreen {
     }
 
     fn show_culling(&mut self, ui: &mut egui::Ui, model: &mut Model, images: &FrameImages<'_>) {
+        if !self.hud_initialized {
+            self.hud_visible = model.viewer_settings().hud_visible;
+            self.hud_initialized = true;
+        }
+        let keys = !self.settings.visible;
         // The HUD is view state, not engine state: v1 kept `hudVisible` on the app model and the
         // view toggles it, so no command crosses the registry for it.
-        if ui.ctx().input(|input| input.key_pressed(Key::H)) {
+        if keys && ui.ctx().input(|input| input.key_pressed(Key::H)) {
             self.hud_visible = !self.hud_visible;
         }
-        if ui.ctx().input(|input| input.key_pressed(Key::I)) {
+        if keys && ui.ctx().input(|input| input.key_pressed(Key::I)) {
             self.info_visible = !self.info_visible;
         }
-        if ui.ctx().input(|input| input.key_pressed(Key::G)) {
+        if keys && ui.ctx().input(|input| input.key_pressed(Key::G)) {
             self.view = if self.view == ScreenView::Grid { ScreenView::Loupe } else { ScreenView::Grid };
         }
         if ui.ctx().input(|input| input.key_pressed(Key::C)) {
@@ -479,11 +524,11 @@ impl CullScreen {
             self.view = ScreenView::Loupe;
         }
         // A and J are session toggles (todo.md §10); A starts from the Viewer setting, J off.
-        if ui.ctx().input(|input| input.key_pressed(Key::A)) {
+        if keys && ui.ctx().input(|input| input.key_pressed(Key::A)) {
             let current = self.af_overlay.unwrap_or_else(|| model.viewer_settings().af_overlay);
             self.af_overlay = Some(!current);
         }
-        if ui.ctx().input(|input| input.key_pressed(Key::J)) {
+        if keys && ui.ctx().input(|input| input.key_pressed(Key::J)) {
             self.clipping_overlay = !self.clipping_overlay;
         }
         // ⇧X is v1's whole-batch reject, but only when Settings → General enables it. The dialog
@@ -494,8 +539,10 @@ impl CullScreen {
         if shift_reject && model.settings().reject_whole_batch {
             self.reject_dialog = true;
         }
-        for (id, params) in queued_keys(ui, model.settings().rating_mode) {
-            let _ = dispatch(model, id, &params);
+        if keys {
+            for (id, params) in queued_keys(ui, model.settings().rating_mode) {
+                let _ = dispatch(model, id, &params);
+            }
         }
         self.toolbar(ui, model);
         match self.view {
@@ -560,7 +607,7 @@ impl CullScreen {
         let count = count.clamp(2, 4);
         let batch_count = model.current_batch().map_or(0, |batch| batch.photo_ids.len());
         if batch_count == 0 {
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND)).show(ui, |panel| {
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(self.background)).show(ui, |panel| {
                 panel.centered_and_justified(|panel| panel.label(RichText::new("No batch to compare").weak()));
             });
             return;
@@ -582,7 +629,7 @@ impl CullScreen {
         let mut chosen: Option<usize> = None;
         let mut opened = false;
 
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND).inner_margin(8.0)).show(ui, |panel| {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(self.background).inner_margin(8.0)).show(ui, |panel| {
             let area = panel.max_rect();
             let gap = 6.0;
             let width = ((area.width() - gap * (pane_count - 1.0)) / pane_count).max(1.0);
@@ -676,7 +723,7 @@ impl CullScreen {
 
         let mut selected: Option<usize> = None;
         let mut opened: Option<usize> = None;
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND).inner_margin(12.0)).show(ui, |panel| {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(self.background).inner_margin(12.0)).show(ui, |panel| {
             egui::ScrollArea::vertical().show(panel, |sheet| {
                 sheet.horizontal_wrapped(|sheet| {
                     for (position, cell) in cells.iter().enumerate() {
@@ -847,7 +894,7 @@ impl CullScreen {
     // ---- loupe ----------------------------------------------------------------------------
 
     fn loupe(&mut self, ui: &mut egui::Ui, model: &mut Model, images: &FrameImages<'_>) {
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND)).show(ui, |panel| {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(self.background)).show(ui, |panel| {
             // The display tier decodes at exactly the viewer's backing size, so record it even
             // while the first frame is still missing.
             let available = panel.max_rect();
@@ -1151,7 +1198,7 @@ fn select_photo(model: &mut Model, batch_index: usize, photo_index: usize) {
 
 /// The default key(s) the UI binds to a registry command. Commands with no key (control channel,
 /// MCP, internal helpers) answer the empty string on purpose: the cheat sheet still lists them.
-fn shortcut_for(id: &str) -> &'static str {
+pub(crate) fn shortcut_for(id: &str) -> &'static str {
     match id {
         "file.open" => "Cmd+O",
         "photo.previous" => "Left",

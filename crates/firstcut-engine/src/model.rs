@@ -732,6 +732,58 @@ impl Model {
         self.persist_settings();
     }
 
+    /// The metadata half of the settings (sidecars, keep spelling, DNG writes). Settings →
+    /// Metadata edits this shape; only the two sidecar switches are wired into the live session
+    /// today, the rest reach the writer through the Finish/XMP plumbing.
+    pub fn metadata_settings(&self) -> crate::settings::MetadataJson {
+        self.settings_store.as_ref().map(|store| store.current().metadata.clone()).unwrap_or_default()
+    }
+
+    pub fn set_viewer_settings(&mut self, viewer: crate::settings::ViewerJson) {
+        if let Some(store) = self.settings_store.as_mut()
+            && let Err(err) = store.set_viewer(viewer)
+        {
+            self.last_error = Some(err.to_string());
+        }
+    }
+
+    pub fn set_metadata_settings(&mut self, metadata: crate::settings::MetadataJson) {
+        if let Some(session) = self.session.as_ref() {
+            let xmp = crate::session::XmpSettings { write_sidecars: metadata.write_xmp, sidecars_for_non_raw: metadata.write_sidecars_for_jpegs };
+            if let Err(err) = session.set_xmp_settings(xmp) {
+                self.last_error = Some(err.to_string());
+            }
+        }
+        if let Some(store) = self.settings_store.as_mut()
+            && let Err(err) = store.set_metadata(metadata)
+        {
+            self.last_error = Some(err.to_string());
+        }
+    }
+
+    pub fn set_performance_settings(&mut self, performance: crate::settings::PerformanceJson) {
+        if let Some(store) = self.settings_store.as_mut()
+            && let Err(err) = store.set_performance(performance)
+        {
+            self.last_error = Some(err.to_string());
+        }
+    }
+
+    /// Settings → General applies as one change: one write, and the fields with side effects
+    /// (keep stars reaching the session, a new auto-advance value clearing Caps Lock's override)
+    /// are honoured exactly as their individual setters would.
+    pub fn set_general_settings(&mut self, general: GeneralSettings) {
+        let auto_advance_changed = self.settings.auto_advance != general.auto_advance;
+        self.settings = general;
+        if auto_advance_changed {
+            self.auto_advance_override = None;
+        }
+        if let Some(session) = self.session.as_ref() {
+            session.set_keep_stars(self.settings.keep_stars);
+        }
+        self.persist_settings();
+    }
+
     /// Settings → General → "Reject Whole Batch" (off by default; v1's `rejectWholeBatch`).
     pub fn set_reject_whole_batch(&mut self, on: bool) {
         self.settings.reject_whole_batch = on;
@@ -1031,6 +1083,43 @@ mod tests {
         assert_eq!(model.phase(), Phase::Welcome);
         assert!(model.photos().is_empty());
         assert_eq!(model.last_error(), Some("boom"));
+    }
+
+    #[test]
+    fn the_settings_screens_write_viewer_metadata_and_performance_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("settings.json");
+        let mut model = Model::new();
+        model.attach_settings_store(crate::settings::SettingsStore::at(&file));
+
+        let mut viewer = model.viewer_settings();
+        viewer.zoom_lock = true;
+        viewer.background_gray = 0.2;
+        viewer.info_fields.retain(|field| *field != crate::settings::InfoFieldJson::Lens);
+        model.set_viewer_settings(viewer.clone());
+
+        let mut metadata = model.metadata_settings();
+        metadata.write_xmp = false;
+        metadata.write_sidecars_for_jpegs = false;
+        metadata.xmp_write_mode = crate::settings::XmpWriteModeJson::Overwrite;
+        model.set_metadata_settings(metadata.clone());
+
+        let mut performance = model.performance_settings();
+        performance.decode_threads = 6;
+        performance.look_ahead_batches = 4;
+        model.set_performance_settings(performance.clone());
+
+        let reread = crate::settings::SettingsStore::at(&file);
+        // JSON floats round-trip within an ulp (250/255 is not exactly representable), so the
+        // thresholds compare with a tolerance; the switches and field list are exact.
+        assert_eq!(reread.current().viewer.zoom_lock, viewer.zoom_lock);
+        assert_eq!(reread.current().viewer.background_gray, viewer.background_gray);
+        assert_eq!(reread.current().viewer.info_fields, viewer.info_fields);
+        assert!((reread.current().viewer.clipping_highlight_threshold - viewer.clipping_highlight_threshold).abs() < 1e-12);
+        assert_eq!(reread.current().metadata, metadata);
+        assert_eq!(reread.current().performance, performance);
+        assert!(!reread.current().viewer.info_fields.contains(&crate::settings::InfoFieldJson::Lens));
+        assert_eq!(model.metadata_settings().xmp_write_mode, crate::settings::XmpWriteModeJson::Overwrite);
     }
 
     #[test]

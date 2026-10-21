@@ -343,8 +343,13 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - **Error alerts:** the model's `last_error` paints as a centered, dismissible alert in every
 >   phase; Dismiss is a registry command (`error.dismiss`), so the UI still never clears engine
 >   state itself. Snapshot `error-alert.png`.
-> - **M3 remaining** — the Settings screens and the keyboard recorder with keymap
->   import/export. Live watch + flush-on-quit already landed in M2.
+> - **Settings screens:** ⌘, (or File → Settings…) opens General / Keyboard / Viewer /
+>   Metadata / Performance. Every control applies immediately through a model setter and writes
+>   one half of `settings.json` atomically; the Viewer background, zoom lock, HUD-on-open, AF
+>   default, clipping thresholds and info-field selections are read by the culling screen.
+>   Snapshots `settings-general.png` / `settings-viewer.png` click the widgets and re-read the file.
+> - **M3 remaining** — the keyboard recorder with keymap import/export (the Settings → Keyboard
+>   tab is the read-only registry list until then). Live watch + flush-on-quit landed in M2.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).
