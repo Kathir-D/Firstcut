@@ -75,6 +75,9 @@ pub struct CullScreen {
     open_request: Option<PathBuf>,
     /// The ? cheat sheet, generated from the registry.
     cheatsheet: bool,
+    /// Shift+X's confirmation, and the batch it will flag if confirmed. The engine owns the
+    /// command; this only asks first (v1's `rejectBatch` sheet).
+    reject_dialog: bool,
 }
 
 impl Default for CullScreen {
@@ -100,6 +103,7 @@ impl CullScreen {
             open_path: String::new(),
             open_request: None,
             cheatsheet: false,
+            reject_dialog: false,
         }
     }
 
@@ -257,6 +261,10 @@ impl CullScreen {
                     }
                     if menu.button("Reject    X").clicked() {
                         actions.push(("flag.reject", Json::Null));
+                        menu.close();
+                    }
+                    if menu.add_enabled(model.settings().reject_whole_batch, egui::Button::new("Reject Whole Batch    Shift+X")).clicked() {
+                        self.reject_dialog = true;
                         menu.close();
                     }
                     if menu.button("Unflag    U").clicked() {
@@ -463,6 +471,14 @@ impl CullScreen {
         if ui.ctx().input(|input| input.key_pressed(Key::J)) {
             self.clipping_overlay = !self.clipping_overlay;
         }
+        // ⇧X is v1's whole-batch reject, but only when Settings → General enables it. The dialog
+        // comes first: the command is destructive to ratings, even though nothing leaves the disk
+        // until Finish.
+        let shift_reject =
+            ui.ctx().input(|input| input.key_pressed(Key::X) && input.modifiers.shift && !input.modifiers.command && !input.modifiers.ctrl);
+        if shift_reject && model.settings().reject_whole_batch {
+            self.reject_dialog = true;
+        }
         for (id, params) in queued_keys(ui, model.settings().rating_mode) {
             let _ = dispatch(model, id, &params);
         }
@@ -477,6 +493,45 @@ impl CullScreen {
             }
             ScreenView::Grid => self.grid(ui, model, images),
             ScreenView::Compare(count) => self.compare(ui, model, images, count),
+        }
+        self.batch_reject_window(ui.ctx(), model);
+    }
+
+    /// The ⇧X confirmation. One Reject press dispatches `batch.reject`, which the engine records
+    /// as one undo step (`Model::reject_current_batch`); Cancel leaves every rating alone.
+    fn batch_reject_window(&mut self, ctx: &egui::Context, model: &mut Model) {
+        if !self.reject_dialog {
+            return;
+        }
+        if ctx.input(|input| input.key_pressed(Key::Escape)) {
+            self.reject_dialog = false;
+            return;
+        }
+        let Some((count, index)) = model.current_batch().map(|batch| (batch.photo_ids.len(), batch.index)) else {
+            self.reject_dialog = false;
+            return;
+        };
+        let mut open = true;
+        let mut confirmed = false;
+        egui::Window::new("Reject Whole Batch").collapsible(false).resizable(false).open(&mut open).show(ctx, |window| {
+            window.label(RichText::new(format!("Reject all {count} photos in batch {}?", index + 1)).color(FOREGROUND));
+            window.add_space(4.0);
+            window.label(RichText::new("This flags them; nothing leaves the disk until Finish. One undo takes the whole batch back.").small().weak());
+            window.add_space(8.0);
+            window.horizontal(|row| {
+                if row.button("Cancel").clicked() {
+                    self.reject_dialog = false;
+                }
+                if row.button(RichText::new("Reject Batch").color(Color32::from_rgb(240, 128, 128))).clicked() {
+                    confirmed = true;
+                }
+            });
+        });
+        if confirmed {
+            let _ = dispatch(model, "batch.reject", &Json::Null);
+            self.reject_dialog = false;
+        } else {
+            self.reject_dialog = open && self.reject_dialog;
         }
     }
 
@@ -1066,7 +1121,7 @@ fn queued_keys(ui: &egui::Ui, mode: RatingMode) -> Vec<Queued> {
         if input.key_pressed(Key::P) {
             queued.push((if mode == RatingMode::KeepNotKeep { "keep.toggle" } else { "flag.pick" }, Json::Null));
         }
-        if input.key_pressed(Key::X) && !input.modifiers.command && !input.modifiers.ctrl {
+        if input.key_pressed(Key::X) && !input.modifiers.command && !input.modifiers.ctrl && !input.modifiers.shift {
             queued.push(("flag.reject", Json::Null));
         }
         if input.key_pressed(Key::Z) && (input.modifiers.command || input.modifiers.ctrl) {

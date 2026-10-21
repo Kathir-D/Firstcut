@@ -727,6 +727,12 @@ impl Model {
         self.persist_settings();
     }
 
+    /// Settings → General → "Reject Whole Batch" (off by default; v1's `rejectWholeBatch`).
+    pub fn set_reject_whole_batch(&mut self, on: bool) {
+        self.settings.reject_whole_batch = on;
+        self.persist_settings();
+    }
+
     pub fn set_arrow_behavior(&mut self, behavior: ArrowBehavior) {
         self.settings.arrow_behavior = behavior;
         self.persist_settings();
@@ -1020,6 +1026,27 @@ mod tests {
         assert_eq!(model.phase(), Phase::Welcome);
         assert!(model.photos().is_empty());
         assert_eq!(model.last_error(), Some("boom"));
+    }
+
+    #[test]
+    fn a_whole_batch_reject_is_off_by_default_and_undoes_as_one_step() {
+        let sessions = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        for index in 1..=3u32 {
+            std::fs::write(folder.path().join(format!("IMG_000{index}.CR3")), synthetic(index)).unwrap();
+        }
+        let mut model = Model::new();
+        model.open_folder_in(folder.path(), sessions.path()).unwrap();
+
+        assert!(!model.reject_current_batch(), "the setting is off by default");
+        assert!(model.photos().iter().all(|photo| photo.rating.flag != Flag::Reject), "nothing changed");
+
+        model.set_reject_whole_batch(true);
+        assert!(model.reject_current_batch(), "the enabled command rejects the batch");
+        assert_eq!(model.photos().iter().filter(|photo| photo.rating.flag == Flag::Reject).count(), 3, "every frame in the batch");
+
+        assert!(model.undo(), "the whole batch is one step");
+        assert!(model.photos().iter().all(|photo| photo.rating.flag != Flag::Reject), "one undo takes the batch back");
     }
 
     #[test]

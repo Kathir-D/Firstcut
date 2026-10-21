@@ -225,3 +225,33 @@ fn the_welcome_screen_lists_recent_shoots_and_asks_to_resume() {
     let requested = screen.borrow_mut().take_open_request().expect("choosing a recent asks the app to open it");
     assert!(requested.ends_with("Game1JENKS"), "the request is the shoot folder, got {}", requested.display());
 }
+
+/// ⇧X asks before it flags a whole batch, and the confirmation dispatches the engine's single
+/// command; the setting gates the key (off by default), so the dialog cannot appear unexpectedly.
+#[test]
+fn the_whole_batch_reject_asks_first_and_flags_every_frame() {
+    let (_sessions, _root, mut model) = shoot();
+    model.set_reject_whole_batch(true);
+    let state = std::cell::RefCell::new(model);
+    let screen = std::cell::RefCell::new(CullScreen::new());
+    let bank = bank(&state.borrow(), &[(160, 32, 32), (32, 96, 160), (32, 160, 96)]);
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let current_id = model.current_photo_id();
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::X);
+    harness.run();
+    harness.snapshot("reject-batch-dialog");
+    assert!(state.borrow().photos().iter().all(|photo| photo.rating.flag != firstcut_types::Flag::Reject), "opening the dialog changes nothing");
+
+    harness.get_by_label("Reject Batch").click();
+    harness.run();
+    assert!(state.borrow().photos().iter().all(|photo| photo.rating.flag == firstcut_types::Flag::Reject), "confirming flags the batch");
+}
