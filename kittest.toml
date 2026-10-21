@@ -1,0 +1,9 @@
+# egui_kittest snapshot comparison (docs/v2-plan.md §9).
+#
+# 2/255 per channel is the reviewed tolerance for antialiasing: macOS (Metal) and Linux draw
+# the same layout with slightly different subpixel coverage, which showed up as a handful of
+# pixels differing by at most 2.0 after the M3 UI landed. It is a colour tolerance, not an
+# error budget: a moved edge, a changed colour or a reflowed panel differs by far more and
+# still fails. No failed-pixel allowance is granted on top.
+threshold = 2.0
+max_failed_pixels = 0
