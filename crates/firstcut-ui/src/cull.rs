@@ -30,6 +30,16 @@ const ACCENT: Color32 = Color32::from_rgb(244, 200, 0);
 const THUMB_WIDTH: f32 = 128.0;
 /// Each filmstrip frame's image area; the file name and stars go underneath it.
 const THUMB_IMAGE_HEIGHT: f32 = 78.0;
+/// One grid cell's outer width; the image inside keeps a 3:2 box.
+const GRID_WIDTH: f32 = 168.0;
+
+/// What the area above the filmstrip shows. v1's `ViewMode` narrowed to the two screens that
+/// exist today; compare joins with its own row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScreenView {
+    Loupe,
+    Grid,
+}
 
 pub struct CullScreen {
     /// Decoded pixels → GPU textures, keyed by photo id, so an unchanged frame reuses them all.
@@ -49,6 +59,8 @@ pub struct CullScreen {
     info_visible: bool,
     /// The photo the loupe framed last, so a move can reset zoom unless zoom lock is on.
     last_photo: Option<u64>,
+    /// Loupe or grid (G toggles; Escape returns to the loupe).
+    view: ScreenView,
 }
 
 impl Default for CullScreen {
@@ -67,6 +79,7 @@ impl CullScreen {
             hud_visible: true,
             info_visible: false,
             last_photo: None,
+            view: ScreenView::Loupe,
         }
     }
 
@@ -117,15 +130,73 @@ impl CullScreen {
         if ui.ctx().input(|input| input.key_pressed(Key::I)) {
             self.info_visible = !self.info_visible;
         }
+        if ui.ctx().input(|input| input.key_pressed(Key::G)) {
+            self.view = if self.view == ScreenView::Grid { ScreenView::Loupe } else { ScreenView::Grid };
+        }
+        if ui.ctx().input(|input| input.key_pressed(Key::Escape)) {
+            self.view = ScreenView::Loupe;
+        }
         for (id, params) in queued_keys(ui, model.settings().rating_mode) {
             let _ = dispatch(model, id, &params);
         }
         self.toolbar(ui, model);
-        self.filmstrip(ui, model, images);
-        if self.info_visible {
-            self.info_panel(ui, model, images.histogram);
+        match self.view {
+            ScreenView::Loupe => {
+                self.filmstrip(ui, model, images);
+                if self.info_visible {
+                    self.info_panel(ui, model, images.histogram);
+                }
+                self.loupe(ui, model, images);
+            }
+            ScreenView::Grid => self.grid(ui, model, images),
         }
-        self.loupe(ui, model, images);
+    }
+
+    // ---- grid ----------------------------------------------------------------------------
+
+    /// The whole shoot as a contact sheet. A click moves the cursor (through the same batch-walk
+    /// rule the filmstrip uses); a double-click lands in the loupe on that photo.
+    fn grid(&mut self, ui: &mut egui::Ui, model: &mut Model, images: &FrameImages<'_>) {
+        let mut cells: Vec<Thumb> = Vec::new();
+        for (batch_index, batch) in model.batches().iter().enumerate() {
+            for (photo_index, photo_id) in batch.photo_ids.iter().enumerate() {
+                let Some(photo) = model.photos().iter().find(|photo| photo.meta.id == *photo_id) else { continue };
+                cells.push(Thumb { id: photo_id.0, batch_index, photo_index, file_name: file_name_of(&photo.meta.rel_path), rating: photo.rating });
+            }
+        }
+        let current_id = model.current_photo_id().map(|id| id.0);
+        for cell in &cells {
+            if let Some(pixels) = images.thumbs.get(&cell.id) {
+                load_texture(&mut self.textures, ui.ctx(), cell.id, pixels);
+            }
+        }
+        let textures = &self.textures;
+
+        let mut selected: Option<usize> = None;
+        let mut opened: Option<usize> = None;
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND).inner_margin(12.0)).show(ui, |panel| {
+            egui::ScrollArea::vertical().show(panel, |sheet| {
+                sheet.horizontal_wrapped(|sheet| {
+                    for (position, cell) in cells.iter().enumerate() {
+                        let response = paint_grid_cell(sheet, cell, images, textures, current_id);
+                        if response.clicked() {
+                            selected = Some(position);
+                        }
+                        if response.double_clicked() {
+                            opened = Some(position);
+                        }
+                    }
+                });
+            });
+        });
+
+        for position in [selected, opened].into_iter().flatten() {
+            let Some(cell) = cells.get(position) else { continue };
+            select_photo(model, cell.batch_index, cell.photo_index);
+        }
+        if opened.is_some() {
+            self.view = ScreenView::Loupe;
+        }
     }
 
     // ---- toolbar -------------------------------------------------------------------------
@@ -218,19 +289,10 @@ impl CullScreen {
             },
         );
 
-        // Clicks answered through the registry only. Landing in another batch walks batch by
-        // batch (each entry lands where the entering rule says), then `photo.goto` steps to the
-        // exact photo inside that batch. The guard turns a misplaced click into a stopped walk,
-        // never a hang.
+        // Clicks answered through the registry only.
         for id in clicked {
             let Some(thumb) = thumbs.iter().find(|thumb| thumb.id == id) else { continue };
-            let mut walked = 0;
-            while model.current_batch_index() != thumb.batch_index && walked < 96 {
-                let direction = if thumb.batch_index > model.current_batch_index() { "forward" } else { "back" };
-                let _ = dispatch(model, "batch.jump", &json!({ "direction": direction }));
-                walked += 1;
-            }
-            let _ = dispatch(model, "photo.goto", &json!({ "index": thumb.photo_index }));
+            select_photo(model, thumb.batch_index, thumb.photo_index);
         }
     }
 
@@ -523,6 +585,51 @@ fn queued_keys(ui: &egui::Ui, mode: RatingMode) -> Vec<Queued> {
         }
     });
     queued
+}
+
+/// Moves the cursor to a photo that may live in another batch: landing in another batch walks
+/// batch by batch (each entry lands where the entering rule says), then `photo.goto` steps to the
+/// exact photo inside that batch. The guard turns a misplaced click into a stopped walk, never a
+/// hang.
+fn select_photo(model: &mut Model, batch_index: usize, photo_index: usize) {
+    let mut walked = 0;
+    while model.current_batch_index() != batch_index && walked < 96 {
+        let direction = if batch_index > model.current_batch_index() { "forward" } else { "back" };
+        let _ = dispatch(model, "batch.jump", &json!({ "direction": direction }));
+        walked += 1;
+    }
+    let _ = dispatch(model, "photo.goto", &json!({ "index": photo_index }));
+}
+
+/// One grid cell: the decoded thumbnail (or the honest slot), the name and stars. The current
+/// photo carries the accent stroke, exactly like its strip frame.
+fn paint_grid_cell(
+    sheet: &mut egui::Ui,
+    cell: &Thumb,
+    images: &FrameImages<'_>,
+    textures: &HashMap<u64, (usize, usize, TextureHandle)>,
+    current_id: Option<u64>,
+) -> egui::Response {
+    let selected = current_id == Some(cell.id);
+    let button = match images.thumbs.get(&cell.id).and_then(|_| textures.get(&cell.id)).map(|(_, _, handle)| handle) {
+        Some(texture) => {
+            let image = Image::new(texture).fit_to_exact_size(vec2(GRID_WIDTH - 10.0, GRID_WIDTH * 2.0 / 3.0));
+            let mut button = egui::Button::image(image);
+            if selected {
+                button = button.stroke(Stroke::new(2.0, ACCENT));
+            }
+            button
+        }
+        None => egui::Button::new(RichText::new("…").weak()).min_size(vec2(GRID_WIDTH - 10.0, GRID_WIDTH * 2.0 / 3.0)),
+    };
+    sheet
+        .vertical(|cell_ui| {
+            let response = cell_ui.add(button).on_hover_text(format!("grid: {}", cell.file_name));
+            cell_ui.label(RichText::new(&cell.file_name).small().color(if selected { ACCENT } else { FOREGROUND }));
+            cell_ui.label(RichText::new(stars_label(&cell.rating)).small().weak());
+            response
+        })
+        .inner
 }
 
 /// One filmstrip frame: the photo's pixels (or the honest placeholder), its name and stars, an

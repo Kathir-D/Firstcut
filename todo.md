@@ -319,7 +319,10 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   mode-aware (keep in Keep mode, pick in Stars mode), X rejects. Snapshot `culling-keep-mode.png`.
 > - **Loupe zoom rules:** click to 1:1 anchored where clicked, double-click jumps a batch by the
 >   half clicked, and zoom/pan survive a move only under zoom lock. ⌘←/→ move between batches.
-> - **M3 remaining** — grid, compare, batch
+> - **Grid (G / Escape):** a wrapping contact sheet of the whole shoot, same textures and
+>   cursor accent as the strip; click selects through the registry walk, double-click opens the
+>   loupe. Snapshot `culling-grid.png`.
+> - **M3 remaining** — compare, batch
 >   navigation (⌘←/→, double-click jump), zoom lock, AF/clipping overlays, keymap recorder,
 >   menus, Welcome recents/resume, Settings screens, error alerts. Live watch + flush-on-quit
 >   already landed in M2.

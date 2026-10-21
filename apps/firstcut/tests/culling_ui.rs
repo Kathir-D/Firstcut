@@ -121,4 +121,16 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
         assert!(model.current_photo().unwrap().rating.keep, "P kept the current photo in Keep mode");
     }
     harness.snapshot("culling-keep-mode");
+
+    // G is the grid; a click in the contact sheet moves the cursor through the same registry
+    // walk the filmstrip uses.
+    harness.key_press(egui::Key::G);
+    harness.run();
+    harness.snapshot("culling-grid");
+    harness.get_by_label("grid: IMG_0001.CR3").click();
+    harness.run();
+    {
+        let model = state.borrow();
+        assert_eq!(model.current_photo_index(), 0, "the grid click moved the cursor");
+    }
 }
