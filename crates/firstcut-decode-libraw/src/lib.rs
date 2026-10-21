@@ -21,10 +21,16 @@
 //! [`firstcut_decode::apply_orientation`] seam rotates the result to display
 //! orientation. Rotating inside LibRaw as well would rotate orientations 5–8 twice.
 
-use std::path::Path;
 use std::sync::Arc;
 
-use firstcut_decode::{DecodeError, DecodedImage, RawDecode, apply_orientation};
+use firstcut_decode::RawDecode;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::path::Path;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use firstcut_decode::{DecodeError, DecodedImage, apply_orientation};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use firstcut_meta::meta::PhotoMeta;
 
 /// The develop backend on platforms where the vendored LibRaw can build, `None` elsewhere.
