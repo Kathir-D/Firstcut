@@ -287,6 +287,7 @@ fn state(model: &Model) -> Value {
 fn phase_name(model: &Model) -> &'static str {
     match model.phase() {
         crate::model::Phase::Welcome => "welcome",
+        crate::model::Phase::Loading => "loading",
         crate::model::Phase::Culling => "culling",
     }
 }

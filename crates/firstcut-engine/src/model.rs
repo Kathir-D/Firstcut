@@ -10,20 +10,23 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use firstcut_batching::batch::{Batch, BatchId};
+use firstcut_batching::batch::visual::VisualSig;
+use firstcut_batching::batch::{Batch, BatchId, batch_id};
 use firstcut_meta::meta::PhotoMeta;
 use firstcut_types::{ColorLabel, Flag, PhotoId, Rating, RatingMode, Tier};
 
 use crate::session::{Cursor, Session, SessionListener};
 
-/// What phase the app is in (app-model.md). The `loading` phase and its progress stream exist in
-/// v1 because the first-photo fast path can have a folder ratable before the scan finishes; M2
-/// brings that back with the decode priority window. Until then `open_folder` is a blocking call,
-/// so `Loading` has nothing to say and is not a state.
+/// What phase the app is in (app-model.md). `Loading` is v1's first-photo fast path: the
+/// placeholder header has been read and its preview can paint while the full scan runs in the
+/// background. Actions wait until the real session is in (`can_act` is false), because ratings
+/// and batch navigation need the catalog the scan builds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     /// No folder is open; the welcome state.
     Welcome,
+    /// One placeholder photograph is on screen; the full scan is still running.
+    Loading,
     /// Photos, batches and ratings are all loaded; the user can act.
     Culling,
 }
@@ -136,6 +139,9 @@ pub struct Model {
     /// its catalog on a change and keeps its cache otherwise, which is what stops a file landing
     /// in the folder from blanking the strip.
     catalog_revision: u64,
+    /// Thumbnails that finished while the full scan was still running: there is no `Session` to
+    /// submit them to yet, so they wait here and are handed over by [`Model::load_session`].
+    pending_signatures: Vec<(PhotoId, VisualSig)>,
 }
 
 impl Model {
@@ -157,6 +163,7 @@ impl Model {
             pending_batches: Arc::new(Mutex::new(Vec::new())),
             settings_store: None,
             catalog_revision: 0,
+            pending_signatures: Vec::new(),
         }
     }
 
@@ -225,9 +232,16 @@ impl Model {
     /// buffer the filmstrip is about to show — the pipeline never decodes a photo twice for it.
     /// Batches that move are queued on the session listener and arrive through
     /// [`Model::drain_session_messages`].
-    pub fn submit_thumbnail_pixels(&self, id: PhotoId, rgba: &[u8], width: u32, height: u32) {
+    ///
+    /// During the first-photo fast path there is no session yet; the signature waits in
+    /// `pending_signatures` and is submitted the moment the scan finishes, so the placeholder
+    /// frame still contributes to its batch's boundary.
+    pub fn submit_thumbnail_pixels(&mut self, id: PhotoId, rgba: &[u8], width: u32, height: u32) {
+        let signature = firstcut_batching::batch::visual_sig(rgba, width, height);
         if let Some(session) = self.session.as_ref() {
-            session.submit_visual_sigs(vec![(id, firstcut_batching::batch::visual_sig(rgba, width, height))]);
+            session.submit_visual_sigs(vec![(id, signature)]);
+        } else {
+            self.pending_signatures.push((id, signature));
         }
     }
 
@@ -349,6 +363,60 @@ impl Model {
         Ok(())
     }
 
+    /// Starts the first-photo fast path: reads the placeholder header (one file), puts its
+    /// preview on screen, and leaves the full scan to the caller. `finish_open` installs the real
+    /// session; `fail_open` returns to Welcome with the error.
+    ///
+    /// A folder with no photograph returns the error before the previous session is touched.
+    pub fn begin_open(&mut self, folder: &Path) -> Result<(), String> {
+        let name = firstcut_meta::meta::first_photo_name(folder).ok_or_else(|| format!("no photographs in {}", folder.display()))?;
+        let meta = firstcut_meta::meta::read_photo(folder, &name)
+            .ok_or_else(|| format!("could not read the first photograph ({name}) in {}", folder.display()))?;
+        // Commit only after the placeholder is in hand: a bad folder must not close a good shoot.
+        self.close_session();
+        self.session = None;
+        let id = meta.id;
+        self.folder = Some(folder.to_path_buf());
+        self.folder_name = folder.file_name().map_or_else(|| folder.to_string_lossy().to_string(), |name| name.to_string_lossy().to_string());
+        self.photos = vec![PhotoVm { meta, rating: Rating::default() }];
+        self.photo_index = HashMap::from([(id, 0)]);
+        self.batches = vec![BatchVm { id: batch_id(id), index: 0, photo_ids: vec![id], visited: false, provisional: true }];
+        self.current_batch_index = 0;
+        self.current_photo_index = 0;
+        self.phase = Phase::Loading;
+        self.last_error = None;
+        self.catalog_revision = self.catalog_revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Installs the finished scan behind the placeholder. `Session::open_in` runs on the app's
+    /// thread; the model only swaps the catalog when it arrives.
+    pub fn finish_open(&mut self, session: Session) {
+        self.load_session(session);
+    }
+
+    /// The scan failed after the placeholder painted: back to Welcome, with the reason kept.
+    pub fn fail_open(&mut self, message: String) {
+        self.session = None;
+        self.folder = None;
+        self.folder_name.clear();
+        self.photos.clear();
+        self.photo_index.clear();
+        self.batches.clear();
+        self.current_batch_index = 0;
+        self.current_photo_index = 0;
+        self.pending_signatures.clear();
+        self.last_error = Some(message);
+        self.phase = Phase::Welcome;
+        self.catalog_revision = self.catalog_revision.saturating_add(1);
+    }
+
+    /// A listener the app's scan thread can hand to `Session::open_in`, so re-batches and XMP
+    /// failures queue on the same channels [`Model::drain_session_messages`] already drains.
+    pub fn session_listener(&self) -> Arc<dyn SessionListener> {
+        Arc::new(SessionForwarder { errors: Arc::clone(&self.pending_errors), batches: Arc::clone(&self.pending_batches) })
+    }
+
     /// Seeds the model from a session (the split point `bench` also uses: scan → model).
     pub fn load_session(&mut self, session: Session) {
         let snapshot = session.snapshot();
@@ -372,6 +440,13 @@ impl Model {
         self.phase = Phase::Culling;
         self.last_error = None;
         self.catalog_revision = self.catalog_revision.saturating_add(1);
+        // Thumbnails decoded against the placeholder catalog still count; hand their signatures
+        // to the session now that one exists.
+        if !self.pending_signatures.is_empty()
+            && let Some(session) = self.session.as_ref()
+        {
+            session.submit_visual_sigs(std::mem::take(&mut self.pending_signatures));
+        }
     }
 
     /// Reconciles the open folder with the disk (the watcher calls this, and `file.rescan` does).
@@ -877,6 +952,38 @@ mod tests {
 
     fn synthetic(index: u32) -> Vec<u8> {
         firstcut_meta::meta::cr3::SyntheticCr3::r8().at("2026:08:27 19:54:00").subsec(&format!("{index:02}")).build()
+    }
+
+    #[test]
+    fn the_fast_path_shows_one_photo_before_the_scan_installs_the_catalog() {
+        let sessions = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        for index in 1..=4u32 {
+            std::fs::write(folder.path().join(format!("IMG_000{index}.CR3")), synthetic(index)).unwrap();
+        }
+        let mut model = Model::new();
+        model.begin_open(folder.path()).expect("the placeholder header reads");
+        assert_eq!(model.phase(), Phase::Loading);
+        assert_eq!(model.photos().len(), 1, "one placeholder frame, not the shoot");
+        let placeholder = model.current_photo_id().expect("the placeholder is the cursor");
+        assert!(!model.can_act(), "actions wait for the real catalog");
+
+        let session = Session::open_in(folder.path(), sessions.path(), Arc::new(crate::session::NoListener)).expect("the scan opens");
+        model.finish_open(session);
+        assert_eq!(model.phase(), Phase::Culling);
+        assert_eq!(model.photos().len(), 4, "the full scan replaced the placeholder");
+        assert!(model.photos().iter().any(|photo| photo.meta.id == placeholder), "the frame on screen is still in the shoot");
+        assert!(model.can_act());
+    }
+
+    #[test]
+    fn a_failed_open_returns_to_welcome_with_the_reason() {
+        let mut model = Model::new();
+        model.begin_open(Path::new("/definitely/not/a/folder")).expect_err("a missing folder has no first photo");
+        model.fail_open("boom".to_string());
+        assert_eq!(model.phase(), Phase::Welcome);
+        assert!(model.photos().is_empty());
+        assert_eq!(model.last_error(), Some("boom"));
     }
 
     #[test]

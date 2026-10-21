@@ -292,9 +292,17 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   0.195 s. **Exact RAW is 1.03–1.05 s against the 0.119 s gate** — v1's 0.079 s was Core
 >   Image on the GPU, LibRaw here is single-threaded CPU. Recorded as an owner decision with
 >   the options; do not "fix" it by choosing a visibly worse demosaic to hit the number.
-> - **M2 still open:** the first-photo fast path (header + preview on screen while the scan
->   runs), the real-format decode sweep (`scripts/test-with-photos.sh`), the full `cargo xtask
->   ci` + 3-OS matrix on the M2 tip, and the owner's call on the Exact RAW gate. Then M3.
+> - **First-photo fast path landed:** `Model::begin_open` reads one placeholder header, sets
+>   `Phase::Loading`, and shows its preview; `Session::open_in` runs on an app-owned thread and
+>   `finish_open` swaps the real catalog in (the placeholder's id survives the cache). The
+>   watcher's token is held until the catalog is real so a change during the scan is not lost.
+>   `the_fast_path_shows_one_photo_before_the_scan_installs_the_catalog` and
+>   `a_failed_open_returns_to_welcome_with_the_reason` pin the seam.
+> - **Real-photo sweep green:** `every_sampled_photo_displays_in_display_orientation` (12
+>   photos across the four games) and `a_real_raw_develops_in_sensor_orientation_and_is_rotated_once`
+>   (orientation 8 → 3999×5999 portrait) pass with `scripts/test-with-photos.sh`'s env.
+> - **M2 still open:** the full `cargo xtask ci` + 3-OS matrix on the M2 tip, and the owner's call
+>   on the Exact RAW gate. Then M3.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).

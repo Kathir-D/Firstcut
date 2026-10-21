@@ -12,8 +12,9 @@ use std::sync::mpsc;
 
 use eframe::egui;
 use firstcut_decode::{DecodedImage, Histogram, RawDecode, decode_display, decode_display_at, decode_thumbnail, histogram};
-use firstcut_engine::model::Model;
+use firstcut_engine::model::{Model, Phase};
 use firstcut_engine::pipeline::{FALLBACK_DISPLAY_EDGE, Focus, Job, Pipeline, Source, THUMBNAIL_EDGE, Tier, TierBudgets};
+use firstcut_engine::session::Session;
 use firstcut_engine::settings::SettingsStore;
 use firstcut_engine::watch::{FolderWatcher, watch};
 use firstcut_types::PhotoId;
@@ -75,20 +76,13 @@ fn run(smoke: bool, folder: Option<PathBuf>, control: Option<u16>) -> Result<(),
     if let Some(store) = settings_store() {
         model.attach_settings_store(store);
     }
-    if let Some(folder) = folder.as_deref() {
-        // Errors stay on the model (phase welcome, last_error set); the console
-        // line is for the terminal that launched the window.
-        if let Err(err) = model.open_folder(folder) {
-            eprintln!("firstcut: {err}");
-        }
-    }
     eframe::run_native(
         "firstcut",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_title("Firstcut").with_inner_size([1200.0, 760.0]).with_min_inner_size([640.0, 380.0]),
             ..Default::default()
         },
-        Box::new(move |_cc| Ok(Box::new(Shell::new(smoke, control_receiver, wake_slot, model)))),
+        Box::new(move |_cc| Ok(Box::new(Shell::new(smoke, control_receiver, wake_slot, model, folder)))),
     )
     .map_err(|e| format!("eframe failed to create the window: {e}"))
 }
@@ -117,6 +111,12 @@ struct Shell {
     /// has a folder, restarted if the folder changes).
     watcher: Option<(FolderWatcher, mpsc::Receiver<()>)>,
     watched_folder: Option<PathBuf>,
+    /// The real sessions directory, kept so the scan thread can open without asking the catalog
+    /// again (and so a missing one still takes `Session::open`'s default).
+    sessions_dir: Option<PathBuf>,
+    /// The first-photo fast path's background scan. The placeholder is already on screen; when
+    /// this delivers, `finish_open` swaps the real catalog in.
+    open_job: Option<mpsc::Receiver<Result<Session, String>>>,
 }
 
 impl Shell {
@@ -125,6 +125,7 @@ impl Shell {
         control_receiver: Option<mpsc::Receiver<control::Request>>,
         wake_slot: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
         model: Model,
+        folder: Option<PathBuf>,
     ) -> Self {
         let performance = model.performance_settings();
         let fraction = if performance.memory_budget_fraction.is_finite() && performance.memory_budget_fraction > 0.0 {
@@ -142,7 +143,7 @@ impl Shell {
             performance.decode_threads.clamp(1, 8) as usize
         };
         let raw: Option<Arc<dyn RawDecode>> = firstcut_decode_libraw::backend();
-        Self {
+        let mut shell = Self {
             model,
             screen: firstcut_ui::CullScreen::new(),
             bank: DecodeBank::new(TierBudgets::from_total(total_budget), threads, raw),
@@ -154,6 +155,67 @@ impl Shell {
             wake_noticed: false,
             watcher: None,
             watched_folder: None,
+            sessions_dir: firstcut_catalog::sessions_dir().ok(),
+            open_job: None,
+        };
+        if let Some(folder) = folder {
+            shell.start_open(folder);
+        }
+        shell
+    }
+
+    /// Reads the placeholder header and starts the full scan on its own thread. The window can
+    /// paint the first photograph before the scan returns; `poll_open` installs the catalog.
+    fn start_open(&mut self, folder: PathBuf) {
+        if let Err(err) = self.model.begin_open(&folder) {
+            eprintln!("firstcut: {err}");
+            self.model.fail_open(err);
+            return;
+        }
+        let listener = self.model.session_listener();
+        let sessions = self.sessions_dir.clone();
+        let (sender, receiver) = mpsc::channel();
+        let label = folder.display().to_string();
+        let spawned = std::thread::Builder::new().name("firstcut-open".to_string()).spawn(move || {
+            let result = match sessions {
+                Some(dir) => Session::open_in(&folder, &dir, listener),
+                None => Session::open(&folder, listener),
+            };
+            let _ = sender.send(result.map_err(|err| err.to_string()));
+        });
+        match spawned {
+            Ok(_) => self.open_job = Some(receiver),
+            Err(err) => {
+                let message = format!("starting the scan for {label}: {err}");
+                eprintln!("firstcut: {message}");
+                self.model.fail_open(message);
+            }
+        }
+    }
+
+    /// Takes the scan's result when it lands. Before that the placeholder stays on screen.
+    fn poll_open(&mut self) {
+        let received = match self.open_job.as_ref() {
+            Some(receiver) => receiver.try_recv(),
+            None => return,
+        };
+        match received {
+            Ok(Ok(session)) => {
+                self.open_job = None;
+                self.model.finish_open(session);
+            }
+            Ok(Err(message)) => {
+                self.open_job = None;
+                eprintln!("firstcut: {message}");
+                self.model.fail_open(message);
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.open_job = None;
+                let message = "the scan thread stopped without a result".to_string();
+                eprintln!("firstcut: {message}");
+                self.model.fail_open(message);
+            }
         }
     }
 
@@ -177,6 +239,12 @@ impl Shell {
     /// Drains the watcher's "something changed" token and reconciles. Events that arrive while
     /// the app is busy coalesce into one rescan, which is what FSEvents gives us anyway.
     fn poll_watcher(&mut self) {
+        // During the fast path the catalog is one placeholder and the scan is already on its way;
+        // leave the token in the bounded channel so the change is reconciled once the real
+        // session is in rather than being scanned into nothing.
+        if self.model.phase() == Phase::Loading {
+            return;
+        }
         let mut changed = false;
         if let Some((_, events)) = self.watcher.as_ref() {
             while events.try_recv().is_ok() {
@@ -215,6 +283,7 @@ impl eframe::App for Shell {
             }
             self.control_receiver = Some(receiver);
         }
+        self.poll_open();
         self.sync_watcher();
         self.poll_watcher();
 
@@ -222,7 +291,7 @@ impl eframe::App for Shell {
         // of repainting, so a decode has the whole frame's time to get back before the next try.
         let viewport_edge = self.screen.viewport_edge();
         let zoomed = self.screen.is_zoomed();
-        if self.bank.pump(&self.model, viewport_edge, zoomed) {
+        if self.bank.pump(&mut self.model, viewport_edge, zoomed) {
             ui.ctx().request_repaint();
         }
         // Visual signatures may have re-cut unvisited batches; take the latest snapshot before the
@@ -427,7 +496,7 @@ impl DecodeBank {
 
     /// Drains finished decodes, reconciles the catalog when the model says it changed, reports
     /// the focus window, and fills the workers. `true` when pixels arrived.
-    fn pump(&mut self, model: &Model, viewport_edge: u32, zoomed: bool) -> bool {
+    fn pump(&mut self, model: &mut Model, viewport_edge: u32, zoomed: bool) -> bool {
         let mut changed = false;
         loop {
             match self.results.try_recv() {

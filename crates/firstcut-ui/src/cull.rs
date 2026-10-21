@@ -77,7 +77,9 @@ impl CullScreen {
 
         match model.phase() {
             Phase::Welcome => self.show_welcome(ui),
-            Phase::Culling => self.show_culling(ui, model, images),
+            // The fast path paints the placeholder through the same culling screen; dispatch
+            // refuses actions until the scan finishes (`canAct` is false).
+            Phase::Loading | Phase::Culling => self.show_culling(ui, model, images),
         }
     }
 
