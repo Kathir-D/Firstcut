@@ -1,6 +1,6 @@
 # v2 parity checklist — the merge gate, mirrored (docs/v2-plan.md §7)
 
-> Status, honest as of 2026-10-20, during M2 (pipeline). Rows that moved carry their test names. Each row says where
+> Status, honest as of 2026-10-21, M2 closed and M3 (screens) starting. Rows that moved carry their test names. Each row says where
 > its work happens (or landed), and — once a row is true — the named test that proves it.
 > **Struck-through = proven by a named test** (§7's rule); a row without ✔ still needs the
 > work or the owner's eyes. A status number (Mn) is the milestone whose work owns the row:
@@ -18,7 +18,7 @@ Rows, in §7's order:
 | 5 | Filmstrip; grid | ✔ part (strip) / M3 (grid) | strip proven: `firstcut` kittest snapshot `culling.png` + `culling-after-rating.png` |
 | 6 | 2/3/4-up compare with synced zoom | — M3 | |
 | 7 | Info panel with histogram (orientation-safe) | ✔ decode half / M3 panel | `firstcut-decode` computes it from the oriented frame: `the_histogram_is_computed_from_the_oriented_frame`; the app carries it on `Frame` and `FrameImages.histogram`. The panel that paints it is M3 |
-| 8 | Progress HUD with current rating | — M2 | |
+| 8 | Progress HUD with current rating | ✔ | `firstcut-ui`'s floating HUD (`CullScreen::hud`): batch and photo position, shoot-wide keep/good/maybe/unrated (and rejected when non-zero), and the current photo's rating in the active mode plus flag and label. Toggled with H (view state, like v1's `hudVisible`). `the_hud_counts_from_one_and_words_the_active_mode`, `the_tier_line_shows_rejected_only_when_something_was_rejected`, and both kittest snapshots |
 | 9 | Both rating modes (stars / keep), undo/redo | ✔ partial | Both modes already read/settings (`rateModeKeep` etc.), `keep.set`/`stars` through `registry::dispatch`, undo/redo `edit.undo`/`edit.redo` (engine tests ported); UI buttons for mode switching are M3 |
 | 10 | Finish Cull flow: summary → options → dry run → typed DELETE → report → undo | — M4 | |
 | 11 | Settings: General, Keyboard (recorder/import/export), Viewer, Metadata, Performance | ✔ part | Settings: `settings.rs` reads the real v1 file (`engine`'s `the_real_v1_file_every_section_loads`) — all 5 sections parse × shapes checked; the keyboard and the app's settings screens are M3 |

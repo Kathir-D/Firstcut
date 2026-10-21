@@ -308,9 +308,14 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   (fixed in `ce1fbf5`, now also checked locally with
 >   `cargo clippy -p firstcut-decode-libraw --target x86_64-pc-windows-msvc`). The only
 >   M2 remainder is the owner's call on the Exact RAW gate, which is a decision, not work.
-> - **Next: M3 (full screen set)** — grid, compare, info/histogram, progress HUD, both
->   rating modes, batch navigation, zoom lock, overlays, keymap recorder, menus, Welcome
->   recents/resume, Settings, error alerts. Live watch + flush-on-quit already landed in M2.
+> - **M3 started — progress HUD (`crates/firstcut-ui/src/cull.rs`):** floating batch/photo
+>   position, shoot-wide tier counts, and the current photo's rating in the active mode (stars or
+>   keep/not-keep) with flag and colour label; H toggles it, as v1's `hudVisible` did. Pure text
+>   builders are unit-tested; both kittest snapshots show the HUD.
+> - **M3 remaining** — grid, compare, info/histogram, both rating-mode controls, batch
+>   navigation (⌘←/→, double-click jump), zoom lock, AF/clipping overlays, keymap recorder,
+>   menus, Welcome recents/resume, Settings screens, error alerts. Live watch + flush-on-quit
+>   already landed in M2.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use egui::{Color32, FontId, Image, Key, RichText, Sense, Stroke, TextureHandle, Vec2, pos2, vec2};
 use firstcut_engine::model::{Model, Phase};
 use firstcut_engine::registry::dispatch;
-use firstcut_types::Rating;
+use firstcut_types::{Flag, Rating, RatingMode, Tier};
 use serde_json::{Value as Json, json};
 
 use crate::FrameImages;
@@ -43,6 +43,8 @@ pub struct CullScreen {
     /// The viewer's backing size from the last frame, in physical pixels — the display tier's
     /// decode target. Zero until the pane has been laid out.
     viewport_pixels: Vec2,
+    /// The progress HUD's visibility (v1's `hudVisible`, toggled with H).
+    hud_visible: bool,
 }
 
 impl Default for CullScreen {
@@ -53,7 +55,7 @@ impl Default for CullScreen {
 
 impl CullScreen {
     pub fn new() -> Self {
-        Self { textures: HashMap::new(), zoom: 1.0, pan: Vec2::ZERO, viewport_pixels: Vec2::ZERO }
+        Self { textures: HashMap::new(), zoom: 1.0, pan: Vec2::ZERO, viewport_pixels: Vec2::ZERO, hud_visible: true }
     }
 
     /// The viewer's long edge in backing pixels, or 0 before the first layout. The app turns
@@ -95,6 +97,11 @@ impl CullScreen {
     }
 
     fn show_culling(&mut self, ui: &mut egui::Ui, model: &mut Model, images: &FrameImages<'_>) {
+        // The HUD is view state, not engine state: v1 kept `hudVisible` on the app model and the
+        // view toggles it, so no command crosses the registry for it.
+        if ui.ctx().input(|input| input.key_pressed(Key::H)) {
+            self.hud_visible = !self.hud_visible;
+        }
         for (id, params) in queued_keys(ui) {
             let _ = dispatch(model, id, &params);
         }
@@ -214,8 +221,84 @@ impl CullScreen {
                 self.zoom *= 1.0 - scroll / 1_500.0;
                 self.zoom = self.zoom.clamp(0.2, 12.0);
             }
+
+            if self.hud_visible {
+                self.hud(panel, model, available);
+            }
         });
     }
+
+    // ---- progress HUD ---------------------------------------------------------------------
+
+    /// v1's floating glass HUD: where the batch sits in the shoot, the shoot's tier counts, and
+    /// the rating the user is looking at. Read-only; every number comes from the model.
+    fn hud(&self, panel: &egui::Ui, model: &Model, viewer: egui::Rect) {
+        let batch_count = model.batches().len();
+        let batch_index = model.current_batch_index();
+        let photo_count = model.current_batch().map_or(0, |batch| batch.photo_ids.len());
+        let photo_index = model.current_photo_index();
+        let counts = model.counts_by_tier();
+        let review =
+            model.current_photo().map_or_else(|| String::from("no photo"), |photo| rating_summary(&photo.rating, model.settings().rating_mode));
+
+        egui::Area::new(egui::Id::unique("cull-progress-hud"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(viewer.left_bottom() + vec2(14.0, -14.0))
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .show(panel.ctx(), |hud| {
+                egui::Frame::new().fill(Color32::from_black_alpha(190)).corner_radius(10.0).inner_margin(10.0).show(hud, |hud| {
+                    hud.set_min_width(220.0);
+                    hud.label(RichText::new(progress_line(batch_index, batch_count, photo_index, photo_count)).strong().color(FOREGROUND));
+                    hud.label(RichText::new(tier_line(&counts)).small().color(FOREGROUND));
+                    hud.label(RichText::new(review).small().color(ACCENT));
+                });
+            });
+    }
+}
+
+/// "Batch 2 / 7 · photo 4 / 12" — 1-based, the way the user counts.
+fn progress_line(batch_index: usize, batch_count: usize, photo_index: usize, photo_count: usize) -> String {
+    let batch = if batch_count == 0 { String::from("no batch") } else { format!("Batch {} / {}", batch_index + 1, batch_count) };
+    if photo_count == 0 {
+        return batch;
+    }
+    format!("{batch} · photo {} / {photo_count}", photo_index + 1)
+}
+
+/// The shoot-wide tier counts v1 put under the progress line. Rejected is separate from
+/// unrated because Finish treats it separately (todo.md §6.1).
+fn tier_line(counts: &HashMap<Tier, usize>) -> String {
+    let get = |tier: Tier| counts.get(&tier).copied().unwrap_or(0);
+    let mut line = format!("keep {} · good {} · maybe {} · unrated {}", get(Tier::Keep), get(Tier::Good), get(Tier::Maybe), get(Tier::Unrated));
+    let rejected = get(Tier::Rejected);
+    if rejected > 0 {
+        line.push_str(&format!(" · rejected {rejected}"));
+    }
+    line
+}
+
+/// The current photo's rating, worded in the active mode: keep/not keep in Keep mode, stars in
+/// Stars mode. Flag and colour label ride along in both (todo.md §6.3).
+fn rating_summary(rating: &Rating, mode: RatingMode) -> String {
+    let mut parts = Vec::new();
+    if mode == RatingMode::KeepNotKeep {
+        parts.push(String::from(if rating.keep { "keep" } else { "not keep" }));
+    } else {
+        parts.push(match rating.stars {
+            0 => String::from("unrated"),
+            1 => String::from("1 star"),
+            stars => format!("{stars} stars"),
+        });
+    }
+    match rating.flag {
+        Flag::Pick => parts.push(String::from("pick")),
+        Flag::Reject => parts.push(String::from("reject")),
+        Flag::None => {}
+    }
+    if let Some(label) = rating.label {
+        parts.push(label.as_str().to_string());
+    }
+    parts.join(" · ")
 }
 
 /// One filmstrip frame's data: a plain copy the paint pass reads without touching the model.
@@ -365,6 +448,7 @@ fn fit_into(into: Vec2, image: Vec2) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use firstcut_types::ColorLabel;
 
     /// The real-photo crash the M1 showcase run caught: a 6000×4000 preview went to
     /// `load_texture` raw and egui's max-texture-side assert killed the frame.
@@ -399,6 +483,28 @@ mod tests {
 
         let empty = egui::ColorImage { size: [0, 0], source_size: Vec2::ZERO, pixels: Vec::new() };
         assert_eq!(fit_to_max_side(&empty, 2048).size, [0, 0]);
+    }
+
+    #[test]
+    fn the_hud_counts_from_one_and_words_the_active_mode() {
+        assert_eq!(progress_line(0, 3, 0, 12), "Batch 1 / 3 · photo 1 / 12");
+        assert_eq!(progress_line(0, 0, 0, 0), "no batch", "Welcome has no batch to name");
+
+        let rated = Rating { stars: 4, flag: Flag::Pick, label: Some(ColorLabel::Red), ..Rating::default() };
+        assert_eq!(rating_summary(&rated, RatingMode::Stars), "4 stars · pick · Red");
+        assert_eq!(rating_summary(&Rating::default(), RatingMode::Stars), "unrated");
+        assert_eq!(rating_summary(&Rating { keep: true, ..Rating::default() }, RatingMode::KeepNotKeep), "keep");
+        assert_eq!(rating_summary(&Rating::default(), RatingMode::KeepNotKeep), "not keep");
+    }
+
+    #[test]
+    fn the_tier_line_shows_rejected_only_when_something_was_rejected() {
+        let mut counts = HashMap::new();
+        counts.insert(Tier::Keep, 2);
+        counts.insert(Tier::Unrated, 5);
+        assert_eq!(tier_line(&counts), "keep 2 · good 0 · maybe 0 · unrated 5");
+        counts.insert(Tier::Rejected, 1);
+        assert_eq!(tier_line(&counts), "keep 2 · good 0 · maybe 0 · unrated 5 · rejected 1");
     }
 
     #[test]
