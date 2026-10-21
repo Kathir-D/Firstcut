@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use firstcut_engine::model::Model;
+use firstcut_types::Histogram;
 use firstcut_ui::{CullScreen, FrameImages};
 
 /// Three synthetic CR3s 10 ms apart (one burst, so one batch) in a scratch shoot, opened.
@@ -48,6 +49,16 @@ fn bank(model: &Model, colors: &[(u8, u8, u8)]) -> HashMap<u64, Arc<egui::ColorI
 fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
     let (_sessions, _folder, model) = shoot();
     let bank = bank(&model, &[(160, 32, 32), (32, 96, 160), (32, 160, 96)]);
+    // A deterministic hump for all four channels, so the Info panel's histogram is painted
+    // from real data in the snapshot instead of the "histogram…" placeholder.
+    let mut histogram = Histogram::empty();
+    for index in 0..64 {
+        let hump = |centre: f32| (1.0 - (index as f32 - centre).abs() / 64.0).max(0.02);
+        histogram.luma[index] = hump(30.0);
+        histogram.red[index] = hump(20.0);
+        histogram.green[index] = hump(30.0);
+        histogram.blue[index] = hump(40.0);
+    }
     // The harness keeps the paint closure for its whole life, so the state it paints lives
     // behind cells: borrowed exclusively for the length of one frame, read in slices after.
     let state = std::cell::RefCell::new(model);
@@ -58,7 +69,7 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
         let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
-        let images = FrameImages { current, thumbs: &bank, histogram: None };
+        let images = FrameImages { current, thumbs: &bank, histogram: Some(&histogram) };
         screen.show(ui, &mut model, &images);
     });
 
@@ -82,4 +93,10 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
         assert_eq!(photo.rating.stars, 4, "the 4 key rated the first photo");
     }
     harness.snapshot("culling-after-rating");
+
+    // The Info panel is view state toggled from the keyboard (v1's I); the histogram rides in
+    // from the app's decode frame, already orientation-safe.
+    harness.key_press(egui::Key::I);
+    harness.run();
+    harness.snapshot("culling-info-panel");
 }

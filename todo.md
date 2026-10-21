@@ -312,7 +312,10 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   position, shoot-wide tier counts, and the current photo's rating in the active mode (stars or
 >   keep/not-keep) with flag and colour label; H toggles it, as v1's `hudVisible` did. Pure text
 >   builders are unit-tested; both kittest snapshots show the HUD.
-> - **M3 remaining** — grid, compare, info/histogram, both rating-mode controls, batch
+> - **Info panel + histogram:** right-hand inspector (I toggles), capture fields and the
+>   64-bin luma area with RGB traces; the data is the decode seam's already-oriented histogram.
+>   Snapshot `culling-info-panel.png`.
+> - **M3 remaining** — grid, compare, both rating-mode controls, batch
 >   navigation (⌘←/→, double-click jump), zoom lock, AF/clipping overlays, keymap recorder,
 >   menus, Welcome recents/resume, Settings screens, error alerts. Live watch + flush-on-quit
 >   already landed in M2.

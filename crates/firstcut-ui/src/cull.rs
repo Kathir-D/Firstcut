@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use egui::{Color32, FontId, Image, Key, RichText, Sense, Stroke, TextureHandle, Vec2, pos2, vec2};
 use firstcut_engine::model::{Model, Phase};
 use firstcut_engine::registry::dispatch;
-use firstcut_types::{Flag, Rating, RatingMode, Tier};
+use firstcut_types::{Flag, Histogram, Rating, RatingMode, Tier};
 use serde_json::{Value as Json, json};
 
 use crate::FrameImages;
@@ -45,6 +45,8 @@ pub struct CullScreen {
     viewport_pixels: Vec2,
     /// The progress HUD's visibility (v1's `hudVisible`, toggled with H).
     hud_visible: bool,
+    /// The Info panel's visibility (v1's `infoPanelVisible`, toggled with I).
+    info_visible: bool,
 }
 
 impl Default for CullScreen {
@@ -55,7 +57,7 @@ impl Default for CullScreen {
 
 impl CullScreen {
     pub fn new() -> Self {
-        Self { textures: HashMap::new(), zoom: 1.0, pan: Vec2::ZERO, viewport_pixels: Vec2::ZERO, hud_visible: true }
+        Self { textures: HashMap::new(), zoom: 1.0, pan: Vec2::ZERO, viewport_pixels: Vec2::ZERO, hud_visible: true, info_visible: false }
     }
 
     /// The viewer's long edge in backing pixels, or 0 before the first layout. The app turns
@@ -102,11 +104,42 @@ impl CullScreen {
         if ui.ctx().input(|input| input.key_pressed(Key::H)) {
             self.hud_visible = !self.hud_visible;
         }
+        if ui.ctx().input(|input| input.key_pressed(Key::I)) {
+            self.info_visible = !self.info_visible;
+        }
         for (id, params) in queued_keys(ui) {
             let _ = dispatch(model, id, &params);
         }
         self.filmstrip(ui, model, images);
+        if self.info_visible {
+            self.info_panel(ui, model, images.histogram);
+        }
         self.loupe(ui, model, images);
+    }
+
+    // ---- info panel ----------------------------------------------------------------------
+
+    /// v1's right-hand inspector: the file's capture fields and the current frame's histogram.
+    /// The histogram is already computed from the **oriented** display frame
+    /// (`firstcut_decode::histogram`), so this panel never rotates or resamples anything.
+    fn info_panel(&self, ui: &mut egui::Ui, model: &Model, histogram: Option<&Histogram>) {
+        egui::Panel::right("info-panel").exact_size(280.0).frame(egui::Frame::new().fill(STRIP).inner_margin(12.0)).show(ui, |panel| {
+            let Some(photo) = model.current_photo() else {
+                panel.label(RichText::new("Nothing selected").weak());
+                return;
+            };
+            panel.label(RichText::new(file_name_of(&photo.meta.rel_path)).strong().color(FOREGROUND));
+            panel.add_space(6.0);
+            for line in capture_lines(photo) {
+                panel.label(RichText::new(line).small().color(FOREGROUND));
+            }
+            panel.add_space(4.0);
+            panel.label(RichText::new(rating_summary(&photo.rating, model.settings().rating_mode)).small().color(ACCENT));
+
+            panel.add_space(12.0);
+            panel.label(RichText::new("HISTOGRAM").small().weak());
+            draw_histogram(panel, histogram);
+        });
     }
 
     // ---- filmstrip ------------------------------------------------------------------------
@@ -253,6 +286,86 @@ impl CullScreen {
                     hud.label(RichText::new(review).small().color(ACCENT));
                 });
             });
+    }
+}
+
+/// The capture fields the Info panel lists, in v1's order. Missing fields are omitted rather
+/// than printed as placeholders.
+fn capture_lines(photo: &firstcut_engine::model::PhotoVm) -> Vec<String> {
+    let meta = &photo.meta;
+    let mut lines = Vec::new();
+    let mut exposure = Vec::new();
+    if let Some(focal) = meta.focal_length_mm {
+        exposure.push(format!("{focal:.0} mm"));
+    }
+    if let Some(f_number) = meta.f_number {
+        exposure.push(format!("f/{f_number:.1}"));
+    }
+    if let Some(seconds) = meta.exposure_time_s {
+        exposure.push(if seconds >= 1.0 {
+            format!("{seconds:.1} s")
+        } else if seconds > 0.0 {
+            format!("1/{} s", (1.0 / seconds).round())
+        } else {
+            String::from("0 s")
+        });
+    }
+    if let Some(iso) = meta.iso {
+        exposure.push(format!("ISO {iso}"));
+    }
+    if !exposure.is_empty() {
+        lines.push(exposure.join(" · "));
+    }
+    let mut camera = Vec::new();
+    if let Some(make) = meta.camera_make.as_deref() {
+        camera.push(make.to_string());
+    }
+    if let Some(model) = meta.camera_model.as_deref() {
+        camera.push(model.to_string());
+    }
+    if !camera.is_empty() {
+        lines.push(camera.join(" "));
+    }
+    if let Some(lens) = meta.lens_model.as_deref() {
+        lines.push(lens.to_string());
+    }
+    lines.push(format!("{} × {}", meta.width, meta.height));
+    lines
+}
+
+/// Draws the 64-bin luma area and the red/green/blue traces. Each channel is normalised on the
+/// **luma** maximum so the three traces share a scale and clipped highlights line up.
+fn draw_histogram(panel: &mut egui::Ui, histogram: Option<&Histogram>) {
+    let (rect, _) = panel.allocate_exact_size(vec2(panel.available_width(), 96.0), Sense::hover());
+    let painter = panel.painter_at(rect);
+    painter.rect_filled(rect, 4.0, Color32::from_rgb(16, 16, 18));
+    let Some(histogram) = histogram else {
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, "histogram…", FontId::proportional(12.0), Color32::from_gray(120));
+        return;
+    };
+    let peak = histogram.luma.iter().copied().fold(0.0f32, f32::max).max(0.000_1);
+    let step = rect.width() / 64.0;
+    for (index, value) in histogram.luma().iter().enumerate() {
+        let height = (value / peak).clamp(0.0, 1.0) * (rect.height() - 2.0);
+        let left = rect.left() + index as f32 * step;
+        let bar = egui::Rect::from_min_max(pos2(left, rect.bottom() - height), pos2(left + step, rect.bottom()));
+        painter.rect_filled(bar, 0.0, Color32::from_gray(180));
+    }
+    for (bins, color) in [
+        (&histogram.red, Color32::from_rgb(255, 96, 96)),
+        (&histogram.green, Color32::from_rgb(96, 220, 96)),
+        (&histogram.blue, Color32::from_rgb(110, 150, 255)),
+    ] {
+        let points: Vec<egui::Pos2> = bins
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let x = rect.left() + (index as f32 + 0.5) * step;
+                let y = rect.bottom() - (value / peak).clamp(0.0, 1.0) * (rect.height() - 2.0);
+                pos2(x, y)
+            })
+            .collect();
+        painter.add(egui::Shape::line(points, Stroke::new(1.0, color)));
     }
 }
 
