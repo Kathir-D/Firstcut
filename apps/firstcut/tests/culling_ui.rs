@@ -138,6 +138,14 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
     harness.key_press(egui::Key::C);
     harness.run();
     harness.snapshot("culling-compare");
+
+    // The cheat sheet is generated from the registry; the File menu's Open dialog leaves a
+    // request for the app rather than opening a session in the screen.
+    harness.key_press(egui::Key::Questionmark);
+    harness.run();
+    harness.snapshot("culling-shortcuts");
+    harness.key_press(egui::Key::Questionmark);
+    harness.run();
 }
 
 /// The clipping overlay (J) is painted from the display pixels the loupe already has: a white
@@ -163,4 +171,29 @@ fn the_clipping_overlay_marks_highlight_clipped_pixels() {
     harness.key_press(egui::Key::J);
     harness.run();
     harness.snapshot("culling-clipping");
+}
+
+/// File → Open Folder… is a typed path the app opens asynchronously. egui's TextEdit does not
+/// expose a WidgetInfo label to the accessibility tree, so this one snapshot disables the
+/// unnamed-input check; the dialog's buttons and the rest of the screen are still named.
+#[test]
+fn the_open_folder_dialog_takes_a_path() {
+    let (_sessions, _folder, model) = shoot();
+    let bank = bank(&model, &[(160, 32, 32)]);
+    let state = std::cell::RefCell::new(model);
+    let screen = std::cell::RefCell::new(CullScreen::new());
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).with_accessibility_check(false).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let current_id = model.current_photo_id();
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::O);
+    harness.run();
+    harness.snapshot("open-folder-dialog");
 }

@@ -11,10 +11,11 @@
 //! in the middle of.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use egui::{Color32, FontId, Image, Key, RichText, Sense, Stroke, TextureHandle, Vec2, pos2, vec2};
 use firstcut_engine::model::{Model, Phase};
-use firstcut_engine::registry::dispatch;
+use firstcut_engine::registry::{REGISTRY, dispatch};
 use firstcut_types::{Flag, Histogram, Rating, RatingMode, Tier};
 use serde_json::{Value as Json, json};
 
@@ -67,6 +68,13 @@ pub struct CullScreen {
     af_overlay: Option<bool>,
     /// The clipping overlay's session toggle (J), off by default like v1.
     clipping_overlay: bool,
+    /// The File → Open Folder… dialog and its typed path. The app owns opening, so the dialog
+    /// only leaves a request behind (`take_open_request`).
+    open_dialog: bool,
+    open_path: String,
+    open_request: Option<PathBuf>,
+    /// The ? cheat sheet, generated from the registry.
+    cheatsheet: bool,
 }
 
 impl Default for CullScreen {
@@ -88,6 +96,10 @@ impl CullScreen {
             view: ScreenView::Loupe,
             af_overlay: None,
             clipping_overlay: false,
+            open_dialog: false,
+            open_path: String::new(),
+            open_request: None,
+            cheatsheet: false,
         }
     }
 
@@ -103,6 +115,12 @@ impl CullScreen {
         self.zoom > 1.01
     }
 
+    /// The folder the File → Open dialog asked for, if any. The app takes it and runs its own
+    /// asynchronous open; the screen never opens a session itself.
+    pub fn take_open_request(&mut self) -> Option<PathBuf> {
+        self.open_request.take()
+    }
+
     /// Paints one frame. Takes the model mutable because dispatching is this surface's only way
     /// to act, and the keyboard is dispatching.
     pub fn show(&mut self, ui: &mut egui::Ui, model: &mut Model, images: &FrameImages<'_>) {
@@ -110,12 +128,260 @@ impl CullScreen {
         let known: Vec<u64> = model.photos().iter().map(|photo| photo.meta.id.0).collect();
         self.textures.retain(|id, _| known.contains(id));
 
-        match model.phase() {
-            Phase::Welcome => self.show_welcome(ui),
-            // The fast path paints the placeholder through the same culling screen; dispatch
-            // refuses actions until the scan finishes (`canAct` is false).
-            Phase::Loading | Phase::Culling => self.show_culling(ui, model, images),
+        // Global keys work in every phase, including Welcome.
+        let (open, question, command) = ui
+            .ctx()
+            .input(|input| (input.key_pressed(Key::O), input.key_pressed(Key::Questionmark), input.modifiers.command || input.modifiers.ctrl));
+        if open && command {
+            self.open_dialog = true;
         }
+        if question && !self.open_dialog {
+            self.cheatsheet = !self.cheatsheet;
+        }
+
+        self.menu_bar(ui, model);
+        if self.cheatsheet {
+            self.shortcut_screen(ui);
+        } else {
+            match model.phase() {
+                Phase::Welcome => self.show_welcome(ui),
+                // The fast path paints the placeholder through the same culling screen; dispatch
+                // refuses actions until the scan finishes (`canAct` is false).
+                Phase::Loading | Phase::Culling => self.show_culling(ui, model, images),
+            }
+        }
+        self.open_folder_window(ui.ctx());
+    }
+
+    // ---- menus, dialogs, cheat sheet ------------------------------------------------------
+
+    /// The in-window menu bar. Menus dispatch through the registry exactly like the keyboard;
+    /// view toggles are screen state and stay here. The cheat sheet is generated from
+    /// [`REGISTRY`], so a new command cannot appear in the app and stay undocumented.
+    fn menu_bar(&mut self, ui: &mut egui::Ui, model: &mut Model) {
+        let mode = model.settings().rating_mode;
+        let mut actions: Vec<(&'static str, Json)> = Vec::new();
+        let panel = egui::Panel::top("menu-bar").exact_size(26.0).frame(egui::Frame::new().fill(STRIP).inner_margin(4.0));
+        panel.show(ui, |bar| {
+            egui::MenuBar::new().ui(bar, |bar| {
+                bar.menu_button("File", |menu| {
+                    if menu.button("Open Folder…    Cmd+O").clicked() {
+                        self.open_dialog = true;
+                        menu.close();
+                    }
+                    if menu.button("Quit").clicked() {
+                        menu.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                bar.menu_button("Edit", |menu| {
+                    if menu.button("Undo    Cmd+Z").clicked() {
+                        actions.push(("edit.undo", Json::Null));
+                        menu.close();
+                    }
+                    if menu.button("Redo    Shift+Cmd+Z").clicked() {
+                        actions.push(("edit.redo", Json::Null));
+                        menu.close();
+                    }
+                });
+                bar.menu_button("View", |menu| {
+                    if menu.selectable_label(self.view == ScreenView::Loupe, "Loupe    E").clicked() {
+                        self.view = ScreenView::Loupe;
+                        menu.close();
+                    }
+                    if menu.selectable_label(self.view == ScreenView::Grid, "Grid    G").clicked() {
+                        self.view = ScreenView::Grid;
+                        menu.close();
+                    }
+                    if menu.selectable_label(matches!(self.view, ScreenView::Compare(2)), "Compare 2-up    C").clicked() {
+                        self.view = ScreenView::Compare(2);
+                        self.zoom = 1.0;
+                        self.pan = Vec2::ZERO;
+                        menu.close();
+                    }
+                    if menu.button("Compare 3-up    Opt+C").clicked() {
+                        self.view = ScreenView::Compare(3);
+                        self.zoom = 1.0;
+                        self.pan = Vec2::ZERO;
+                        menu.close();
+                    }
+                    if menu.button("Compare 4-up    Shift+Opt+C").clicked() {
+                        self.view = ScreenView::Compare(4);
+                        self.zoom = 1.0;
+                        self.pan = Vec2::ZERO;
+                        menu.close();
+                    }
+                    menu.separator();
+                    if menu.selectable_label(self.info_visible, "Info panel    I").clicked() {
+                        self.info_visible = !self.info_visible;
+                        menu.close();
+                    }
+                    if menu.selectable_label(self.hud_visible, "Progress HUD    H").clicked() {
+                        self.hud_visible = !self.hud_visible;
+                        menu.close();
+                    }
+                    if menu.selectable_label(self.af_overlay.unwrap_or_else(|| model.viewer_settings().af_overlay), "AF points    A").clicked() {
+                        self.af_overlay = Some(!self.af_overlay.unwrap_or_else(|| model.viewer_settings().af_overlay));
+                        menu.close();
+                    }
+                    if menu.selectable_label(self.clipping_overlay, "Clipping    J").clicked() {
+                        self.clipping_overlay = !self.clipping_overlay;
+                        menu.close();
+                    }
+                    menu.separator();
+                    if menu.button("Keyboard Shortcuts    ?").clicked() {
+                        self.cheatsheet = true;
+                        menu.close();
+                    }
+                });
+                bar.menu_button("Photo", |menu| {
+                    if menu.button("Previous Photo    Left").clicked() {
+                        actions.push(("photo.previous", Json::Null));
+                        menu.close();
+                    }
+                    if menu.button("Next Photo    Right").clicked() {
+                        actions.push(("photo.next", Json::Null));
+                        menu.close();
+                    }
+                    if menu.button("Previous Batch    Cmd+Left").clicked() {
+                        actions.push(("batch.previous", Json::Null));
+                        menu.close();
+                    }
+                    if menu.button("Next Batch    Cmd+Right").clicked() {
+                        actions.push(("batch.next", Json::Null));
+                        menu.close();
+                    }
+                    menu.separator();
+                    if menu.button("Pick Flag    P").clicked() {
+                        actions.push(("flag.pick", Json::Null));
+                        menu.close();
+                    }
+                    if menu.button("Reject    X").clicked() {
+                        actions.push(("flag.reject", Json::Null));
+                        menu.close();
+                    }
+                    if menu.button("Unflag    U").clicked() {
+                        actions.push(("flag.clear", Json::Null));
+                        menu.close();
+                    }
+                    if menu.button("Toggle Flag").clicked() {
+                        actions.push(("flag.toggle", Json::Null));
+                        menu.close();
+                    }
+                    if menu.button(if mode == RatingMode::KeepNotKeep { "Keep / Not Keep    P" } else { "Keep    K" }).clicked() {
+                        actions.push(("keep.toggle", Json::Null));
+                        menu.close();
+                    }
+                    menu.menu_button("Color Label", |labels| {
+                        for (name, color) in [
+                            ("Red    6", "red"),
+                            ("Yellow    7", "yellow"),
+                            ("Green    8", "green"),
+                            ("Blue    9", "blue"),
+                            ("Purple", "purple"),
+                            ("None", "none"),
+                        ] {
+                            if labels.button(name).clicked() {
+                                actions.push(("label.set", json!({ "color": color })));
+                                labels.close();
+                            }
+                        }
+                    });
+                    menu.menu_button("Stars", |stars| {
+                        for value in 0..=5u8 {
+                            if stars.button(value.to_string()).clicked() {
+                                actions.push(("rate.stars", json!({ "stars": value })));
+                                stars.close();
+                            }
+                        }
+                    });
+                    menu.separator();
+                    if menu.selectable_label(mode == RatingMode::Stars, "Stars Mode").clicked() {
+                        actions.push(("settings.ratingMode", json!({ "mode": "stars" })));
+                        menu.close();
+                    }
+                    if menu.selectable_label(mode == RatingMode::KeepNotKeep, "Keep / Not Keep Mode").clicked() {
+                        actions.push(("settings.ratingMode", json!({ "mode": "keep" })));
+                        menu.close();
+                    }
+                    if menu.selectable_label(model.auto_advance(), "Auto-advance").clicked() {
+                        actions.push(("settings.autoAdvance.toggle", Json::Null));
+                        menu.close();
+                    }
+                });
+                bar.menu_button("Help", |menu| {
+                    if menu.button("Keyboard Shortcuts    ?").clicked() {
+                        self.cheatsheet = true;
+                        menu.close();
+                    }
+                });
+            });
+        });
+        for (id, params) in actions {
+            let _ = dispatch(model, id, &params);
+        }
+    }
+
+    /// File → Open Folder…: a typed path, because the native picker is the app's business. The
+    /// request is handed back asynchronously so a big shoot never blocks a paint.
+    fn open_folder_window(&mut self, ctx: &egui::Context) {
+        if !self.open_dialog {
+            return;
+        }
+        let mut open = true;
+        let mut submit = false;
+        egui::Window::new("Open Folder").collapsible(false).resizable(false).open(&mut open).show(ctx, |window| {
+            if window.input(|input| input.key_pressed(Key::Escape)) {
+                self.open_dialog = false;
+            }
+            window.label(RichText::new("Shoot folder").small().weak());
+            let edit = window.add(egui::TextEdit::singleline(&mut self.open_path).hint_text("Folder path"));
+            edit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Folder path"));
+            if edit.lost_focus() && window.input(|input| input.key_pressed(Key::Enter)) {
+                submit = true;
+            }
+            window.horizontal(|row| {
+                if row.button("Open").clicked() {
+                    submit = true;
+                }
+                if row.button("Cancel").clicked() {
+                    self.open_dialog = false;
+                }
+            });
+        });
+        if submit {
+            let path = self.open_path.trim();
+            if !path.is_empty() {
+                self.open_request = Some(PathBuf::from(path));
+            }
+            self.open_dialog = false;
+        } else {
+            self.open_dialog = open;
+        }
+    }
+
+    /// The ? cheat sheet: one row per registry command, with the default shortcut the UI binds
+    /// to it. Empty shortcuts are commands without a key (menus, control channel, MCP). It is a
+    /// screen of its own, so long lists never fight the window or panel layout.
+    fn shortcut_screen(&mut self, ui: &mut egui::Ui) {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND).inner_margin(18.0)).show(ui, |panel| {
+            panel.horizontal(|row| {
+                row.heading(RichText::new("Keyboard Shortcuts").color(FOREGROUND));
+                row.add_space(12.0);
+                if row.button("Close  ?").clicked() || row.input(|input| input.key_pressed(Key::Escape)) {
+                    self.cheatsheet = false;
+                }
+            });
+            panel.add_space(10.0);
+            egui::ScrollArea::vertical().show(panel, |list| {
+                for command in REGISTRY {
+                    list.horizontal(|row| {
+                        row.add_sized(vec2(110.0, 16.0), egui::Label::new(RichText::new(shortcut_for(command.id)).monospace().small().color(ACCENT)));
+                        row.add(egui::Label::new(RichText::new(command.description).small().color(FOREGROUND)).wrap());
+                    });
+                    list.add_space(2.0);
+                }
+            });
+        });
     }
 
     fn show_welcome(&self, ui: &mut egui::Ui) {
@@ -797,6 +1063,41 @@ fn select_photo(model: &mut Model, batch_index: usize, photo_index: usize) {
         walked += 1;
     }
     let _ = dispatch(model, "photo.goto", &json!({ "index": photo_index }));
+}
+
+/// The default key(s) the UI binds to a registry command. Commands with no key (control channel,
+/// MCP, internal helpers) answer the empty string on purpose: the cheat sheet still lists them.
+fn shortcut_for(id: &str) -> &'static str {
+    match id {
+        "file.open" => "Cmd+O",
+        "photo.previous" => "Left",
+        "photo.next" => "Right",
+        "photo.goto" => "",
+        "batch.previous" => "Cmd+Left",
+        "batch.next" => "Cmd+Right",
+        "batch.jump" => "double-click",
+        "rate.stars" => "0 - 5",
+        "rate.starsAndAdvance" => "Shift+0 - Shift+5",
+        "flag.pick" => "P (stars mode)",
+        "flag.reject" => "X",
+        "flag.clear" => "U",
+        "flag.toggle" => "`",
+        "keep.set" => "",
+        "keep.unset" => "",
+        "keep.toggle" => "P (keep mode)",
+        "label.set" => "6 7 8 9",
+        "batch.reject" => "Shift+X",
+        "edit.undo" => "Cmd+Z",
+        "edit.redo" => "Shift+Cmd+Z",
+        "settings.ratingMode" => "",
+        "settings.autoAdvance" => "Caps Lock",
+        "settings.autoAdvance.toggle" => "Caps Lock",
+        "settings.arrowsAtBatchEnd" => "",
+        "settings.keepStars" => "",
+        "engine.state" => "",
+        "engine.commands" => "",
+        _ => "",
+    }
 }
 
 /// One grid cell: the decoded thumbnail (or the honest slot), the name and stars. The current

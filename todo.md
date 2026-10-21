@@ -328,10 +328,14 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - **Overlays:** A shows the in-focus AF boxes mapped through EXIF orientation, J marks
 >   highlight/shadow clipping from the display pixels using the Viewer thresholds.
 >   Snapshot `culling-clipping.png` plus the mapping/clip unit tests.
-> - **M3 remaining** — batch
->   navigation (⌘←/→, double-click jump), zoom lock, AF/clipping overlays, keymap recorder,
->   menus, Welcome recents/resume, Settings screens, error alerts. Live watch + flush-on-quit
->   already landed in M2.
+> - **Toolbar + menus:** the toolbar carries ‹/› batch nav, the folder/batch title, Stars/Keep,
+>   Loupe/Grid/Compare/Info. The in-window menu bar (File/Edit/View/Photo/Help) dispatches the
+>   same registry commands as the keys; File → Open Folder… gathers a typed path and the app
+>   opens it asynchronously (`take_open_request`). The ? cheat sheet is generated from
+>   `REGISTRY`; snapshots `culling-shortcuts.png` and `open-folder-dialog.png`.
+> - **M3 remaining** — Welcome recents/resume, the Settings screens, the keyboard recorder with
+>   keymap import/export, the Reject Whole Batch dialog, and error alerts. Live watch +
+>   flush-on-quit already landed in M2.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).

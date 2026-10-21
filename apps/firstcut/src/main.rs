@@ -307,6 +307,10 @@ impl eframe::App for Shell {
             display: &self.bank.displays,
         };
         self.screen.show(ui, &mut self.model, &images);
+        // File → Open Folder… leaves a request; opening is the app's async job.
+        if let Some(folder) = self.screen.take_open_request() {
+            self.start_open(folder);
+        }
 
         self.frames_painted += 1;
         // `--smoke`: prove the window exists and paints, then close cleanly.
