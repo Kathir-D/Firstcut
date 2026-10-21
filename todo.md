@@ -183,18 +183,23 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-21 (v2, M3 feature-complete on local gates — the M3 milestone gate is next).**
+> **As of 2026-10-21 (v2, M3 CLOSED — local gate and the 3-OS matrix both green; M4 is next).**
 > The `v2` branch is the pure-Rust rewrite (**`docs/v2-plan.md` is its contract**; agent rules
 > live in the rewritten `AGENTS.md`). Milestone state:
 >
 > - **Draft PR open: `v2` → `main` is https://github.com/Kathir-D/Firstcut/pull/6** — stays a draft
 >   until the owner moves it; the owner merges, never an agent.
-> - **Where this session stopped:** working tree clean; the tip is the keymap commit (Settings
->   screens + keyboard recorder/import/export). Every commit passed fmt, workspace clippy
->   `-D warnings`, `cargo xtask layers`, and `cargo test --workspace` (458+ tests, snapshots
->   included). **Next action:** the M3 milestone gate — run full `cargo xtask ci` on this
->   machine, push, then watch the 3-OS workflow for the new tip. Green closes M3 and M4 (Finish
->   Cull) starts. Nothing is blocked; the Exact RAW §5 gate still waits on the owner.
+> - **Where this session stopped:** working tree clean; the tip is the keymap work plus the
+>   snapshot-tolerance fix. **M3 gate GREEN:** `cargo xtask ci` passed locally on `7127ac0`
+>   (target/ci/summary.md) and the 3-OS matrix passed on `239b06b` (run 39683964460: macos,
+>   windows, ubuntu all success, `cargo xtask smoke` included). The Linux failure on the two
+>   keymap-era commits was diagnosed, not retried away: all three failing snapshots had **zero**
+>   pixels above 2/255, i.e. Metal-vs-Linux antialiasing, so `kittest.toml` now carries a
+>   reviewed 2/255 colour tolerance with no failed-pixel allowance (plan §9).
+> - **Next action: M4 — Finish Cull** (summary → options → dry run → typed DELETE → report →
+>   undo), then Reject Whole Batch's remaining reconciliation edges, sidecar import at every
+>   open + rescan, rename reconciliation, cross-volume copy safety. Nothing is blocked; the
+>   Exact RAW §5 gate still waits on the owner.
 > - **CI matrix fully GREEN, including Windows, for the first time (run 39456083872, on
 >   `7a6e9a2`).** The windows chain was unmasked one failure at a time: ext4 inode reuse needed
 >   `same_file` size corroboration (`233bd5f`), a failing `sessions_dir()` needed the same
@@ -361,9 +366,9 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   map. Snapshot `settings-keyboard.png`; the harness test re-reads the file and checks that the
 >   new chord routes while the replaced one does not. egui cannot see Caps Lock, so v1's Caps
 >   Lock default stays in the file but never fires (plan §4.4).
-> - **M3 is now feature-complete on local gates.** Next: the M3 milestone gate — full
->   `cargo xtask ci` on this machine and the 3-OS workflow on the pushed tip — then M4 (Finish
->   Cull). Live watch + flush-on-quit landed in M2.
+> - **M3 CLOSED (2026-10-21):** local `cargo xtask ci` green and the 3-OS matrix green on
+>   `239b06b` (run 39683964460). All M3 screens, the keymap/recorder and Settings are in. Next
+>   is M4 (Finish Cull). Live watch + flush-on-quit landed in M2.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).
