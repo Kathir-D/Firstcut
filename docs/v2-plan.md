@@ -187,6 +187,12 @@ and persistence, session backend calls (the v1 UniFFI conversion layer collapses
 Rust), Finish Cull flow (summary → options → dry run → typed DELETE → report → undo),
 live folder watching, flush on quit, welcome/recents/resume.
 
+- **Recent shoots (M3) have no `recents.json`.** Each shoot's session database already carries its
+  folder, photo count and last-open time, and reopening it restores the cursor, so the Welcome
+  list is a read-only sweep of `Sessions/*.sqlite` (`firstcut-catalog/src/recents.rs`). A folder
+  that has gone is not offered and an unreadable database is skipped; choosing a row is the same
+  asynchronous `Session::open_in` path as the File → Open dialog.
+
 ### 4.5 Safety rules (AGENTS.md carries these verbatim in spirit)
 
 - **Never crash outranks feature work.** Non-test code: no `unwrap()`, `expect()`, `panic!`,

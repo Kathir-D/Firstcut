@@ -158,6 +158,11 @@ impl Shell {
             sessions_dir: firstcut_catalog::sessions_dir().ok(),
             open_job: None,
         };
+        // The Welcome screen lists the shoots already in this sessions directory; a folder
+        // argument still wins and opens immediately.
+        if let Some(dir) = shell.sessions_dir.clone() {
+            shell.model.attach_sessions_dir(&dir);
+        }
         if let Some(folder) = folder {
             shell.start_open(folder);
         }

@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use firstcut_batching::batch::visual::VisualSig;
 use firstcut_batching::batch::{Batch, BatchId, batch_id};
+use firstcut_catalog::recents::RecentShoot;
 use firstcut_meta::meta::PhotoMeta;
 use firstcut_types::{ColorLabel, Flag, PhotoId, Rating, RatingMode, Tier};
 
@@ -142,6 +143,11 @@ pub struct Model {
     /// Thumbnails that finished while the full scan was still running: there is no `Session` to
     /// submit them to yet, so they wait here and are handed over by [`Model::load_session`].
     pending_signatures: Vec<(PhotoId, VisualSig)>,
+    /// Recent shoots for the Welcome screen, read from the session databases.
+    recents: Vec<RecentShoot>,
+    /// Where those databases live. The app attaches it at construction; `open_folder_in` records
+    /// the directory it was handed, so the CLI and tests get the list without extra wiring.
+    sessions_dir: Option<PathBuf>,
 }
 
 impl Model {
@@ -164,6 +170,27 @@ impl Model {
             settings_store: None,
             catalog_revision: 0,
             pending_signatures: Vec::new(),
+            recents: Vec::new(),
+            sessions_dir: None,
+        }
+    }
+
+    /// Points the Welcome screen at the sessions directory and loads its recent shoots. Safe to
+    /// call before any shoot is open; a missing directory just means an empty list.
+    pub fn attach_sessions_dir(&mut self, sessions_dir: &Path) {
+        self.sessions_dir = Some(sessions_dir.to_path_buf());
+        self.refresh_recents();
+    }
+
+    /// The Welcome screen's list, newest first. `firstcut_catalog::recents::list` owns the rules
+    /// (a vanished folder is not offered, an unreadable database is skipped).
+    pub fn recents(&self) -> &[RecentShoot] {
+        &self.recents
+    }
+
+    fn refresh_recents(&mut self) {
+        if let Some(dir) = self.sessions_dir.as_deref() {
+            self.recents = firstcut_catalog::recents::list(dir, 8);
         }
     }
 
@@ -364,8 +391,10 @@ impl Model {
         self.settings.keep_stars = clamp_keep_stars(session.keep_stars());
         self.folder = Some(folder.to_path_buf());
         self.folder_name = folder.file_name().map_or_else(|| folder.to_string_lossy().to_string(), |name| name.to_string_lossy().to_string());
+        self.sessions_dir = Some(sessions_dir.to_path_buf());
         self.load_session(session);
         self.drain_session_messages();
+        self.refresh_recents();
         Ok(())
     }
 
@@ -399,6 +428,7 @@ impl Model {
     /// thread; the model only swaps the catalog when it arrives.
     pub fn finish_open(&mut self, session: Session) {
         self.load_session(session);
+        self.refresh_recents();
     }
 
     /// The scan failed after the placeholder painted: back to Welcome, with the reason kept.
@@ -990,6 +1020,36 @@ mod tests {
         assert_eq!(model.phase(), Phase::Welcome);
         assert!(model.photos().is_empty());
         assert_eq!(model.last_error(), Some("boom"));
+    }
+
+    #[test]
+    fn an_opened_shoot_is_a_recent_and_reopening_it_resumes_the_cursor() {
+        let sessions = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        for index in 1..=3u32 {
+            std::fs::write(folder.path().join(format!("IMG_000{index}.CR3")), synthetic(index)).unwrap();
+        }
+        let mut model = Model::new();
+        model.open_folder_in(folder.path(), sessions.path()).unwrap();
+        model.go_to_photo(1);
+        let cursor = model.current_photo_id().expect("the shoot has photographs");
+
+        let recents = model.recents();
+        assert_eq!(recents.len(), 1, "the opened shoot is the one recent");
+        assert_eq!(recents.first().map(|shoot| shoot.name.as_str()), Some(folder.path().file_name().unwrap().to_str().unwrap()));
+        assert_eq!(recents.first().map(|shoot| shoot.photo_count), Some(3));
+        assert_eq!(
+            std::fs::canonicalize(&recents[0].folder).unwrap_or_else(|_| recents[0].folder.clone()),
+            std::fs::canonicalize(folder.path()).unwrap()
+        );
+
+        // A fresh process (a new model) sees the list from the same sessions directory, and
+        // opening the folder is all "resume" has to do: the database restores the cursor.
+        let mut reopened = Model::new();
+        reopened.attach_sessions_dir(sessions.path());
+        assert_eq!(reopened.recents().len(), 1);
+        reopened.open_folder_in(&reopened.recents()[0].folder.clone(), sessions.path()).unwrap();
+        assert_eq!(reopened.current_photo_id(), Some(cursor), "the cursor comes back with the shoot");
     }
 
     #[test]

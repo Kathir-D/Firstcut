@@ -197,3 +197,31 @@ fn the_open_folder_dialog_takes_a_path() {
     harness.run();
     harness.snapshot("open-folder-dialog");
 }
+
+/// The Welcome screen lists the shoots the sessions directory already knows and leaves an open
+/// request when one is chosen; the engine owns the open, so the screen never touches a Session.
+#[test]
+fn the_welcome_screen_lists_recent_shoots_and_asks_to_resume() {
+    let (sessions, _root, _opened) = shoot();
+    let mut model = Model::new();
+    model.attach_sessions_dir(sessions.path());
+    assert_eq!(model.phase(), firstcut_engine::model::Phase::Welcome);
+    assert_eq!(model.recents().len(), 1);
+    let state = std::cell::RefCell::new(model);
+    let screen = std::cell::RefCell::new(CullScreen::new());
+    let empty = HashMap::new();
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let images = FrameImages { current: None, thumbs: &empty, histogram: None, display: &empty };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.snapshot("welcome-recents");
+    harness.get_by_label("Game1JENKS   ·   3 photos").click();
+    harness.run();
+    let requested = screen.borrow_mut().take_open_request().expect("choosing a recent asks the app to open it");
+    assert!(requested.ends_with("Game1JENKS"), "the request is the shoot folder, got {}", requested.display());
+}

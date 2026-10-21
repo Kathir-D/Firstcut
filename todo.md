@@ -333,9 +333,13 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   same registry commands as the keys; File → Open Folder… gathers a typed path and the app
 >   opens it asynchronously (`take_open_request`). The ? cheat sheet is generated from
 >   `REGISTRY`; snapshots `culling-shortcuts.png` and `open-folder-dialog.png`.
-> - **M3 remaining** — Welcome recents/resume, the Settings screens, the keyboard recorder with
->   keymap import/export, the Reject Whole Batch dialog, and error alerts. Live watch +
->   flush-on-quit already landed in M2.
+> - **Welcome recents + resume:** the Welcome phase lists up to eight shoots already in the
+>   sessions directory, read from the session databases themselves (no recents file); choosing
+>   one asks the app to open it, and the database restores the cursor. Snapshot
+>   `welcome-recents.png`; the engine test reopens the shoot and finds the same cursor.
+> - **M3 remaining** — the Settings screens, the keyboard recorder with keymap import/export,
+>   the Reject Whole Batch dialog, and error alerts. Live watch + flush-on-quit already landed
+>   in M2.
 > - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
 >   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
 >   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).

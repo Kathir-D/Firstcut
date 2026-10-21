@@ -144,7 +144,7 @@ impl CullScreen {
             self.shortcut_screen(ui);
         } else {
             match model.phase() {
-                Phase::Welcome => self.show_welcome(ui),
+                Phase::Welcome => self.show_welcome(ui, model),
                 // The fast path paints the placeholder through the same culling screen; dispatch
                 // refuses actions until the scan finishes (`canAct` is false).
                 Phase::Loading | Phase::Culling => self.show_culling(ui, model, images),
@@ -384,13 +384,39 @@ impl CullScreen {
         });
     }
 
-    fn show_welcome(&self, ui: &mut egui::Ui) {
+    /// The Welcome screen (todo.md §9.6): a whole-window phase, never an overlay on the culling
+    /// chrome. Recent shoots come from the session databases; choosing one leaves an open request
+    /// for the app, exactly like the File → Open dialog, and the database restores the cursor.
+    fn show_welcome(&mut self, ui: &mut egui::Ui, model: &Model) {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND)).show(ui, |panel| {
             panel.vertical_centered(|panel| {
-                panel.add_space(panel.available_height() / 2.0 - 40.0);
+                panel.add_space(56.0);
                 panel.heading(RichText::new("Firstcut").color(FOREGROUND));
                 panel.add_space(8.0);
                 panel.label(RichText::new("Open a shoot folder to start culling").weak());
+                panel.add_space(12.0);
+                if panel.button(RichText::new("Open Folder…")).clicked() {
+                    self.open_dialog = true;
+                }
+                if let Some(error) = model.last_error() {
+                    panel.add_space(12.0);
+                    panel.label(RichText::new(error).small().color(Color32::from_rgb(240, 128, 128)));
+                }
+
+                let recents = model.recents();
+                if !recents.is_empty() {
+                    panel.add_space(30.0);
+                    panel.label(RichText::new("Recent shoots").strong().color(FOREGROUND));
+                    panel.add_space(6.0);
+                    for shoot in recents {
+                        let title = format!("{}   ·   {} photos", shoot.name, shoot.photo_count);
+                        let button = egui::Button::new(RichText::new(title).color(FOREGROUND)).min_size(vec2(380.0, 34.0));
+                        if panel.add(button).on_hover_text(shoot.folder.display().to_string()).clicked() {
+                            self.open_request = Some(shoot.folder.clone());
+                        }
+                        panel.add_space(4.0);
+                    }
+                }
             });
         });
     }
