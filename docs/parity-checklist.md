@@ -1,6 +1,6 @@
 # v2 parity checklist — the merge gate, mirrored (docs/v2-plan.md §7)
 
-> Status, honest as of 2026-10-22, M3 closed and M4 (Finish) in progress. Rows that moved carry their test names. Each row says where
+> Status, honest as of 2026-10-22, M4 closed (Finish + persistence edges) and M5 (cross-platform hardening) next. Rows that moved carry their test names. Each row says where
 > its work happens (or landed), and — once a row is true — the named test that proves it.
 > **Struck-through = proven by a named test** (§7's rule); a row without ✔ still needs the
 > work or the owner's eyes. A status number (Mn) is the milestone whose work owns the row:
