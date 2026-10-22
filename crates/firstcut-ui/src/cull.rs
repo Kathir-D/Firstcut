@@ -583,22 +583,34 @@ impl CullScreen {
             self.reject_dialog = false;
             return;
         }
-        let Some((count, index)) = model.current_batch().map(|batch| (batch.photo_ids.len(), batch.index)) else {
+        let Some((unrated, index)) = model.current_batch().map(|batch| {
+            let unrated = batch.photo_ids.iter().filter(|id| model.photo(**id).is_some_and(|photo| photo.rating.is_neutral())).count();
+            (unrated, batch.index)
+        }) else {
             self.reject_dialog = false;
             return;
         };
         let mut open = true;
         let mut confirmed = false;
         egui::Window::new("Reject Whole Batch").collapsible(false).resizable(false).open(&mut open).show(ctx, |window| {
-            window.label(RichText::new(format!("Reject all {count} photos in batch {}?", index + 1)).color(FOREGROUND));
-            window.add_space(4.0);
-            window.label(RichText::new("This flags them; nothing leaves the disk until Finish. One undo takes the whole batch back.").small().weak());
+            if unrated == 0 {
+                window.label(RichText::new(format!("Batch {} has no unrated photos.", index + 1)).color(FOREGROUND));
+                window.add_space(4.0);
+                window.label(RichText::new("Reject Whole Batch only flags photos nobody has rated yet; your ratings are left alone.").small().weak());
+            } else {
+                let noun = if unrated == 1 { "photo" } else { "photos" };
+                window.label(RichText::new(format!("Reject {unrated} unrated {noun} in batch {}?", index + 1)).color(FOREGROUND));
+                window.add_space(4.0);
+                window.label(
+                    RichText::new("This flags them; nothing leaves the disk until Finish. One undo takes the whole batch back.").small().weak(),
+                );
+            }
             window.add_space(8.0);
             window.horizontal(|row| {
                 if row.button("Cancel").clicked() {
                     self.reject_dialog = false;
                 }
-                if row.button(RichText::new("Reject Batch").color(Color32::from_rgb(240, 128, 128))).clicked() {
+                if row.add_enabled(unrated > 0, egui::Button::new(RichText::new("Reject Batch").color(Color32::from_rgb(240, 128, 128)))).clicked() {
                     confirmed = true;
                 }
             });

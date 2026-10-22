@@ -1220,6 +1220,9 @@ impl Model {
             .photo_ids
             .iter()
             .filter_map(|id| self.photo(*id).map(|photo| (*id, photo.rating)))
+            // v1's rule (`rejectCurrentBatch`): only photos nobody has rated yet. A batch that is
+            // half culled must not have its Good or 3-star calls flattened to Rejected.
+            .filter(|(_, rating)| rating.is_neutral())
             .map(|(id, rating)| (id, Rating { flag: Flag::Reject, ..rating }))
             .filter(|(id, updated)| self.photo(*id).is_some_and(|photo| photo.rating != *updated))
             .collect();
@@ -1514,6 +1517,30 @@ mod tests {
 
         assert!(model.undo(), "the whole batch is one step");
         assert!(model.photos().iter().all(|photo| photo.rating.flag != Flag::Reject), "one undo takes the batch back");
+    }
+
+    /// v1's rule: Reject Whole Batch only touches frames nobody has rated yet. A half-culled
+    /// batch must keep its Good calls and star ratings.
+    #[test]
+    fn a_whole_batch_reject_leaves_photos_that_were_already_rated_alone() {
+        let sessions = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        for index in 1..=3u32 {
+            std::fs::write(folder.path().join(format!("IMG_000{index}.CR3")), synthetic(index)).unwrap();
+        }
+        let mut model = Model::new();
+        model.open_folder_in(folder.path(), sessions.path()).unwrap();
+        model.set_reject_whole_batch(true);
+        model.rate_stars(3);
+        assert!(model.photos().iter().any(|photo| photo.rating.stars == 3));
+
+        assert!(model.reject_current_batch());
+        assert_eq!(model.photos().iter().filter(|photo| photo.rating.flag == Flag::Reject).count(), 2);
+        let rated = model.photos().iter().find(|photo| photo.rating.stars == 3).expect("the rated frame stays");
+        assert_eq!(rated.rating.flag, Flag::None, "an already-rated frame is not rejected");
+
+        assert!(model.undo(), "the two flags undo as one step");
+        assert!(model.photos().iter().all(|photo| photo.rating.flag == Flag::None));
     }
 
     #[test]

@@ -367,7 +367,7 @@ fn general_tab(body: &mut egui::Ui, model: &mut Model) {
     });
 
     section(body, "SAFETY");
-    changed |= body.checkbox(&mut general.reject_whole_batch, "Allow rejecting a whole batch (Shift+X asks first)").changed();
+    changed |= body.checkbox(&mut general.reject_whole_batch, "Allow Reject Whole Batch (Shift+X flags unrated photos only)").changed();
 
     section(body, "FINISH CULL");
     changed |= body.checkbox(&mut general.confirm_before_finish, "Confirm before opening the Finish sheet").changed();
