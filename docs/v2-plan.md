@@ -415,10 +415,12 @@ carried over, unchanged in substance):
   - Never skip a failing test: a failure is either diagnosed before the next commit, or the
     milestone report names it with the reason. Push after every commit regardless — a red
     fix follows as its own small commit.
-  - UI snapshots compare with a **2/255 per-channel tolerance** (`kittest.toml`): macOS
-    Metal and Linux rasterise the same layout with different antialiasing, which was a
-    handful of pixels at ≤ 2.0 after M3. It is a colour tolerance, not a failed-pixel
-    budget — a moved edge still fails.
+  - UI snapshots compare with a **2.0 weighted-YIQ per-pixel tolerance** (`kittest.toml`):
+    macOS Metal and Linux rasterise the same layout with different antialiasing, which was a
+    handful of pixels at ≤ 2.0 after M3. M4's Settings → General snapshot (the Finish section)
+    found three glyph-edge pixels just past 2.0 on Linux only, so Linux carries a **3.0**
+    ceiling; macOS and Windows stay at 2.0. It is a colour tolerance, not a failed-pixel
+    budget — a moved edge still fails, and `max_failed_pixels` is zero on every OS.
 - GitNexus `detect_changes` (`--scope all`) before committing; `detect_changes --scope
   compare --base-ref main` before qualifying the merge.
 - Real-photo tests stay opt-in (`FIRSTCUT_TEST_PHOTOS`, `FIRSTCUT_ALLOW_PHOTO_TESTS=1`);
