@@ -204,6 +204,15 @@ live folder watching, flush on quit, welcome/recents/resume.
   Caps Lock transition, so v1's default Caps Lock binding for `settings.autoAdvance.toggle`
   round-trips through the file but never fires (record another key); egui reports keypad Enter
   as Return, so both default `cull.finish` chords resolve to the same event.
+- **Finish Cull (M4) is a typed stage machine in the engine.** `firstcut-engine::finish::FinishStage`
+  carries confirm → summary → options → dry run → report/failed; the model builds the dry run with
+  `Session::plan_finish` and walks it with the logged `Session::execute_finish`, so the UI cannot
+  re-decide what a keep is or skip the typed gate. Two deliberate differences from a literal v1
+  transcription: there is no painted `executing` screen (execution is synchronous, as v1's backend
+  call was, so the screen would never render), and the typed `DELETE` is enforced inside
+  `Model::execute_finish` as well as in the sheet, because `finish.execute` is reachable from the
+  CLI and the control channel. The sheet's defaults live in Settings → General; a run that moves
+  every photo out returns to Welcome when the sheet closes.
 - **Recent shoots (M3) have no `recents.json`.** Each shoot's session database already carries its
   folder, photo count and last-open time, and reopening it restores the cursor, so the Welcome
   list is a read-only sweep of `Sessions/*.sqlite` (`firstcut-catalog/src/recents.rs`). A folder

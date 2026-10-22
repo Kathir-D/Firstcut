@@ -19,6 +19,7 @@ use firstcut_engine::settings::{InfoFieldJson, KeepMappingJson, MetadataJson, Pe
 use firstcut_types::RatingMode;
 
 use crate::cull::{VIEW_COMMANDS, chord_from_event, command_description};
+use crate::finish_sheet::{KeptKind, UnkeptKind, kept_kind_of, kept_path, unkept_folder, unkept_kind_of};
 
 const FOREGROUND: Color32 = Color32::from_rgb(232, 232, 236);
 const ACCENT: Color32 = Color32::from_rgb(244, 200, 0);
@@ -333,7 +334,7 @@ fn section(body: &mut egui::Ui, title: &str) {
 }
 
 fn general_tab(body: &mut egui::Ui, model: &mut Model) {
-    let mut general = *model.settings();
+    let mut general = model.settings().clone();
     let mut changed = false;
 
     section(body, "RATING");
@@ -367,6 +368,57 @@ fn general_tab(body: &mut egui::Ui, model: &mut Model) {
 
     section(body, "SAFETY");
     changed |= body.checkbox(&mut general.reject_whole_batch, "Allow rejecting a whole batch (Shift+X asks first)").changed();
+
+    section(body, "FINISH CULL");
+    changed |= body.checkbox(&mut general.confirm_before_finish, "Confirm before opening the Finish sheet").changed();
+    changed |= body.checkbox(&mut general.confirm_permanent_delete, "Ask for the typed word when a Finish run deletes permanently").changed();
+    body.add_space(4.0);
+
+    // Defaults for the sheet's own choices. Changing one here never changes an open sheet; the
+    // sheet seeds from these when it opens, exactly like v1's `showFinishOptions`.
+    body.label(RichText::new("Not-kept photos").small().weak());
+    let mut unkept_kind = unkept_kind_of(&general.finish_unkept);
+    let mut folder = unkept_folder(&general.finish_unkept);
+    for (kind, _) in
+        [(UnkeptKind::MarkRejected, ""), (UnkeptKind::Subfolder, ""), (UnkeptKind::Trash, ""), (UnkeptKind::Delete, ""), (UnkeptKind::Nothing, "")]
+    {
+        changed |= body.radio_value(&mut unkept_kind, kind, kind.title()).changed();
+    }
+    if unkept_kind == UnkeptKind::Subfolder {
+        body.horizontal(|row| {
+            row.label("Subfolder");
+            changed |= row.add(egui::TextEdit::singleline(&mut folder).hint_text("_Not kept").desired_width(220.0)).changed();
+        });
+    }
+    if unkept_kind != unkept_kind_of(&general.finish_unkept) || folder != unkept_folder(&general.finish_unkept) {
+        general.finish_unkept = unkept_kind.apply(&folder);
+        changed = true;
+    }
+
+    body.add_space(4.0);
+    body.label(RichText::new("Kept photos").small().weak());
+    let mut kept_kind = kept_kind_of(&general.finish_kept);
+    let mut path = kept_path(&general.finish_kept);
+    for (kind, _) in [
+        (KeptKind::None, ""),
+        (KeptKind::Copy, ""),
+        (KeptKind::Move, ""),
+        (KeptKind::SplitTier, ""),
+        (KeptKind::SplitStars, ""),
+        (KeptKind::List, ""),
+    ] {
+        changed |= body.radio_value(&mut kept_kind, kind, kind.title()).changed();
+    }
+    if kept_kind != KeptKind::None {
+        body.horizontal(|row| {
+            row.label("Destination");
+            changed |= row.add(egui::TextEdit::singleline(&mut path).hint_text("Destination path").desired_width(220.0)).changed();
+        });
+    }
+    if kept_kind != kept_kind_of(&general.finish_kept) || path != kept_path(&general.finish_kept) {
+        general.finish_kept = kept_kind.apply(&path);
+        changed = true;
+    }
 
     if changed {
         model.set_general_settings(general);

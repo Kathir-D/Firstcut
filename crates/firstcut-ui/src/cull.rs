@@ -21,6 +21,7 @@ use firstcut_types::{Flag, Histogram, Rating, RatingMode, Tier};
 use serde_json::{Value as Json, json};
 
 use crate::FrameImages;
+use crate::finish_sheet::FinishSheet;
 use crate::settings_screen::SettingsScreen;
 
 /// v1's viewer background (Settings → Viewer → backgroundGray): 0.12 on the grey ramp.
@@ -89,6 +90,8 @@ pub struct CullScreen {
     /// Shift+X's confirmation, and the batch it will flag if confirmed. The engine owns the
     /// command; this only asks first (v1's `rejectBatch` sheet).
     reject_dialog: bool,
+    /// The Finish Cull sheet. The engine owns the stage; this holds the typed word between frames.
+    finish_sheet: FinishSheet,
 }
 
 impl Default for CullScreen {
@@ -119,6 +122,7 @@ impl CullScreen {
             hud_initialized: false,
             escape_consumed: false,
             reject_dialog: false,
+            finish_sheet: FinishSheet::default(),
         }
     }
 
@@ -160,7 +164,12 @@ impl CullScreen {
             self.settings.visible = false;
             self.escape_consumed = true;
         }
-        if question && !self.open_dialog && !self.settings.visible {
+        // The Finish sheet is modal: Escape closes it before anything behind it sees the key.
+        if escape && !self.settings.visible && model.finish_stage().is_visible() {
+            let _ = dispatch(model, "finish.cancel", &Json::Null);
+            self.escape_consumed = true;
+        }
+        if question && !self.open_dialog && !self.settings.visible && !model.finish_stage().is_visible() {
             self.cheatsheet = !self.cheatsheet;
         }
 
@@ -183,6 +192,7 @@ impl CullScreen {
             }
         }
         self.settings.show(ui.ctx(), model);
+        self.finish_sheet.show(ui.ctx(), model);
         self.error_alert(ui.ctx(), model);
         self.open_folder_window(ui.ctx());
         self.escape_consumed = false;
@@ -228,6 +238,14 @@ impl CullScreen {
                         self.open_dialog = true;
                         menu.close();
                     }
+                    if menu
+                        .add_enabled(model.can_act() && !model.batches().is_empty(), egui::Button::new(label("cull.finish", None, "Finish Cull…")))
+                        .clicked()
+                    {
+                        actions.push(("cull.finish", Json::Null));
+                        menu.close();
+                    }
+                    menu.separator();
                     if menu.button(label("settings.open", None, "Settings…")).clicked() {
                         self.settings.visible = true;
                         menu.close();
@@ -510,7 +528,7 @@ impl CullScreen {
         // The keymap is the only door for a keystroke. While Settings, the open dialog or the
         // reject confirmation is up the keys are inert: typing a path must not rate the photo
         // behind it. Escape is not a binding; it always leaves the current view.
-        let keys = !self.settings.visible && !self.open_dialog && !self.reject_dialog;
+        let keys = !self.settings.visible && !self.open_dialog && !self.reject_dialog && !model.finish_stage().is_visible();
         if !self.escape_consumed && ui.ctx().input(|input| input.key_pressed(Key::Escape)) && self.view != ScreenView::Loupe {
             self.view = ScreenView::Loupe;
             self.zoom = 1.0;
@@ -761,6 +779,7 @@ impl CullScreen {
         let mut chosen_mode = None;
         let mut chosen_view = None;
         let mut toggle_info = false;
+        let mut finish = false;
         egui::Panel::top("toolbar").exact_size(38.0).frame(egui::Frame::new().fill(STRIP).inner_margin(8.0)).show(ui, |bar| {
             bar.horizontal(|bar| {
                 if bar.button(RichText::new("‹").size(18.0)).on_hover_text("Previous batch").clicked() {
@@ -773,6 +792,15 @@ impl CullScreen {
                 bar.label(RichText::new(&folder).small().weak());
                 bar.label(RichText::new(title).strong().color(FOREGROUND));
                 bar.with_layout(egui::Layout::right_to_left(egui::Align::Center), |bar| {
+                    let ready = model.can_act() && !model.batches().is_empty();
+                    let finish_label = model
+                        .keymap()
+                        .primary_label("cull.finish", None, mode)
+                        .map_or_else(|| "Finish".to_string(), |chord| format!("Finish    {chord}"));
+                    if bar.add_enabled(ready, egui::Button::new(RichText::new(finish_label).small().color(FOREGROUND))).clicked() {
+                        finish = true;
+                    }
+                    bar.add_space(10.0);
                     if bar.selectable_label(self.info_visible, RichText::new("Info").small().color(FOREGROUND)).clicked() {
                         toggle_info = true;
                     }
@@ -801,6 +829,9 @@ impl CullScreen {
         }
         if let Some(mode) = chosen_mode {
             let _ = dispatch(model, "settings.ratingMode", &json!({ "mode": mode.as_str() }));
+        }
+        if finish {
+            let _ = dispatch(model, "cull.finish", &Json::Null);
         }
         if let Some(view) = chosen_view {
             if matches!(view, ScreenView::Compare(_)) || matches!(self.view, ScreenView::Compare(_)) {
@@ -1355,9 +1386,9 @@ fn perform(cull: &mut CullScreen, ctx: &egui::Context, model: &mut Model, bindin
                 let _ = dispatch(model, &binding.command, &json!({ "stars": stars }));
             }
         }
-        // Finish is the M4 workflow. The chord stays reserved so muscle memory is not silently
-        // reassigned before the workflow exists.
-        "cull.finish" => {}
+        "cull.finish" => {
+            let _ = dispatch(model, "cull.finish", &Json::Null);
+        }
         command => {
             let _ = dispatch(model, command, &Json::Null);
         }

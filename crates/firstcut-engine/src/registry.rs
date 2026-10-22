@@ -76,6 +76,26 @@ pub const REGISTRY: &[CommandDef] = &[
         params: &[("behavior", r#""stop" | "continue""#)],
     },
     CommandDef { id: "settings.keepStars", description: "Stars that make a keep in stars mode", params: &[("stars", "4 | 5")] },
+    // Finish Cull (todo.md §9.7, docs/contracts/app-model.md)
+    CommandDef { id: "cull.finish", description: "Open the Finish Cull sheet: summary, options, dry run, execute", params: &[] },
+    CommandDef { id: "finish.confirm", description: "Answer the \"Confirm before Finish\" question", params: &[] },
+    CommandDef { id: "finish.options", description: "Move from the summary to the options screen", params: &[] },
+    CommandDef {
+        id: "finish.unkept",
+        description: "Choose what happens to the photos that were not kept",
+        params: &[("action", r#""markRejected" | "subfolder" | "trash" | "delete" | "nothing""#), ("folder", "subfolder name (subfolder only)")],
+    },
+    CommandDef {
+        id: "finish.kept",
+        description: "Choose what happens to the kept photos",
+        params: &[("action", r#""none" | "copy" | "move" | "splitTier" | "splitStars" | "list""#), ("path", "destination (everything but none)")],
+    },
+    CommandDef { id: "finish.preview", description: "Build and show the dry run without touching the disk", params: &[] },
+    CommandDef { id: "finish.execute", description: "Run the dry run", params: &[("confirm", r#"the typed word, when the dry run requires one"#)] },
+    CommandDef { id: "finish.back", description: "One screen back in the Finish sheet", params: &[] },
+    CommandDef { id: "finish.undo", description: "Reverse the Finish run the report is showing", params: &[] },
+    CommandDef { id: "finish.cancel", description: "Close the Finish sheet without touching anything", params: &[] },
+    CommandDef { id: "finish.state", description: "The Finish sheet's stage and its data, as JSON", params: &[] },
     // Queries
     CommandDef { id: "engine.state", description: "The cursor, phase, counts and last error, as JSON", params: &[] },
     CommandDef { id: "engine.commands", description: "This list, as JSON", params: &[] },
@@ -207,6 +227,67 @@ fn dispatch_inner(model: &mut Model, id: &str, params: &Value) -> Result<Value, 
             model.dismiss_error();
             Ok(json!({ "dismissed": true }))
         }
+
+        "cull.finish" => {
+            model.start_finish()?;
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.confirm" => {
+            model.confirm_finish()?;
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.options" => {
+            model.show_finish_options()?;
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.unkept" => {
+            let folder = match string_param(params, "action")?.as_str() {
+                "markRejected" => firstcut_fileops::UnkeptAction::MarkRejectedInXmp,
+                "subfolder" => firstcut_fileops::UnkeptAction::MoveToSubfolder(optional_string_param(params, "folder").unwrap_or_default()),
+                "trash" => firstcut_fileops::UnkeptAction::MoveToTrash,
+                "delete" => firstcut_fileops::UnkeptAction::DeletePermanently,
+                "nothing" => firstcut_fileops::UnkeptAction::Nothing,
+                other => return Err(format!("finish.unkept: action is one of markRejected subfolder trash delete nothing, not {other:?}")),
+            };
+            model.set_finish_options(Some(folder), None)?;
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.kept" => {
+            let path = || optional_string_param(params, "path").unwrap_or_default();
+            let kept = match string_param(params, "action")?.as_str() {
+                "none" => firstcut_fileops::KeptAction::None,
+                "copy" => firstcut_fileops::KeptAction::CopyTo(path()),
+                "move" => firstcut_fileops::KeptAction::MoveTo(path()),
+                "splitTier" => firstcut_fileops::KeptAction::SplitByTier(path()),
+                "splitStars" => firstcut_fileops::KeptAction::SplitByStars(path()),
+                "list" => firstcut_fileops::KeptAction::WriteList(path()),
+                other => return Err(format!("finish.kept: action is one of none copy move splitTier splitStars list, not {other:?}")),
+            };
+            model.set_finish_options(None, Some(kept))?;
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.preview" => {
+            model.run_finish_dry_run()?;
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.execute" => {
+            let confirmation = optional_string_param(params, "confirm");
+            model.execute_finish(confirmation.as_deref())?;
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.back" => {
+            model.back_finish()?;
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.undo" => {
+            model.undo_finish()?;
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.cancel" => {
+            model.cancel_finish();
+            Ok(json!({ "finish": model.finish_stage().to_json() }))
+        }
+        "finish.state" => Ok(json!({ "finish": model.finish_stage().to_json() })),
 
         "engine.state" => Ok(state(model)),
         "engine.commands" => Ok(json!({ "commands": REGISTRY })),
@@ -345,6 +426,14 @@ fn string_param(params: &Value, name: &str) -> Result<String, String> {
         Some(Value::String(text)) => Ok(text.clone()),
         Some(_) => Err(format!("{name}: expected a string")),
         None => Err(format!("{name}: missing")),
+    }
+}
+
+/// A parameter that may be absent; `None` for a missing key and for JSON `null`.
+fn optional_string_param(params: &Value, name: &str) -> Option<String> {
+    match params.get(name) {
+        Some(Value::String(text)) => Some(text.clone()),
+        _ => None,
     }
 }
 

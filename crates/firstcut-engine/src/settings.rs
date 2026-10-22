@@ -386,6 +386,28 @@ impl Default for UnkeptActionJson {
 }
 
 impl UnkeptActionJson {
+    /// The engine's action, which is what the Finish planner consumes.
+    pub fn to_action(&self) -> firstcut_fileops::UnkeptAction {
+        match self {
+            Self::MarkRejectedInXmp => firstcut_fileops::UnkeptAction::MarkRejectedInXmp,
+            Self::MoveToSubfolder(folder) => firstcut_fileops::UnkeptAction::MoveToSubfolder(folder.clone()),
+            Self::MoveToTrash => firstcut_fileops::UnkeptAction::MoveToTrash,
+            Self::DeletePermanently => firstcut_fileops::UnkeptAction::DeletePermanently,
+            Self::Nothing => firstcut_fileops::UnkeptAction::Nothing,
+        }
+    }
+
+    /// The reverse, for `set_general_from`: what the model chose goes back into v1's shape.
+    pub fn from_action(action: &firstcut_fileops::UnkeptAction) -> Self {
+        match action {
+            firstcut_fileops::UnkeptAction::MarkRejectedInXmp => Self::MarkRejectedInXmp,
+            firstcut_fileops::UnkeptAction::MoveToSubfolder(folder) => Self::MoveToSubfolder(folder.clone()),
+            firstcut_fileops::UnkeptAction::MoveToTrash => Self::MoveToTrash,
+            firstcut_fileops::UnkeptAction::DeletePermanently => Self::DeletePermanently,
+            firstcut_fileops::UnkeptAction::Nothing => Self::Nothing,
+        }
+    }
+
     /// `(case name, payload)` in v1's spelling, for the shared writer.
     fn case_name(&self) -> (&'static str, Option<&String>) {
         match self {
@@ -449,6 +471,30 @@ pub enum KeptActionJson {
 }
 
 impl KeptActionJson {
+    /// The engine's action, which is what the Finish planner consumes.
+    pub fn to_action(&self) -> firstcut_fileops::KeptAction {
+        match self {
+            Self::CopyTo(path) => firstcut_fileops::KeptAction::CopyTo(path.clone()),
+            Self::MoveTo(path) => firstcut_fileops::KeptAction::MoveTo(path.clone()),
+            Self::SplitByTier(path) => firstcut_fileops::KeptAction::SplitByTier(path.clone()),
+            Self::SplitByStars(path) => firstcut_fileops::KeptAction::SplitByStars(path.clone()),
+            Self::WriteList(path) => firstcut_fileops::KeptAction::WriteList(path.clone()),
+            Self::Nothing => firstcut_fileops::KeptAction::None,
+        }
+    }
+
+    /// The reverse, for `set_general_from`.
+    pub fn from_action(action: &firstcut_fileops::KeptAction) -> Self {
+        match action {
+            firstcut_fileops::KeptAction::None => Self::Nothing,
+            firstcut_fileops::KeptAction::CopyTo(path) => Self::CopyTo(path.clone()),
+            firstcut_fileops::KeptAction::MoveTo(path) => Self::MoveTo(path.clone()),
+            firstcut_fileops::KeptAction::SplitByTier(path) => Self::SplitByTier(path.clone()),
+            firstcut_fileops::KeptAction::SplitByStars(path) => Self::SplitByStars(path.clone()),
+            firstcut_fileops::KeptAction::WriteList(path) => Self::WriteList(path.clone()),
+        }
+    }
+
     fn case_name(&self) -> (&'static str, Option<&String>) {
         match self {
             Self::CopyTo(path) => ("copyTo", Some(path)),
@@ -541,12 +587,15 @@ impl AppSettingsJson {
             },
             reject_whole_batch: general.reject_whole_batch,
             keep_stars: general.keep_threshold,
+            finish_unkept: general.finish_unkept.to_action(),
+            finish_kept: general.finish_kept.to_action(),
+            confirm_before_finish: general.confirm_before_finish,
+            confirm_permanent_delete: general.confirm_permanent_delete,
         }
     }
 
-    /// Re-places in the file exactly what the model changed, keeping everything else. The
-    /// finish/confirm keys stay as loaded: their surfaces do not exist until M3, and persisting a
-    /// loaded field is better than persisting a reset one.
+    /// Re-places in the file exactly what the model changed. Every General key now has a surface,
+    /// so a v1 user's Finish choices survive a save that only moved a checkbox.
     pub fn set_general_from(&mut self, general: GeneralSettings) {
         self.general.rating_mode = match general.rating_mode {
             RatingMode::Stars => RatingModeJson::Stars,
@@ -563,6 +612,10 @@ impl AppSettingsJson {
         };
         self.general.keep_threshold = general.keep_stars;
         self.general.reject_whole_batch = general.reject_whole_batch;
+        self.general.finish_unkept = UnkeptActionJson::from_action(&general.finish_unkept);
+        self.general.finish_kept = KeptActionJson::from_action(&general.finish_kept);
+        self.general.confirm_before_finish = general.confirm_before_finish;
+        self.general.confirm_permanent_delete = general.confirm_permanent_delete;
     }
 
     /// The sidecar switches as the session takes them. (v1's `XMPWriteMode`, `KeepMapping`,
@@ -745,11 +798,15 @@ mod tests {
             entering_behavior: EnteringBatchBehavior::LastViewed,
             auto_advance: true,
             reject_whole_batch: true,
+            finish_unkept: firstcut_fileops::UnkeptAction::MoveToTrash,
+            finish_kept: firstcut_fileops::KeptAction::WriteList("kept.txt".to_string()),
+            confirm_before_finish: false,
+            confirm_permanent_delete: false,
         };
 
         let mut settings = AppSettingsJson::default();
         settings.metadata.keep_mapping = KeepMappingJson::ColorLabelVariant { label: ColorLabelJson::Green };
-        settings.set_general_from(general);
+        settings.set_general_from(general.clone());
 
         let directory = tempfile::tempdir().unwrap(); // held: the save lands inside it
         let file = directory.path().join("settings.json");
@@ -771,15 +828,17 @@ mod tests {
         assert!(!xmp.sidecars_for_non_raw);
     }
 
-    /// `set_general_from` replaces exactly the model-owned keys and preserves the M3 ones a v1
-    /// file carries — the point of the "everything else untouched" rule.
+    /// The model seeds the Finish half from the file and writes it back through
+    /// `set_general_from`, so a v1 user's choices survive a save that only moved a checkbox.
     #[test]
     fn a_save_keeps_a_v1_users_finish_choices() {
         let (guard, mut store) = store_with(r#"{"general":{"finishUnkept":{"moveToTrash":{}},"confirmBeforeFinish":false}}"#);
-        store.current.set_general_from(GeneralSettings::default());
+        let loaded = store.current.general_settings();
+        assert_eq!(loaded.finish_unkept, firstcut_fileops::UnkeptAction::MoveToTrash, "the model reads the v1 action");
+        assert!(!loaded.confirm_before_finish);
+        store.current.set_general_from(loaded);
         store.save().unwrap();
 
-        // Re-read through the store: the finish action outlives a settings change untouched.
         let reloaded = SettingsStore::at(&guard.path().join("settings.json"));
         assert_eq!(reloaded.current.general.finish_unkept, UnkeptActionJson::MoveToTrash);
         assert!(!reloaded.current.general.confirm_before_finish);

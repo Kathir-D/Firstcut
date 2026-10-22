@@ -12,6 +12,7 @@ use std::sync::Arc;
 use firstcut_types::{Histogram, PhotoId};
 
 mod cull;
+mod finish_sheet;
 mod settings_screen;
 
 pub use cull::CullScreen;

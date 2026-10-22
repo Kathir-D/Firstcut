@@ -17,7 +17,7 @@ use firstcut_meta::meta::PhotoMeta;
 use firstcut_types::{ColorLabel, Flag, PhotoId, Rating, RatingMode, Tier};
 
 use crate::keymap::{KeyChord, Keymap, KeymapStore};
-use crate::session::{Cursor, Session, SessionListener};
+use crate::session::{Cursor, Session, SessionListener, SessionSnapshot};
 
 /// What phase the app is in (app-model.md). `Loading` is v1's first-photo fast path: the
 /// placeholder header has been read and its preview can paint while the full scan runs in the
@@ -48,8 +48,7 @@ pub enum EnteringBatchBehavior {
 }
 
 /// The General half of v1's settings the model reads. Defaults are v1's (SettingsModel.swift).
-/// Persistence lands with the settings store (§4.3); the model only holds what was set.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GeneralSettings {
     pub rating_mode: RatingMode,
     pub auto_advance: bool,
@@ -58,6 +57,14 @@ pub struct GeneralSettings {
     pub reject_whole_batch: bool,
     /// Stars that make a keep in stars mode (4 by default; the app offers 4..=5).
     pub keep_stars: u8,
+    /// What Finish does with the photos that were not kept (v1's `finishUnkept`).
+    pub finish_unkept: firstcut_fileops::UnkeptAction,
+    /// What Finish does with the kept photos (v1's `finishKept`).
+    pub finish_kept: firstcut_fileops::KeptAction,
+    /// Ask before the Finish sheet opens at all (v1's `confirmBeforeFinish`).
+    pub confirm_before_finish: bool,
+    /// Require the typed word when a Finish run deletes permanently (v1's `confirmPermanentDelete`).
+    pub confirm_permanent_delete: bool,
 }
 
 impl Default for GeneralSettings {
@@ -69,6 +76,11 @@ impl Default for GeneralSettings {
             entering_behavior: EnteringBatchBehavior::FirstPhoto,
             reject_whole_batch: false,
             keep_stars: 4,
+            // v1's `UnkeptAction.default`: not-kept photos move into `_Not kept`.
+            finish_unkept: firstcut_fileops::UnkeptAction::MoveToSubfolder("_Not kept".to_string()),
+            finish_kept: firstcut_fileops::KeptAction::None,
+            confirm_before_finish: true,
+            confirm_permanent_delete: true,
         }
     }
 }
@@ -153,6 +165,8 @@ pub struct Model {
     keymap: Keymap,
     /// Defaults + the user's own chords, and the file that holds them.
     keymap_store: Option<KeymapStore>,
+    /// The Finish sheet's stage; `Hidden` whenever the culling screen is the surface.
+    finish: crate::finish::FinishStage,
 }
 
 impl Model {
@@ -179,6 +193,7 @@ impl Model {
             sessions_dir: None,
             keymap: Keymap::defaults(),
             keymap_store: None,
+            finish: crate::finish::FinishStage::Hidden,
         }
     }
 
@@ -465,6 +480,229 @@ impl Model {
         self.photos().iter().filter(|p| is_reviewed(&p.rating)).count()
     }
 
+    // ---- finish cull (todo.md §9.7) ---------------------------------------------------------
+
+    /// The sheet's current stage. The UI draws this and dispatches `finish.*` commands; it never
+    /// advances the stage itself (docs/v2-plan.md §4.3).
+    pub fn finish_stage(&self) -> &crate::finish::FinishStage {
+        &self.finish
+    }
+
+    /// Totals for the summary screen, from the same tier rule the filmstrip and HUD use.
+    pub fn finish_summary(&self) -> crate::finish::FinishSummary {
+        crate::finish::FinishSummary {
+            counts: self.counts_by_tier(),
+            unvisited_batches: self.batches.iter().filter(|batch| !batch.visited).count(),
+            batch_count: self.batches.len(),
+            total_photos: self.photos.len(),
+        }
+    }
+
+    /// Finish Cull: the confirm question or the summary, depending on the setting. Nothing is
+    /// planned or touched here; this only opens the sheet.
+    pub fn start_finish(&mut self) -> Result<(), String> {
+        if !self.can_act() || self.photos.is_empty() || self.batches.is_empty() {
+            return Err("cull.finish: the culling screen is not showing a shoot".to_string());
+        }
+        if self.finish.is_visible() {
+            // A second press while the sheet is up must not throw away the options or dry run.
+            return Ok(());
+        }
+        self.finish = if self.settings.confirm_before_finish {
+            crate::finish::FinishStage::Confirm
+        } else {
+            crate::finish::FinishStage::Summary(self.finish_summary())
+        };
+        Ok(())
+    }
+
+    /// The answer to the confirm stage.
+    pub fn confirm_finish(&mut self) -> Result<(), String> {
+        if !matches!(self.finish, crate::finish::FinishStage::Confirm) {
+            return Err("finish.confirm: the Finish sheet is not asking to confirm".to_string());
+        }
+        self.finish = crate::finish::FinishStage::Summary(self.finish_summary());
+        Ok(())
+    }
+
+    /// Summary → options, seeded from Settings → General.
+    pub fn show_finish_options(&mut self) -> Result<(), String> {
+        let crate::finish::FinishStage::Summary(summary) = self.finish.clone() else {
+            return Err("finish.options: the Finish sheet is not showing the summary".to_string());
+        };
+        let options = firstcut_fileops::FinishOptions {
+            unkept: self.settings.finish_unkept.clone(),
+            kept: self.settings.finish_kept.clone(),
+            rating_mode: self.settings.rating_mode,
+            keep_stars: self.settings.keep_stars,
+        };
+        self.finish = crate::finish::FinishStage::Options { summary, options };
+        Ok(())
+    }
+
+    /// One options change. The rating mode and keep threshold are the session's and cannot be
+    /// faked by a caller, exactly as v1's `updateFinishSettings` pinned `ratingMode`.
+    pub fn set_finish_options(
+        &mut self,
+        unkept: Option<firstcut_fileops::UnkeptAction>,
+        kept: Option<firstcut_fileops::KeptAction>,
+    ) -> Result<(), String> {
+        let crate::finish::FinishStage::Options { summary, mut options } = self.finish.clone() else {
+            return Err("finish.unkept/finish.kept: the Finish sheet is not choosing options".to_string());
+        };
+        if let Some(unkept) = unkept {
+            options.unkept = unkept;
+        }
+        if let Some(kept) = kept {
+            options.kept = kept;
+        }
+        options.rating_mode = self.settings.rating_mode;
+        options.keep_stars = self.settings.keep_stars;
+        self.finish = crate::finish::FinishStage::Options { summary, options };
+        Ok(())
+    }
+
+    /// The dry run: everything that would happen, before anything does. The typed-delete gate is
+    /// decided here, where the plan, the options and the setting are all in hand.
+    pub fn run_finish_dry_run(&mut self) -> Result<(), String> {
+        let crate::finish::FinishStage::Options { summary, options } = self.finish.clone() else {
+            return Err("finish.preview: the Finish sheet is not choosing options".to_string());
+        };
+        if let firstcut_fileops::UnkeptAction::MoveToSubfolder(folder) = &options.unkept
+            && folder.trim().is_empty()
+        {
+            return Err("finish.preview: give the not-kept subfolder a name".to_string());
+        }
+        if crate::finish::kept_needs_path(&options.kept) {
+            let path = match &options.kept {
+                firstcut_fileops::KeptAction::CopyTo(path)
+                | firstcut_fileops::KeptAction::MoveTo(path)
+                | firstcut_fileops::KeptAction::SplitByTier(path)
+                | firstcut_fileops::KeptAction::SplitByStars(path)
+                | firstcut_fileops::KeptAction::WriteList(path) => path,
+                firstcut_fileops::KeptAction::None => "",
+            };
+            if path.trim().is_empty() {
+                return Err("finish.preview: give the kept destination a name".to_string());
+            }
+        }
+        let Some(session) = self.session.as_ref() else {
+            return Err("finish.preview: no shoot is open".to_string());
+        };
+        match session.plan_finish(&options) {
+            Ok(plan) => {
+                let requires_typed_confirmation = self.settings.confirm_permanent_delete && options.unkept.is_destructive() && !plan.is_empty();
+                self.finish = crate::finish::FinishStage::DryRun { summary, options, plan, requires_typed_confirmation };
+                Ok(())
+            }
+            Err(err) => {
+                let message = err.to_string();
+                self.last_error = Some(message.clone());
+                self.finish = crate::finish::FinishStage::Failed { summary, message: message.clone() };
+                Err(message)
+            }
+        }
+    }
+
+    /// Walks the dry run. `confirmation` is the sheet's typed word; it is checked here as well as
+    /// in the view, because a command can arrive from the CLI or the control channel.
+    pub fn execute_finish(&mut self, confirmation: Option<&str>) -> Result<(), String> {
+        let crate::finish::FinishStage::DryRun { summary, plan, requires_typed_confirmation, .. } = self.finish.clone() else {
+            return Err("finish.execute: the Finish sheet is not showing a dry run".to_string());
+        };
+        if requires_typed_confirmation && confirmation != Some(crate::finish::TYPED_CONFIRMATION) {
+            return Err(format!("finish.execute: type {} to confirm a permanent delete", crate::finish::TYPED_CONFIRMATION));
+        }
+        let Some(session) = self.session.as_ref() else {
+            return Err("finish.execute: no shoot is open".to_string());
+        };
+        let run = match session.execute_finish(&plan) {
+            Ok(run) => run,
+            Err(err) => {
+                let message = err.to_string();
+                self.last_error = Some(message.clone());
+                self.finish = crate::finish::FinishStage::Failed { summary, message: message.clone() };
+                return Err(message);
+            }
+        };
+        let report =
+            crate::finish::FinishReport { done: run.summary.done, failed: run.summary.failed, undoable: run.summary.undoable, was_undo: false };
+        self.finish = crate::finish::FinishStage::Report { summary, report };
+        // The files moved, so the catalog is re-read before the sheet's Done goes back to it.
+        self.sync_from_session();
+        Ok(())
+    }
+
+    /// Reverses the last Finish run. One press per run: the session consumes the log, so a second
+    /// press would reverse an earlier run, which is why `was_undo` exists on the report.
+    pub fn undo_finish(&mut self) -> Result<(), String> {
+        let crate::finish::FinishStage::Report { summary, report } = self.finish.clone() else {
+            return Err("finish.undo: the Finish sheet is not showing a report".to_string());
+        };
+        if report.was_undo || !report.undoable {
+            return Err("finish.undo: this run cannot be undone".to_string());
+        }
+        let Some(session) = self.session.as_ref() else {
+            return Err("finish.undo: no shoot is open".to_string());
+        };
+        let undone = match session.undo_finish() {
+            Ok(undone) => undone,
+            Err(err) => {
+                let message = err.to_string();
+                self.last_error = Some(message.clone());
+                return Err(message);
+            }
+        };
+        let report = crate::finish::FinishReport { done: undone.summary.done, failed: undone.summary.failed, undoable: false, was_undo: true };
+        self.finish = crate::finish::FinishStage::Report { summary, report };
+        self.sync_from_session();
+        Ok(())
+    }
+
+    /// One free step back: dry run → options → summary. Nothing has touched the disk in any of
+    /// these stages.
+    pub fn back_finish(&mut self) -> Result<(), String> {
+        match self.finish.clone() {
+            crate::finish::FinishStage::Options { summary, .. } => {
+                self.finish = crate::finish::FinishStage::Summary(summary);
+                Ok(())
+            }
+            crate::finish::FinishStage::DryRun { summary, options, .. } => {
+                self.finish = crate::finish::FinishStage::Options { summary, options };
+                Ok(())
+            }
+            _ => Err("finish.back: there is no previous Finish screen".to_string()),
+        }
+    }
+
+    /// Closes the sheet. A Finish that moved every photo out leaves nothing to cull, so the model
+    /// goes back to Welcome instead of an empty viewer (v1's `cancelFinish`).
+    pub fn cancel_finish(&mut self) {
+        self.finish = crate::finish::FinishStage::Hidden;
+        if self.phase == Phase::Culling && self.photos.is_empty() {
+            self.close_session();
+            self.session = None;
+            self.phase = Phase::Welcome;
+            self.folder = None;
+            self.folder_name.clear();
+            self.photos.clear();
+            self.photo_index.clear();
+            self.batches.clear();
+            self.current_batch_index = 0;
+            self.current_photo_index = 0;
+            self.refresh_recents();
+        }
+    }
+
+    /// Re-reads the open session's snapshot into the model without another disk pass. The Finish
+    /// run already rescanned the folder after moving files; this is what makes the strip agree.
+    fn sync_from_session(&mut self) {
+        let Some(snapshot) = self.session.as_ref().map(Session::snapshot) else {
+            return;
+        };
+        self.adopt_snapshot(snapshot);
+    }
+
     // ---- open ------------------------------------------------------------------------------
 
     /// Opens a folder, then restores the state of the shoot from the database. On failure the
@@ -577,6 +815,7 @@ impl Model {
         }
         self.session = Some(session);
         self.phase = Phase::Culling;
+        self.finish = crate::finish::FinishStage::Hidden;
         self.last_error = None;
         self.catalog_revision = self.catalog_revision.saturating_add(1);
         // Thumbnails decoded against the placeholder catalog still count; hand their signatures
@@ -591,7 +830,6 @@ impl Model {
     /// Reconciles the open folder with the disk (the watcher calls this, and `file.rescan` does).
     /// Photos that stayed keep their cache entries; the cursor follows its photo by id.
     pub fn rescan_folder(&mut self) -> Result<(), String> {
-        let current = self.current_photo_id();
         let rescanned = match self.session.as_ref() {
             Some(session) => session.rescan().map(|_| session.snapshot()),
             None => return Ok(()),
@@ -604,6 +842,14 @@ impl Model {
                 return Err(message);
             }
         };
+        self.adopt_snapshot(snapshot);
+        Ok(())
+    }
+
+    /// Installs a snapshot the session already produced. The cursor follows its photo by id, so a
+    /// rescan or a Finish run moves the view with the files rather than jumping to the top.
+    fn adopt_snapshot(&mut self, snapshot: SessionSnapshot) {
+        let current = self.current_photo_id();
         self.photo_index = snapshot.photos.iter().enumerate().map(|(position, meta)| (meta.id, position)).collect();
         self.photos = snapshot
             .photos
@@ -625,7 +871,6 @@ impl Model {
         self.catalog_revision = self.catalog_revision.saturating_add(1);
         self.last_error = None;
         self.drain_session_messages();
-        Ok(())
     }
 
     /// Flushes the sidecar writer and checkpoints the database. Called on quit: the queue is
@@ -903,7 +1148,7 @@ impl Model {
     /// a store (tests, `bench`) persistence is a no-op.
     fn persist_settings(&mut self) {
         if let Some(store) = self.settings_store.as_mut()
-            && let Err(err) = store.set_general_from(self.settings)
+            && let Err(err) = store.set_general_from(self.settings.clone())
         {
             self.last_error = Some(err.to_string());
         }
@@ -1146,6 +1391,7 @@ impl SessionListener for SessionForwarder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn synthetic(index: u32) -> Vec<u8> {
         firstcut_meta::meta::cr3::SyntheticCr3::r8().at("2026:08:27 19:54:00").subsec(&format!("{index:02}")).build()
@@ -1268,6 +1514,83 @@ mod tests {
 
         assert!(model.undo(), "the whole batch is one step");
         assert!(model.photos().iter().all(|photo| photo.rating.flag != Flag::Reject), "one undo takes the batch back");
+    }
+
+    #[test]
+    fn the_finish_sheet_walks_summary_options_dry_run_report_and_undo() {
+        let sessions = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        for index in 1..=3u32 {
+            std::fs::write(folder.path().join(format!("IMG_000{index}.CR3")), synthetic(index)).unwrap();
+        }
+        let mut model = Model::new();
+        model.open_folder_in(folder.path(), sessions.path()).unwrap();
+        model.rate_stars(5);
+        assert_eq!(model.finish_stage().name(), "hidden");
+
+        model.start_finish().unwrap();
+        assert_eq!(model.finish_stage().name(), "confirm", "Confirm before Finish is on by default");
+        model.confirm_finish().unwrap();
+        assert_eq!(model.finish_stage().name(), "summary");
+        let summary = model.finish_stage().summary().cloned().unwrap();
+        assert_eq!(summary.total_photos, 3);
+        assert_eq!(summary.kept_count(), 1);
+
+        model.show_finish_options().unwrap();
+        assert_eq!(model.finish_stage().name(), "options");
+        model.set_finish_options(Some(firstcut_fileops::UnkeptAction::MoveToSubfolder("_Not kept".to_string())), None).unwrap();
+        model.run_finish_dry_run().unwrap();
+        assert_eq!(model.finish_stage().name(), "dryRun");
+        let crate::finish::FinishStage::DryRun { plan, requires_typed_confirmation, .. } = model.finish_stage() else {
+            panic!("the dry run is showing")
+        };
+        assert!(!plan.is_empty());
+        assert!(!requires_typed_confirmation, "a move into a subfolder is undoable");
+
+        model.execute_finish(None).unwrap();
+        assert_eq!(model.finish_stage().name(), "report");
+        let report = match model.finish_stage() {
+            crate::finish::FinishStage::Report { report, .. } => report.clone(),
+            other => panic!("expected a report, got {}", other.name()),
+        };
+        assert!(report.is_clean());
+        assert!(report.undoable);
+        assert_eq!(model.photos().len(), 1, "the filmstrip drops the photos that left the shoot");
+
+        model.undo_finish().unwrap();
+        let report = match model.finish_stage() {
+            crate::finish::FinishStage::Report { report, .. } => report.clone(),
+            other => panic!("expected a report, got {}", other.name()),
+        };
+        assert!(report.was_undo);
+        assert_eq!(model.photos().len(), 3, "undo brings them back into the cull");
+    }
+
+    #[test]
+    fn a_permanent_delete_needs_the_typed_word_even_through_the_registry() {
+        let sessions = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        for index in 1..=2u32 {
+            std::fs::write(folder.path().join(format!("IMG_000{index}.CR3")), synthetic(index)).unwrap();
+        }
+        let mut model = Model::new();
+        model.open_folder_in(folder.path(), sessions.path()).unwrap();
+        crate::registry::dispatch(&mut model, "cull.finish", &json!({})).unwrap();
+        crate::registry::dispatch(&mut model, "finish.confirm", &json!({})).unwrap();
+        crate::registry::dispatch(&mut model, "finish.options", &json!({})).unwrap();
+        crate::registry::dispatch(&mut model, "finish.unkept", &json!({ "action": "delete" })).unwrap();
+        crate::registry::dispatch(&mut model, "finish.preview", &json!({})).unwrap();
+        let state = crate::registry::dispatch(&mut model, "finish.state", &json!({})).unwrap();
+        assert_eq!(state["finish"]["requiresTypedConfirmation"], true);
+
+        let refused = crate::registry::dispatch(&mut model, "finish.execute", &json!({}));
+        assert!(refused.is_err(), "the model, not just the view, checks the word");
+        assert_eq!(model.finish_stage().name(), "dryRun", "a refused run stays on the preview");
+        assert!(folder.path().join("IMG_0001.CR3").exists());
+
+        crate::registry::dispatch(&mut model, "finish.execute", &json!({ "confirm": "DELETE" })).unwrap();
+        assert_eq!(model.finish_stage().name(), "report");
+        assert!(!folder.path().join("IMG_0001.CR3").exists());
     }
 
     #[test]

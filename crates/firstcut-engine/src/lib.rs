@@ -3,6 +3,7 @@
 //! Ported verbatim from v1 `firstcut_core::session` (as module `session`) at the M1 port; only
 //! imports were re-pointed to the ladder crates. Owner: core-store (docs/contracts/session-api.md).
 
+pub mod finish;
 pub mod keymap;
 pub mod model;
 pub mod pipeline;

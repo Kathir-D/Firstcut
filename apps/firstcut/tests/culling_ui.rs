@@ -256,6 +256,122 @@ fn the_whole_batch_reject_asks_first_and_flags_every_frame() {
     assert!(state.borrow().photos().iter().all(|photo| photo.rating.flag == firstcut_types::Flag::Reject), "confirming flags the batch");
 }
 
+/// The Finish flow end to end through the sheet's own buttons: confirm → summary → options →
+/// dry run → execute → report → undo. The shoot is real, so the files move and come back.
+#[test]
+fn the_finish_sheet_moves_the_shoot_and_undoes_it() {
+    let (_sessions, root, mut model) = shoot();
+    model.rate_stars(5);
+    let folder = root.path().join("Game1JENKS");
+    // The default destination exists up front, so the snapshot carries no temp-directory path in
+    // the "will be created" warning (the move itself is identical either way).
+    std::fs::create_dir(folder.join("_Not kept")).unwrap();
+    let state = std::cell::RefCell::new(model);
+    let screen = std::cell::RefCell::new(CullScreen::new());
+    let bank = bank(&state.borrow(), &[(160, 32, 32), (32, 96, 160), (32, 160, 96)]);
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let current_id = model.current_photo_id();
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.get_by_label("Finish    Cmd+Enter").click();
+    harness.run();
+    assert_eq!(state.borrow().finish_stage().name(), "confirm");
+
+    harness.get_by_label("Continue").click();
+    harness.run();
+    assert_eq!(state.borrow().finish_stage().name(), "summary");
+
+    harness.get_by_label("Choose What Happens Next").click();
+    harness.run();
+    assert_eq!(state.borrow().finish_stage().name(), "options");
+    harness.snapshot("finish-options");
+
+    harness.get_by_label("Preview").click();
+    harness.run();
+    assert_eq!(state.borrow().finish_stage().name(), "dryRun");
+    let ops = match state.borrow().finish_stage() {
+        firstcut_engine::finish::FinishStage::DryRun { plan, .. } => plan.ops.len(),
+        other => panic!("expected a dry run, got {}", other.name()),
+    };
+    assert!(ops >= 2, "the two unkept photos have work planned: {ops}");
+    harness.snapshot("finish-dry-run");
+
+    harness.get_by_label("Finish").click();
+    harness.run();
+    assert_eq!(state.borrow().finish_stage().name(), "report");
+    assert_eq!(state.borrow().photos().len(), 1, "only the 5-star photo is still in the shoot");
+    let raws = |path: &std::path::Path| {
+        std::fs::read_dir(path)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext.eq_ignore_ascii_case("CR3")))
+            .count()
+    };
+    assert_eq!(raws(&folder), 1, "the kept RAW stays in the shoot folder (its XMP sidecar rides beside it)");
+    assert_eq!(raws(&folder.join("_Not kept")), 2);
+
+    harness.get_by_label("Undo Finish").click();
+    harness.run();
+    assert_eq!(state.borrow().photos().len(), 3, "undo brings every file back");
+    assert_eq!(raws(&folder.join("_Not kept")), 0, "the moved RAWs are back in the shoot folder");
+
+    harness.get_by_label("Done").click();
+    harness.run();
+    assert_eq!(state.borrow().finish_stage().name(), "hidden");
+}
+
+/// A permanent delete arms the typed gate: the sheet's Finish button stays disabled until the
+/// word is typed, and the model refuses the run as well (tested in the engine).
+#[test]
+fn the_finish_sheet_shows_the_typed_gate_for_a_permanent_delete() {
+    let (_sessions, _root, mut model) = shoot();
+    let mut general = model.settings().clone();
+    general.finish_unkept = firstcut_engine::finish::UnkeptAction::DeletePermanently;
+    model.set_general_settings(general);
+    let state = std::cell::RefCell::new(model);
+    let screen = std::cell::RefCell::new(CullScreen::new());
+    let bank = bank(&state.borrow(), &[(160, 32, 32), (32, 96, 160), (32, 160, 96)]);
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let current_id = model.current_photo_id();
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.get_by_label("Finish    Cmd+Enter").click();
+    harness.run();
+    harness.get_by_label("Continue").click();
+    harness.run();
+    harness.get_by_label("Choose What Happens Next").click();
+    harness.run();
+    harness.get_by_label("Preview").click();
+    harness.run();
+    match state.borrow().finish_stage() {
+        firstcut_engine::finish::FinishStage::DryRun { requires_typed_confirmation, .. } => {
+            assert!(requires_typed_confirmation, "a permanent delete arms the typed gate")
+        }
+        other => panic!("expected a dry run, got {}", other.name()),
+    }
+
+    harness.get_by_role(egui::accesskit::Role::TextInput).type_text("DELETE");
+    harness.run();
+    harness.get_by_label("Delete Permanently").click();
+    harness.run();
+    assert_eq!(state.borrow().finish_stage().name(), "report");
+    assert!(state.borrow().photos().is_empty(), "every photo was unkept and deleted");
+}
+
 /// Errors become an alert window that stays until Dismiss, and Dismiss is the registry's
 /// `error.dismiss` (the UI never clears engine state directly).
 #[test]

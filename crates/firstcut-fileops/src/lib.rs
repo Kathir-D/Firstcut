@@ -40,6 +40,13 @@ pub enum UnkeptAction {
     Nothing,
 }
 
+impl UnkeptAction {
+    /// The one action whose files cannot be brought back by Firstcut or Finder.
+    pub fn is_destructive(&self) -> bool {
+        matches!(self, UnkeptAction::DeletePermanently)
+    }
+}
+
 /// What to do with the photos that were kept.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum KeptAction {
@@ -173,7 +180,12 @@ impl FinishPlan {
         self.ops
             .iter()
             .map(|op| match &op.to {
-                Some(to) => format!("{} {} → {}", op.kind, file_name(&op.from), file_name(to)),
+                // The destination's own folder, so a move into `_Not kept` does not read as a
+                // move onto itself (`IMG_0002.CR3 -> IMG_0002.CR3`).
+                Some(to) => match Path::new(to).parent().and_then(Path::file_name) {
+                    Some(folder) => format!("{} {} -> {}/{}", op.kind, file_name(&op.from), folder.to_string_lossy(), file_name(to)),
+                    None => format!("{} {} -> {}", op.kind, file_name(&op.from), file_name(to)),
+                },
                 None => format!("{} {}", op.kind, file_name(&op.from)),
             })
             .collect()
