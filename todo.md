@@ -183,23 +183,36 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-21 (v2, M3 CLOSED — local gate and the 3-OS matrix both green; M4 is next).**
+> **As of 2026-10-22 (v2, M3 CLOSED; M4 Finish sheet landed, edge cases next).**
 > The `v2` branch is the pure-Rust rewrite (**`docs/v2-plan.md` is its contract**; agent rules
 > live in the rewritten `AGENTS.md`). Milestone state:
 >
 > - **Draft PR open: `v2` → `main` is https://github.com/Kathir-D/Firstcut/pull/6** — stays a draft
 >   until the owner moves it; the owner merges, never an agent.
-> - **Where this session stopped:** working tree clean; the tip is the keymap work plus the
->   snapshot-tolerance fix. **M3 gate GREEN:** `cargo xtask ci` passed locally on `7127ac0`
->   (target/ci/summary.md) and the 3-OS matrix passed on `239b06b` (run 39683964460: macos,
->   windows, ubuntu all success, `cargo xtask smoke` included). The Linux failure on the two
->   keymap-era commits was diagnosed, not retried away: all three failing snapshots had **zero**
->   pixels above 2/255, i.e. Metal-vs-Linux antialiasing, so `kittest.toml` now carries a
->   reviewed 2/255 colour tolerance with no failed-pixel allowance (plan §9).
-> - **Next action: M4 — Finish Cull** (summary → options → dry run → typed DELETE → report →
->   undo), then Reject Whole Batch's remaining reconciliation edges, sidecar import at every
->   open + rescan, rename reconciliation, cross-volume copy safety. Nothing is blocked; the
->   Exact RAW §5 gate still waits on the owner.
+> - **Where this session stopped (tip `79b362f`):** Finish Cull is implemented end to end and the
+>   per-commit gate is green (`cargo fmt --all --check`, clippy `-D warnings` on engine/fileops/ui/app,
+>   their tests incl. 10 kittest tests, `cargo xtask layers`). Working tree clean, pushed.
+>   - Engine: `crates/firstcut-engine/src/finish.rs` owns `FinishStage` (confirm → summary → options →
+>     dry run → report/failed) and the JSON `finish.state`. `Model::start_finish`/`confirm_finish`/
+>     `show_finish_options`/`set_finish_options`/`run_finish_dry_run`/`execute_finish`/`undo_finish`/
+>     `back_finish`/`cancel_finish` drive it. `GeneralSettings` now carries v1's Finish defaults
+>     (`finish_unkept`, `finish_kept`, `confirm_before_finish`, `confirm_permanent_delete`) and
+>     `settings.rs` round-trips them through v1's keyed JSON.
+>   - UI: `crates/firstcut-ui/src/finish_sheet.rs` draws the screens, File → Finish Cull… and the
+>     toolbar start it, Escape closes it, and Settings → General edits the defaults. The sheet is
+>     modal to the culling keys; the model also refuses a permanent delete without the typed word.
+>   - Evidence: `the_finish_sheet_moves_the_shoot_and_undoes_it` (real files move and come back),
+>     `the_finish_sheet_shows_the_typed_gate_for_a_permanent_delete`, engine
+>     `the_finish_sheet_walks_summary_options_dry_run_report_and_undo` and
+>     `a_permanent_delete_needs_the_typed_word_even_through_the_registry`; snapshots
+>     `finish-options.png`, `finish-dry-run.png`; parity checklist row 10 ✔.
+>   - Deliberate v1 deviations, recorded in plan §4.4: no painted `executing` screen (execution is
+>     synchronous, like v1's backend call), and the typed gate is enforced in the model because
+>     `finish.execute` is reachable from the CLI/control channel.
+> - **Next action: the M4 edge cases** — Reject Whole Batch reconciliation, sidecar import at every
+>   open + rescan, rename reconciliation, cross-volume copy safety, session DB carry-forward. Then
+>   run the full `cargo xtask ci` and the 3-OS matrix to close M4. Nothing is blocked; the Exact RAW
+>   §5 gate still waits on the owner.
 > - **CI matrix fully GREEN, including Windows, for the first time (run 39456083872, on
 >   `7a6e9a2`).** The windows chain was unmasked one failure at a time: ext4 inode reuse needed
 >   `same_file` size corroboration (`233bd5f`), a failing `sessions_dir()` needed the same
