@@ -76,15 +76,48 @@ fn run(smoke: bool, folder: Option<PathBuf>, control: Option<u16>) -> Result<(),
     if let Some(store) = settings_store() {
         model.attach_settings_store(store);
     }
-    eframe::run_native(
-        "firstcut",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_title("Firstcut").with_inner_size([1200.0, 760.0]).with_min_inner_size([640.0, 380.0]),
-            ..Default::default()
-        },
-        Box::new(move |_cc| Ok(Box::new(Shell::new(smoke, control_receiver, wake_slot, model, folder)))),
-    )
-    .map_err(|e| format!("eframe failed to create the window: {e}"))
+    eframe::run_native("firstcut", native_options(), Box::new(move |_cc| Ok(Box::new(Shell::new(smoke, control_receiver, wake_slot, model, folder)))))
+        .map_err(|e| format!("eframe failed to create the window: {e}"))
+}
+
+/// The window and renderer options every OS starts from.
+///
+/// `FIRSTCUT_WGPU_BACKEND=gl` (or `vulkan`, `metal`, `dx12`, or a `+`-joined list) is the
+/// old-driver escape hatch: a Linux box whose Vulkan driver is too old for wgpu can run the
+/// same app on GL without a rebuild. wgpu tries every backend it was built with by default,
+/// so this only narrows the list when the user asks.
+fn native_options() -> eframe::NativeOptions {
+    use eframe::egui_wgpu::WgpuSetup;
+    let mut options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_title("Firstcut").with_inner_size([1200.0, 760.0]).with_min_inner_size([640.0, 380.0]),
+        // Inter covers the UI; a system fallback would put a different glyph on each OS and
+        // bring back the snapshot drift M5 exists to remove.
+        system_font_fallback: false,
+        ..Default::default()
+    };
+    if let Ok(requested) = std::env::var("FIRSTCUT_WGPU_BACKEND")
+        && let WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup
+    {
+        use eframe::egui_wgpu::wgpu::Backends;
+        let mut backends = Backends::empty();
+        for name in requested.split(['+', ',']).map(str::trim).filter(|name| !name.is_empty()) {
+            backends |= match name.to_ascii_lowercase().as_str() {
+                "gl" | "gles" | "opengl" => Backends::GL,
+                "vulkan" => Backends::VULKAN,
+                "metal" => Backends::METAL,
+                "dx12" => Backends::DX12,
+                "all" => Backends::all(),
+                other => {
+                    eprintln!("firstcut: unknown FIRSTCUT_WGPU_BACKEND `{other}` (use gl, vulkan, metal, dx12 or all)");
+                    Backends::all()
+                }
+            };
+        }
+        if !backends.is_empty() {
+            setup.instance_descriptor.backends = backends;
+        }
+    }
+    options
 }
 
 /// The settings file lives next to the Sessions directory (the `Sessions`
@@ -181,7 +214,18 @@ impl Shell {
 
     /// Reads the placeholder header and starts the full scan on its own thread. The window can
     /// paint the first photograph before the scan returns; `poll_open` installs the catalog.
+    ///
+    /// A camera card root (`…/DCIM/100CANON`, `101CANON`) is not a shoot; it is a bundle of
+    /// shoots. When more than one subfolder holds photos, the screen asks which one to cull
+    /// before a scan is paid for. One subfolder opens directly; no subfolders falls through to
+    /// the normal scan so the empty-folder error is still the user's answer.
     fn start_open(&mut self, folder: PathBuf) {
+        let shoots = card_shoots(&folder);
+        if shoots.len() > 1 {
+            self.screen.ask_bundle(shoots);
+            return;
+        }
+        let folder = shoots.first().cloned().unwrap_or(folder);
         if let Err(err) = self.model.begin_open(&folder) {
             eprintln!("firstcut: {err}");
             self.model.fail_open(err);
@@ -322,6 +366,13 @@ impl eframe::App for Shell {
             display: &self.bank.displays,
         };
         self.screen.show(ui, &mut self.model, &images);
+        // Browse… asks for the platform picker. `rfd` is the app's dependency, not the UI's:
+        // on macOS this is the NSOpenPanel that also carries the document-folder permission.
+        if self.screen.take_browse_request()
+            && let Some(folder) = rfd::FileDialog::new().set_title("Open Shoot Folder").pick_folder()
+        {
+            self.screen.offer_open_path(folder);
+        }
         // File → Open Folder… leaves a request; opening is the app's async job.
         if let Some(folder) = self.screen.take_open_request() {
             self.start_open(folder);
@@ -622,4 +673,74 @@ fn decode_job(job: &Job, raw: Option<&dyn RawDecode>) -> Result<(DecodedImage, H
     .map_err(|err| format!("{} ({:?}): {err}", job.path.display(), job.tier))?;
     let histogram = if job.tier == Tier::Thumbnail { Histogram::empty() } else { histogram(&image) };
     Ok((image, histogram))
+}
+
+/// The shoot folders inside a picked folder. A normal shoot answers itself; a camera card
+/// answers the `DCIM/<roll>` folders that actually hold photos, so the chooser never lists an
+/// empty `DCIM` or a `MISC` folder. Reading two directory levels is cheap and happens before
+/// the session scan is paid for.
+fn card_shoots(root: &Path) -> Vec<PathBuf> {
+    fn holds_photos(dir: &Path) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else { return false };
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            let hidden = entry.file_name().to_string_lossy().starts_with('.');
+            !hidden && path.is_file() && firstcut_meta::meta::is_photo_path(&path)
+        })
+    }
+
+    if holds_photos(root) {
+        return vec![root.to_path_buf()];
+    }
+    let dcim = root.join("DCIM");
+    let scan_root = if dcim.is_dir() { dcim } else { root.to_path_buf() };
+    if holds_photos(&scan_root) {
+        return vec![scan_root];
+    }
+    let mut shoots: Vec<PathBuf> = std::fs::read_dir(&scan_root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .map(|entry| entry.path())
+        .filter(|path| holds_photos(path))
+        .collect();
+    shoots.sort();
+    shoots
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_card_root_lists_only_the_rolls_that_hold_photos() {
+        let card = tempfile::tempdir().expect("card");
+        let dcim = card.path().join("DCIM");
+        let first = dcim.join("100CANON");
+        let second = dcim.join("101CANON");
+        let empty = dcim.join("MISC");
+        for dir in [&first, &second, &empty] {
+            std::fs::create_dir_all(dir).expect("dir");
+        }
+        std::fs::write(first.join("IMG_0001.CR3"), b"not really a raw").expect("photo");
+        std::fs::write(second.join("IMG_0200.JPG"), b"not really a jpeg").expect("photo");
+
+        assert_eq!(card_shoots(card.path()), vec![first, second], "the empty MISC folder is not a shoot");
+    }
+
+    #[test]
+    fn a_shoot_folder_answers_itself_even_when_it_has_subfolders() {
+        let shoot = tempfile::tempdir().expect("shoot");
+        std::fs::write(shoot.path().join("IMG_0001.CR3"), b"not really a raw").expect("photo");
+        std::fs::create_dir(shoot.path().join("Kept")).expect("subfolder");
+        assert_eq!(card_shoots(shoot.path()), vec![shoot.path().to_path_buf()]);
+    }
+
+    #[test]
+    fn a_folder_without_photos_falls_through_to_the_normal_open_error() {
+        let folder = tempfile::tempdir().expect("folder");
+        assert!(card_shoots(folder.path()).is_empty());
+    }
 }

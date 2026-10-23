@@ -508,3 +508,30 @@ fn the_keyboard_tab_records_a_chord_into_the_user_keymap() {
     harness.run();
     assert_eq!(state.borrow().current_photo_index(), 1, "the replaced chord no longer runs it");
 }
+
+#[test]
+fn a_card_with_two_rolls_asks_which_shoot_to_open() {
+    use std::path::PathBuf;
+    let (_sessions, _folder, model) = shoot();
+    let bank = bank(&model, &[(160, 32, 32), (32, 96, 160), (32, 160, 96)]);
+    let state = std::cell::RefCell::new(model);
+    let screen = std::cell::RefCell::new(CullScreen::new());
+    let first = PathBuf::from("/card/DCIM/100CANON");
+    let second = PathBuf::from("/card/DCIM/101CANON");
+    screen.borrow_mut().ask_bundle(vec![first.clone(), second]);
+
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 760.0)).build_ui(|ui| {
+        let mut model = state.borrow_mut();
+        let mut screen = screen.borrow_mut();
+        let current_id = model.current_photo_id();
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
+        screen.show(ui, &mut model, &images);
+    });
+
+    harness.run();
+    harness.snapshot("bundle-chooser");
+    harness.get_by_label("DCIM / 100CANON").click();
+    harness.run();
+    assert_eq!(screen.borrow_mut().take_open_request(), Some(first), "the chosen roll is the open request");
+}

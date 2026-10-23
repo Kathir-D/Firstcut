@@ -11,7 +11,7 @@
 //! in the middle of.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use egui::{Color32, FontId, Image, Key, RichText, Sense, Stroke, TextureHandle, Vec2, pos2, vec2};
 use firstcut_engine::keymap::{KeyBinding, KeyChord, KeyName, Modifier};
@@ -76,6 +76,9 @@ pub struct CullScreen {
     open_dialog: bool,
     open_path: String,
     open_request: Option<PathBuf>,
+    /// Set by the dialog's Browse… button: the app owns the native picker (and the macOS
+    /// document-folder grant it carries), so the screen only asks for it.
+    browse_request: bool,
     /// The ? cheat sheet, generated from the registry.
     cheatsheet: bool,
     /// Settings → General / Keyboard / Viewer / Metadata / Performance, opened with ⌘,.
@@ -92,6 +95,11 @@ pub struct CullScreen {
     reject_dialog: bool,
     /// The Finish Cull sheet. The engine owns the stage; this holds the typed word between frames.
     finish_sheet: FinishSheet,
+    /// The shoot folders inside a camera-card root, when there is more than one. The app finds
+    /// them and asks the screen to choose; culling has to name one shoot, not a whole card.
+    bundle_choices: Vec<PathBuf>,
+    /// `install_fonts` is a `Context`-wide operation, so it runs on this screen's first frame.
+    fonts_installed: bool,
 }
 
 impl Default for CullScreen {
@@ -116,6 +124,7 @@ impl CullScreen {
             open_dialog: false,
             open_path: String::new(),
             open_request: None,
+            browse_request: false,
             cheatsheet: false,
             settings: SettingsScreen::default(),
             background: BACKGROUND,
@@ -123,6 +132,8 @@ impl CullScreen {
             escape_consumed: false,
             reject_dialog: false,
             finish_sheet: FinishSheet::default(),
+            bundle_choices: Vec::new(),
+            fonts_installed: false,
         }
     }
 
@@ -144,9 +155,37 @@ impl CullScreen {
         self.open_request.take()
     }
 
+    /// True once, when the Open Folder dialog's Browse… button asked the app for a native
+    /// picker. The screen has already closed its own dialog, so a cancelled picker leaves the
+    /// user where they were rather than behind two stacked dialogs.
+    pub fn take_browse_request(&mut self) -> bool {
+        std::mem::take(&mut self.browse_request)
+    }
+
+    /// The native picker's answer: opens that folder on the next frame through the same
+    /// `take_open_request` seam, so Browse and the typed path share one open path.
+    pub fn offer_open_path(&mut self, path: PathBuf) {
+        self.open_path = path.to_string_lossy().into_owned();
+        self.open_request = Some(path);
+        self.browse_request = false;
+        self.open_dialog = false;
+    }
+
+    /// A card root held several shoots. The screen asks which one; choosing one goes through
+    /// the same `open_request` seam as the typed path and the native picker.
+    pub fn ask_bundle(&mut self, choices: Vec<PathBuf>) {
+        if choices.len() > 1 {
+            self.bundle_choices = choices;
+        }
+    }
+
     /// Paints one frame. Takes the model mutable because dispatching is this surface's only way
     /// to act, and the keyboard is dispatching.
     pub fn show(&mut self, ui: &mut egui::Ui, model: &mut Model, images: &FrameImages<'_>) {
+        if !self.fonts_installed {
+            crate::install_fonts(ui.ctx());
+            self.fonts_installed = true;
+        }
         // Photos that left the shoot no longer need their GPU memory; a rescan can drop hundreds.
         let known: Vec<u64> = model.photos().iter().map(|photo| photo.meta.id.0).collect();
         self.textures.retain(|id, _| known.contains(id));
@@ -195,6 +234,7 @@ impl CullScreen {
         self.finish_sheet.show(ui.ctx(), model);
         self.error_alert(ui.ctx(), model);
         self.open_folder_window(ui.ctx());
+        self.bundle_window(ui.ctx());
         self.escape_consumed = false;
     }
 
@@ -444,6 +484,10 @@ impl CullScreen {
                 if row.button("Open").clicked() {
                     submit = true;
                 }
+                if row.button("Browse…").clicked() {
+                    self.browse_request = true;
+                    self.open_dialog = false;
+                }
                 if row.button("Cancel").clicked() {
                     self.open_dialog = false;
                 }
@@ -455,8 +499,46 @@ impl CullScreen {
                 self.open_request = Some(PathBuf::from(path));
             }
             self.open_dialog = false;
-        } else {
+        } else if !self.browse_request {
             self.open_dialog = open;
+        }
+    }
+
+    /// A camera card can hold several rolls. Culling one shoot is the unit the session and
+    /// Finish understand, so the card root asks which roll instead of opening an album of
+    /// hundreds of frames with two different games in it.
+    fn bundle_window(&mut self, ctx: &egui::Context) {
+        if self.bundle_choices.is_empty() {
+            return;
+        }
+        let mut open = true;
+        let mut cancel = false;
+        let mut chosen: Option<PathBuf> = None;
+        egui::Window::new("Choose a Shoot").collapsible(false).resizable(false).open(&mut open).show(ctx, |window| {
+            if window.input(|input| input.key_pressed(Key::Escape)) {
+                cancel = true;
+            }
+            window.label(RichText::new("This card holds more than one shoot.").small().weak());
+            window.add_space(4.0);
+            for path in &self.bundle_choices {
+                let label = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
+                let parent = path.parent().and_then(Path::file_name).map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+                if window.button(format!("{parent} / {label}")).clicked() {
+                    chosen = Some(path.clone());
+                }
+            }
+            window.add_space(4.0);
+            if window.button("Cancel").clicked() {
+                cancel = true;
+            }
+        });
+        if cancel || !open {
+            self.bundle_choices.clear();
+        }
+        if let Some(path) = chosen {
+            self.open_path = path.to_string_lossy().into_owned();
+            self.open_request = Some(path);
+            self.bundle_choices.clear();
         }
     }
 

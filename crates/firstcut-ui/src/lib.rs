@@ -17,6 +17,29 @@ mod settings_screen;
 
 pub use cull::CullScreen;
 
+/// Installs the bundled Inter family (D10) as the proportional face.
+///
+/// The three OSes ship different default UI fonts, and M4's snapshots paid for that with a
+/// per-pixel tolerance wide enough to hide real glyph regressions. One font in `assets/`
+/// removes the variable from the picture and makes Windows and Linux draw the same text as
+/// macOS. `egui` selects by family, not by weight, so the regular file is the face; the
+/// medium and semibold files are loaded under their own names for widgets that ask for a
+/// heavier look through `FontId` later.
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    for (name, bytes) in [
+        ("inter-regular", &include_bytes!("../../../assets/fonts/Inter-Regular.ttf")[..]),
+        ("inter-medium", &include_bytes!("../../../assets/fonts/Inter-Medium.ttf")[..]),
+        ("inter-semibold", &include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf")[..]),
+    ] {
+        fonts.font_data.insert(name.to_owned(), std::sync::Arc::new(egui::FontData::from_static(bytes)));
+    }
+    fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "inter-regular".to_owned());
+    // Monospace stays egui's bundled face: a proportional UI font is not a code font, and the
+    // shortcut sheet and paths read better in the default monospace.
+    ctx.set_fonts(fonts);
+}
+
 /// What one frame may paint: the current photo's decoded pixels and the filmstrip's, keyed by
 /// photo id. The app builds this per frame from its own decode cache; a photo it has not paid
 /// for yet is simply absent until the decode lands.
