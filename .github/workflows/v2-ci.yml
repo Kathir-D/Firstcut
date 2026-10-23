@@ -57,8 +57,27 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgl1 libxkbcommon-x11-0 libwayland-client0 libvulkan1 mesa-vulkan-drivers
+          sudo apt-get install -y xvfb libgl1 libegl1 libgles2 libxkbcommon-x11-0 libwayland-client0 libvulkan1 mesa-vulkan-drivers
       - name: cargo xtask ci
         run: cargo xtask ci --summary-md
-      - name: cargo xtask smoke (window opens, paints, exits 0)
+      - name: cargo xtask smoke (X11; window opens, paints, exits 0)
         run: cargo xtask smoke
+      - name: cargo xtask smoke (Wayland headless)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y weston
+          export XDG_RUNTIME_DIR=/tmp/firstcut-xdg
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --use-pixman --socket=wayland-firstcut --idle-time=0 \
+            --width=1200 --height=760 >/tmp/weston.log 2>&1 &
+          for _ in $(seq 1 50); do
+            [ -S "$XDG_RUNTIME_DIR/wayland-firstcut" ] && break
+            sleep 0.2
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/wayland-firstcut" ]; then
+            cat /tmp/weston.log
+            exit 1
+          fi
+          cat /tmp/weston.log
+          WAYLAND_DISPLAY=wayland-firstcut cargo xtask smoke
