@@ -359,6 +359,14 @@ old-driver GL fallback for wgpu, fonts, glibc floor for the AppImage), mac (docu
 access rules — same `NSOpenPanel`-equivalent via `rfd`), file dialogs on all three, bundle
 selection behavior for culling a card.
 
+Landed: Inter is bundled and installed on the first culling frame (D10); `rfd` provides the
+native folder picker and the UI only raises a `browse_request`; a camera-card root with
+several photo-bearing rolls asks “Choose a Shoot”; `FIRSTCUT_WGPU_BACKEND=gl|vulkan|metal|dx12`
+is the Linux old-driver escape hatch; `firstcut-meta` has a scan test past 260 characters;
+the macOS `Info.plist` (M6) carries the document-folder usage strings; and rawler closes
+Windows' Exact RAW gap. Windows DPI is winit's per-monitor awareness; the watcher and the
+long-path test are exercised by the 3-OS matrix, not by hand on this Mac.
+
 ### M6 — Packaging + docs + merge gate
 
 - `cargo xtask package` per OS: mac `.app` (+ release zip, cask stamp), Windows zip, Linux
@@ -368,6 +376,12 @@ selection behavior for culling a card.
   `docs/control-protocol.md`, `docs/mcp.md`,
   `docs/parity-checklist.md` (§7), `todos carry-forward`. GitNexus wiki regenerated.
 - `CHANGELOG.md` gets the v2 entry; README claims only what a test proves.
+
+Landed: `cargo xtask package` writes `target/package` (macOS app/zip/cask/SHA-256, Windows
+zip, Linux AppImage + `.deb` with a `.tar.gz` fallback) and `.github/workflows/v2-release.yml`
+runs that on the 3-OS matrix for an owner-pushed tag; the README, roadmap, changelog,
+control-protocol, MCP and parity docs are rewritten. The package task is not part of
+`cargo xtask ci` (it is a release step, not a per-commit gate).
 
 ### Merge gate (owner does this)
 

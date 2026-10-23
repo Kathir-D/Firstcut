@@ -6,12 +6,29 @@ All notable changes to Firstcut are recorded here. The format follows
 
 ## [unreleased — v2]
 
-The v2 rewrite is in progress on the `v2` branch ([docs/v2-plan.md](docs/v2-plan.md)): the core
-Rust logic now lives as a one-way ladder of domain crates (`crates/*`, `apps/firstcut-cli`),
-the Swift/Xcode app tree has been removed in favour of the native egui app (`apps/firstcut`,
-milestone by milestone), and the never-crash lint sweep (§4.5) is enforced across everything
-ported so far. Behaviour parity with what ships from v1's engine scaffolding is asserted by the
-418 tests carried over in the port commit.
+The v2 rewrite lives on the `v2` branch ([docs/v2-plan.md](docs/v2-plan.md)): the core Rust
+logic is a one-way ladder of domain crates (`crates/*`, `apps/firstcut-cli`), the Swift/Xcode
+app tree is gone in favour of the native egui app (`apps/firstcut`), and the never-crash lint
+sweep (§4.5) is enforced across the workspace.
+
+### Added and changed in v2
+
+- Native app on macOS, Windows and Linux (D1), with one bundled Inter family so glyphs and
+  snapshots match across the three OSes (D10).
+- Burst batching, loupe, grid, 2/3/4-up compare, AF and clipping overlays, histogram, info
+  panel, both rating modes, Finish Cull with a typed delete gate and undo, Settings, keymap
+  recorder/import/export, recent shoots, live folder watching and sidecar import.
+- Exact RAW sensor develop through rawler on every OS, with LibRaw as the macOS/Linux fallback
+  (D11). Progressive display keeps the loupe on the embedded preview until the develop lands
+  (D12); the warm 24 MP develop is 0.40 s on the M1 Pro, first pixels 0.067 s.
+- Native folder picker via `rfd`, including camera-card roots with multiple rolls asking
+  “Choose a Shoot”.
+- `cargo xtask package`: macOS `.app` + zip + cask stamp, Windows zip, Linux AppImage + `.deb`,
+  SHA-256 sidecars, and a tag-driven 3-OS release workflow. Signing is optional.
+- `firstcut --control <port>` JSON-lines control channel and `firstcut-cli mcp` over stdio;
+  both documented in `docs/control-protocol.md` and `docs/mcp.md`.
+- The Rust core is covered by workspace tests plus opt-in real-photo tests; the 3-OS CI matrix
+  runs `cargo xtask ci` and the window smoke on every push.
 
 ## [0.1.0] - unreleased
 

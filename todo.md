@@ -183,353 +183,79 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-22 (v2, M4 CLOSED — local gate and the 3-OS matrix both green; M5 is next).**
-> The `v2` branch is the pure-Rust rewrite (**`docs/v2-plan.md` is its contract**; agent rules
-> live in the rewritten `AGENTS.md`). Milestone state:
+> **As of 2026-10-22 (v2).** The `v2` branch is the pure-Rust rewrite;
+> **`docs/v2-plan.md` is its contract**, `docs/parity-checklist.md` is the merge-gate record,
+> and agent rules live in `AGENTS.md`. The draft PR is
+> https://github.com/Kathir-D/Firstcut/pull/6 (`v2` → `main`); it stays a draft until the
+> owner moves it, and agents never merge.
 >
-> - **Draft PR open: `v2` → `main` is https://github.com/Kathir-D/Firstcut/pull/6** — stays a draft
->   until the owner moves it; the owner merges, never an agent.
-> - **Where this session stopped (tip `6f686a8`, working tree clean, pushed):** M4 Finish is done
->   and the milestone gate is GREEN. `cargo xtask ci --summary-md` passed locally
->   (`target/ci/summary.md`: fmt, clippy, layers, assets, workspace tests) and the 3-OS matrix
->   passed on `6f686a8` — push run 39826859512 and PR run 39826867852, macos / windows / ubuntu all
->   success, `cargo xtask smoke` included.
->   - **Finish Cull, end to end:** `crates/firstcut-engine/src/finish.rs` owns `FinishStage`
->     (confirm → summary → options → dry run → report/failed) and `finish.state`; the model methods
->     `start_finish`/`confirm_finish`/`show_finish_options`/`set_finish_options`/`run_finish_dry_run`/
->     `execute_finish`/`undo_finish`/`back_finish`/`cancel_finish` drive it, with `finish.*`
->     registry verbs. `GeneralSettings` carries v1's Finish defaults (`finish_unkept`,
->     `finish_kept`, `confirm_before_finish`, `confirm_permanent_delete`) and round-trips v1's
->     keyed JSON. `crates/firstcut-ui/src/finish_sheet.rs` draws the screens; File → Finish Cull…,
->     the toolbar button and ⌘↩ start it, Escape cancels, and Settings → General edits the defaults.
->     The typed `DELETE` is enforced in the model as well as the sheet (CLI/control reach
->     `finish.execute`). No painted `executing` screen: execution is synchronous, like v1's backend
->     call (recorded in plan §4.4).
->   - **Reject Whole Batch parity fix:** v1's T24 rule is ported — only photos whose rating is
->     still neutral get the reject flag, so a half-culled batch keeps its stars and Good calls
->     (`a_whole_batch_reject_leaves_photos_that_were_already_rated_alone`); the ⇧X sheet counts
->     unrated photos and disables itself when there are none.
->   - **M4 edges verified, not re-invented:** rename reconciliation, sidecar import on first open
->     and every rescan (with the swapped-capture guard), session DB carried through schema v3
->     (`history.group_id`) and a renamed shoot, and cross-volume copy safety all had tests from
->     M2/M3; parity row 14 now names them. Evidence for Finish: engine
->     `the_finish_sheet_walks_summary_options_dry_run_report_and_undo`,
->     `a_permanent_delete_needs_the_typed_word_even_through_the_registry`; kittest
->     `the_finish_sheet_moves_the_shoot_and_undoes_it`,
->     `the_finish_sheet_shows_the_typed_gate_for_a_permanent_delete`; snapshots
->     `finish-options.png`, `finish-dry-run.png`.
->   - **One red fix, diagnosed:** Linux rejected `settings-general` with exactly three glyph-edge
->     pixels just past the 2.0 weighted-YIQ tolerance (Windows and macOS were under it). Linux now
->     has a 3.0 per-pixel ceiling in `kittest.toml`; `max_failed_pixels` stays zero on every OS,
->     and plan §9 records why.
-> - **Next action: M5 — cross-platform hardening** (Windows paths/long paths/watcher/DPI/fonts;
->   Linux Wayland + X11, old-driver GL fallback, fonts, glibc floor; mac document-folder access and
->   the file dialogs; bundle selection when culling a card). Nothing is blocked; the Exact RAW §5
->   gate still waits on the owner.
-> - **CI matrix fully GREEN, including Windows, for the first time (run 39456083872, on
->   `7a6e9a2`).** The windows chain was unmasked one failure at a time: ext4 inode reuse needed
->   `same_file` size corroboration (`233bd5f`), a failing `sessions_dir()` needed the same
->   `last_error` treatment as every other open leg (`3445e70`), the fileops free-space test had to
->   assert the documented windows answer (`41c2265`), and — the last one — `firstcut-meta`'s
->   `rel_path` used the platform separator. Now **the walk builds separators itself** (`3bd7e73`):
->   `strip_prefix` is gone from `collect`, which threads `dir_rel` down and joins components with
->   `/`. A mac file *named* `a\b.JPG` still stays distinct from `a/b.JPG` in folder `a` (the
->   rewrite would have merged them), so `PhotoId`s match a folder moved across platforms. 458
->   workspace tests green; all pushes committed and pushed after every commit.
-> - **Settings persistence is ported, wired, and checked against real bytes** (`41c2265` +
->   `1303b02` + `0d3f4bc`): `crates/firstcut-engine/src/settings.rs` reads v1's
->   `settings.json` — Swift's keyed enum bytes (`{"case":{}}` / `{"case":{"_0":…}}`), the
->   all-caps `debugHUD` key, `KeepMapping::{"type":"rating","stars":5}` — with unknown keys
->   ignored, unknown values resetting the WHOLE file the way v1's `try?` did. `SettingsStore`
->   writes the whole file back (tempfile + persist) so M3's finish keys survive every save.
->   `Model::attach_settings_store` seeds the General half; the five general setters call
->   `persist_settings` (failures land in `last_error`); `toggle_auto_advance` persists nothing
->   (the session's say, not the app's).
-> - **The REAL v1 settings file is a fixture** (`crates/firstcut-engine/tests/fixtures/v1-settings.json`,
->   copied from this machine's `~/Library/Application Support/Firstcut/settings.json`): the test
->   `the_real_v1_file_every_section_loads` pins every section against what Swift's encoder
->   actually emitted, including the round trip back out.
-> - **UI leg landed (`7a6e9a2`),** the M1 slice's surface: `crates/firstcut-ui/src/cull.rs` —
->   filmstrip + loupe + keyboard (stars 0–5, arrows, ⌘Z/⌘⇧Z) that dispatches **only** through
->   `registry::dispatch`, a GPU texture cache keyed by photo id, wheel zoom + drag pan,
->   double-click reset. `apps/firstcut` now opens a folder argument, attaches the settings store
->   (next to the Sessions dir, v1's location), and runs a one-worker decode bank (inflight 4,
->   cache 64, failures never re-requested; the priority window/tiers that replace it are M2).
->   Smoke-tested on this mac: `HOME=/tmp/… firstcut --smoke <folder>` paints 5 frames, exit 0,
->   decode errors visible on stderr. egui 0.37's new panel/App APIs took a rewrite (`App::ui`
->   gives the root `Ui`; `egui::Panel::bottom`; `CentralPanel::show(ui, …)`; `smooth_scroll_delta`).
-> - **A plain JPEG photo now displays from the file itself** (`a505bc1` + `e00c51d`): the exif
->   reader sets `full_preview` over the whole file for `FileKind::Jpeg` (v1's rule; the loupe had
->   "has no embedded JPEG to display" on a JPEG-only shoot before).
-> - **CLI `run` leg landed (`d638cd6`):** `firstcut-cli run [--sessions <dir>] <cmd> k=v …` chains
->   registry commands, one JSON line per command, stops at the first failure; digits coerce to
->   numbers, `true`/`false` to bools, raw JSON accepted; `--sessions` injects `file.open`'s
->   `sessionDir` (the tests' isolation pattern); `run help` prints the registry. End-to-end test
->   opens a synthetic CR3 shoot, rates, reads the state back through the same dispatch.
-> - **kittest snapshot leg landed (`c8ab3ad`):** `apps/firstcut/tests/culling_ui.rs` drives the
->   real screen headless (`egui_kittest` wgpu+snapshot): a synthetic-CR3 shoot opened for real,
->   test-minted pixels, `key_press` through the harness, a11y check on, two committed PNGs under
->   `apps/firstcut/tests/snapshots/` (baseline generated with `UPDATE_SNAPSHOTS=1`). First lesson:
->   egui's bundled fonts have NO U+2605, and a missing glyph panics the frame — the strip's star
->   readout is ASCII (`*`/`·`) until the theme-assets leg. Second lesson: clippy's
->   `allow-*-in-tests` config does not reach helpers outside `#[test]` fns in a `tests/` target —
->   the file carries a scoped allow instead.
-> - **MCP leg landed (`34ff0ad`):** `firstcut-cli mcp` — minimal JSON-RPC 2.0 on ndjson stdio:
->   `initialize` (echoes the client's protocolVersion), `ping`, `tools/list` generated from
->   `REGISTRY` (ids dot-free-named `firstcut_<dots_as_underscores>`, input schemas read off the
->   declared params, raw dotted-name calls also accepted), `tools/call` → the one `dispatch`.
->   Results as `{content:[{type:text,text:…}], isError}`. Live-checked with a piped session
->   (open → rate → state). `--connect host:port` (control-channel bridge) is a later leg.
-> - **Control channel landed (`27e520b`):** `firstcut --control <port>` — JSON lines on
->   localhost: `engine.execute`/`engine.state`/`engine.commands`
->   (through `registry::dispatch`), and the `ui.*` trio rendered through the SAME headless
->   harness the snapshot tests use: `ui.widgets` (a11y tree names+rects),
->   `ui.clickWidget` (clicks by accessible name — the live test spawned a real window,
->   clicked `filmstrip: IMG_0003.JPG` and the cursor moved), `ui.screenshot` (PNG path).
->   Listener thread + per-connection readers; requests answered on the UI thread inside a
->   normal frame; **a queued request must wake the UI thread** — otherwise eframe idles in
->   the AppKit event loop and everything times out (first live run proved exactly this;
->   the `wake` slot gets the ctx from the first frame). `apps/firstcut` now ships
->   `egui_kittest` + `image` as REGULAR deps (layers updated: 13+2 edges checked green).
-> - **Parity checklist landed (`e2049b5`):** `docs/parity-checklist.md` mirrors §7 row by
->   row with honest status (✔ rows carry the test names; unmoved rows carry their
->   milestone). The merge gate reads this file, not the plan.
-> - **Opt-in real-photo tests passed** (`scripts/test-with-photos.sh` over `~/Documents/testing`):
->   475 passed, 0 failed — the +17 over the synthetic-only run are the owner's corpus tests.
-> - **Showcase leg landed (`95732f2`+`150439a`):** `docs/showcase/m1-screenshot.sh` drives the
->   real app (scratch HOME, `--control <port>`) and saves ONE screenshot of the open shoot to
->   `docs/showcase/out/` (gitignored — the pixels are the owner's photos, never repo content).
->   First real-CR3 run caught a **crash**: a 6000×4000 preview hit egui's max-texture-side
->   assert and killed the frame — fixed in `95732f2` (`fit_to_max_side`, one uniform stride,
->   3 regression tests in `crates/firstcut-ui/src/cull.rs::tests`). Second finding, recorded
->   in the parity checklist row 17: decoded pixels ignore EXIF orientation (sideways loupe) —
->   M2's decode tiers own the rotate.
-> - **Milestone gate status (2026-10-20):** `cargo xtask ci` → **pass** (target/ci/report.json +
->   summary.md), and the matrix is **green on the tip** (run 39465662543 through `86a4c4b`).
->   PR #6's body describes the M1 status; the only owner-owned remainder in M1 is the README
->   image itself (run `docs/showcase/m1-screenshot.sh` on an approved shoot — the pixels are
->   the owner's call).
-> - **M2 pipeline landed (commits `8c424db`, `fd6c784`, `2b574e6`, and the M2 docs commit):**
->   `firstcut-engine::pipeline` owns the priority window, cancellation generations, per-tier
->   LRU under a byte budget, pressure shedding and the one-deep Exact RAW tier; its four
->   audit-defect regression tests are the ones the plan named. The app now runs a worker pool
->   around it (`apps/firstcut/src/main.rs`), reports `viewport_edge`/zoom/exact-raw from the
->   model, rebuilds the catalog only on `catalog_revision`, and drops thumbnail Arcs when the
->   policy evicts them. EXIF orientation is applied exactly once (decode seam; LibRaw develops
->   with `user_flip = 0`). Histograms ride on the cached `Frame` and come from those oriented
->   pixels. `notify` watcher + `Model::rescan_folder` reconcile on folder events and keep the
->   cursor by id; `on_exit` calls `Model::close_session` (flush + checkpoint). Visual
->   signatures are computed from the same thumbnail pixels the strip shows and submitted to the
->   session; re-cuts arrive through `drain_session_messages`.
-> - **Exact RAW backend:** `firstcut-decode-libraw` develops through `rsraw`'s vendored LibRaw
->   0.21.1 on macOS/Linux. **Windows is deliberately `None`** (rsraw's build script refuses
->   MSVC); the tier falls back to the embedded JPEG there. Note in `docs/v2-plan.md` §4.2.
-> - **§5 decode rows measured** (`docs/v2-plan.md` §5.1, `docs/qa/perf-baselines.md`, both games):
->   first photo 0.118 s warm / 0.27–0.33 s cold, arrow → next 0.070–0.082 s, zoom decode
->   0.195 s. **Exact RAW is 1.03–1.05 s against the 0.119 s gate** — v1's 0.079 s was Core
->   Image on the GPU, LibRaw here is single-threaded CPU. Recorded as an owner decision with
->   the options; do not "fix" it by choosing a visibly worse demosaic to hit the number.
-> - **First-photo fast path landed:** `Model::begin_open` reads one placeholder header, sets
->   `Phase::Loading`, and shows its preview; `Session::open_in` runs on an app-owned thread and
->   `finish_open` swaps the real catalog in (the placeholder's id survives the cache). The
->   watcher's token is held until the catalog is real so a change during the scan is not lost.
->   `the_fast_path_shows_one_photo_before_the_scan_installs_the_catalog` and
->   `a_failed_open_returns_to_welcome_with_the_reason` pin the seam.
-> - **Real-photo sweep green:** `every_sampled_photo_displays_in_display_orientation` (12
->   photos across the four games) and `a_real_raw_develops_in_sensor_orientation_and_is_rotated_once`
->   (orientation 8 → 3999×5999 portrait) pass with `scripts/test-with-photos.sh`'s env.
-> - **M2 gate GREEN (2026-10-21):** `cargo xtask ci` passes on this machine
->   (`target/ci/summary.md`) and the 3-OS matrix passed on `ce1fbf5` (run 39671606523:
->   macos, windows, ubuntu all success). The Windows leg had caught one real bug the local
->   gate could not: target-gated imports in `firstcut-decode-libraw` were unused on Windows
->   (fixed in `ce1fbf5`, now also checked locally with
->   `cargo clippy -p firstcut-decode-libraw --target x86_64-pc-windows-msvc`). The only
->   M2 remainder is the owner's call on the Exact RAW gate, which is a decision, not work.
-> - **M3 started — progress HUD (`crates/firstcut-ui/src/cull.rs`):** floating batch/photo
->   position, shoot-wide tier counts, and the current photo's rating in the active mode (stars or
->   keep/not-keep) with flag and colour label; H toggles it, as v1's `hudVisible` did. Pure text
->   builders are unit-tested; both kittest snapshots show the HUD.
-> - **Info panel + histogram:** right-hand inspector (I toggles), capture fields and the
->   64-bin luma area with RGB traces; the data is the decode seam's already-oriented histogram.
->   Snapshot `culling-info-panel.png`.
-> - **Rating modes on screen:** toolbar Stars / Keep (dispatches `settings.ratingMode`); P is
->   mode-aware (keep in Keep mode, pick in Stars mode), X rejects. Snapshot `culling-keep-mode.png`.
-> - **Loupe zoom rules:** click to 1:1 anchored where clicked, double-click jumps a batch by the
->   half clicked, and zoom/pan survive a move only under zoom lock. ⌘←/→ move between batches.
-> - **Grid (G / Escape):** a wrapping contact sheet of the whole shoot, same textures and
->   cursor accent as the strip; click selects through the registry walk, double-click opens the
->   loupe. Snapshot `culling-grid.png`.
-> - **Compare (C / ⌥C / ⌥⇧C):** 2-, 3- or 4-up of the current batch, one shared zoom/pan,
->   click selects, double-click returns to the loupe. Snapshots use display-tier pixels from the
->   app's cache (`FrameImages.display`). `culling-compare.png`.
-> - **Overlays:** A shows the in-focus AF boxes mapped through EXIF orientation, J marks
->   highlight/shadow clipping from the display pixels using the Viewer thresholds.
->   Snapshot `culling-clipping.png` plus the mapping/clip unit tests.
-> - **Toolbar + menus:** the toolbar carries ‹/› batch nav, the folder/batch title, Stars/Keep,
->   Loupe/Grid/Compare/Info. The in-window menu bar (File/Edit/View/Photo/Help) dispatches the
->   same registry commands as the keys; File → Open Folder… gathers a typed path and the app
->   opens it asynchronously (`take_open_request`). The ? cheat sheet is generated from
->   `REGISTRY`; snapshots `culling-shortcuts.png` and `open-folder-dialog.png`.
-> - **Welcome recents + resume:** the Welcome phase lists up to eight shoots already in the
->   sessions directory, read from the session databases themselves (no recents file); choosing
->   one asks the app to open it, and the database restores the cursor. Snapshot
->   `welcome-recents.png`; the engine test reopens the shoot and finds the same cursor.
-> - **Reject Whole Batch:** off by default; when enabled the Photo menu item and ⇧X open a
->   confirmation sheet, and confirming dispatches `batch.reject` (one engine undo step).
->   Snapshot `reject-batch-dialog.png` plus the model test.
-> - **Error alerts:** the model's `last_error` paints as a centered, dismissible alert in every
->   phase; Dismiss is a registry command (`error.dismiss`), so the UI still never clears engine
->   state itself. Snapshot `error-alert.png`.
-> - **Settings screens:** ⌘, (or File → Settings…) opens General / Keyboard / Viewer /
->   Metadata / Performance. Every control applies immediately through a model setter and writes
->   one half of `settings.json` atomically; the Viewer background, zoom lock, HUD-on-open, AF
->   default, clipping thresholds and info-field selections are read by the culling screen.
->   Snapshots `settings-general.png` / `settings-viewer.png` click the widgets and re-read the file.
-> - **Keymap:** `firstcut-engine::keymap` ships `DefaultKeymap.json`, layers the user's
->   `keymap.json` exactly as v1 (same chord + command replace defaults; mode-specific P wins),
->   and the window routes every key through it. Settings → Keyboard records a chord on click
->   (Escape cancels) and has Import…/Export…/Reset All; menus and the cheat sheet read the same
->   map. Snapshot `settings-keyboard.png`; the harness test re-reads the file and checks that the
->   new chord routes while the replaced one does not. egui cannot see Caps Lock, so v1's Caps
->   Lock default stays in the file but never fires (plan §4.4).
-> - **M3 CLOSED (2026-10-21):** local `cargo xtask ci` green and the 3-OS matrix green on
->   `239b06b` (run 39683964460). All M3 screens, the keymap/recorder and Settings are in. Next
->   is M4 (Finish Cull). Live watch + flush-on-quit landed in M2.
-> - **Test discipline note:** every commit above passed fmt + clippy `-D warnings` + touched
->   crates' tests (+ `cargo xtask layers` where edges moved: `firstcut-ui` decoded nothing, the
->   app carries the decode dep; `firstcut` gained `firstcut-catalog`, already a listed app edge).
->   GitNexus `detect-changes --scope all` ran before the settings and meta commits; the index is
->   due a re-`analyze` (big new files since: cull.rs, run.rs, settings.rs).
+> **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`
+> and the 3-OS matrix green. This session has since landed (or is landing in the commits that
+> follow this file):
 >
-> **v1 record (pre-rewrite), last state 2026-10-19:** branch cleanup — all branches/worktrees from
-> the 2026-10-14 plan are gone except the kept record `autopilot/firstcut-fixes`; nothing merged
-> (the chain's Swift CI was red on the tip; main is green). Full v1 history: `git log`.
-**As of 2026-09-30 (agent session on Kathir's Mac, not the cloud container):**
-
-- **The blockers in the previous handoff are gone: this session is on the real Mac.** `cargo`,
-  `swift`, `xcodebuild`, `xcodegen`, `swift-format` and `exiftool` are all present, and the four
-  games are in `~/Documents/testing`. So the Swift changes below can be built and tested locally
-  instead of waiting for `ci.yml`, the perf rows in §7.5 can be measured rather than estimated, and
-  the app can be launched and screenshotted. Baseline before this session's work: `cargo fmt`
-  clean, `cargo clippy --all-targets -D warnings` clean, 343 Rust tests green, 231 Swift unit
-  tests + 21 integration tests green.
-- **Fixed (todo.md §0.3, the first item of the previous "Next, in order"):** the keep threshold now
-  reaches the core. `AppModel` calls `session.setKeepThreshold(settings.keepThreshold)` after a
-  folder opens and again whenever the setting changes, so "Only 5 stars" changes what Finish keeps
-  and the summary sheet's tier counts, not only the filmstrip. The FFI export existed; the app
-  never called it. New seam method on `SessionBackend` and `CoreSessionAPI`, implemented in
-  `UniFFICoreSession` and recorded by `MockSession`. Two tests in `SessionTests` fail if either
-  call is removed (checked by mutation).
-- **Fixed (todo.md §0.5 item 2):** the thumbnail/preview cache no longer flickers away when the
-  watched folder changes. `ImageProvider.open` used to call `engine.reset()` unconditionally, so a
-  single file landing in (or leaving) the open folder blanked the filmstrip and re-decoded the whole
-  shoot at ~300 ms per CR3 (todo.md §7.1) — several minutes for Game1JENKS — while the user was in
-  the middle of rating it. `open` now distinguishes the two cases: a **different** folder resets
-  (ids are hashes of file names, so a stale entry would show the wrong photograph), while the
-  **same** folder with a different file set reconciles — it keeps every entry whose id is still
-  there and whose file is still the same size, and drops the rest. A decode in flight is checked
-  against both the epoch and the file's current size, so a file replaced under the same name cannot
-  be served as the old one. Two new tests; the "added a photo" one fails if the reconcile is undone.
-
-- **Fixed — the shoot was decoded twice.** `VisualSigWorker` decoded every photograph from the file
-  URL to compute its visual signature, *in addition to* the pipeline decoding the focus window. At
-  ~300 ms per CR3 that is the whole 2,880-photo shoot read and decoded a second time, on the same
-  four threads, competing with the decodes the user is waiting for — and it is why the §7.3 "all
-  thumbnails + hashes < 20 s" row was hopeless as written. The two now share one decode: the
-  signature pass asks the cache first and publishes what it decodes, so each photo is decoded once
-  whichever pass gets there first, and the filmstrip gets a free thumbnail for everything the
-  signature pass touched. `ImageProvider` conforms to a `ThumbnailSource` seam (`cachedThumbnail` /
-  `offerThumbnail`, both `nonisolated` and both a single `NSLock` read, so the detached `.utility`
-  pass never has to touch the main actor). **The remaining decode timings are still unmeasured** —
-  this removes a duplicated decode, it does not by itself establish the 20 s number.
-- **Next, in order:**
-  1. ~~Wire the keep threshold from the app.~~ Done above.
-  2. ~~Check the cache on a folder change.~~ Done above.
-  3. ~~§7.5 work items~~ Done: the `PRVW` comment, the full-size JPEG byte range, `firstcut bench
-     --folder` (including the **db phase**, measured), `os_signpost` names, the shared 256 px decode,
-     display decodes from the byte range — and the rows are measured in `docs/qa/perf-baselines.md`.
-  4. ~~The first-photo fast path.~~ Done: one header read puts a photograph on screen while the
-     scan runs behind it (§7.5 work items, above).
-  5. ~~Sidecar ratings were imported only when a folder's session was first created~~ **Fixed.**
-     The import now runs at **every open and every rescan**, for photographs the session has no
-     rating row of its own for — so a Lightroom-rated card copied into an open shoot, or a photo
-     rated elsewhere between two opens, arrives rated, while a rating Firstcut made (or cleared)
-     can never be overwritten from outside. The same change closes the mirror bug: **a different
-     capture saved under a known name no longer inherits that name's rating.** `reconcile` treats
-     a known id whose *every* identity disagrees — inode, shutter count and size — as a different
-     photograph and drops the departed one's rating and undo history; the departed one's stale
-     sidecar is recognised (it still holds exactly the departed row's stars and label) and is not
-     re-imported onto the new capture. Any partial agreement (edited in place, same capture back
-     from a card, a parser that missed the shutter count) keeps the rating — destroying a rating
-     on a guess is worse than lending one on a coincidence. Five tests, each verified by mutation
-     to fail when its half of the fix is undone.
-  6. **Screenshot pass done, and it found two real bugs** (the loupe rendered flat black in the mock
-     shoot, and `-FirstcutSettings 1` opened nothing):
-     - **The viewer bound the wrong image source.** `AppEnvironment`'s host factory captured the
-       real `ImageProvider` at registration, so after the mock shoot swapped the whole cull state
-       (whose source is synthetic) the viewer still held a provider that had never been given a
-       folder — every lookup nil, a black loupe, while the filmstrip read the state and drew its
-       thumbnails. The factory now resolves **`state.images` and `state.activeModel` when a pane
-       is created** (`CullViewState.activeModel`, new seam, nil for the preview stand-in), so a
-       `use(_:)` swap is honoured and the panes report frames/viewport to the model on screen.
-       Verified by pixel analysis of a `screencapture` before and after: the viewer region went
-       from one flat colour to content. The CI Screenshots workflow benefits directly — its loupe
-       captures were black.
-     - **`-FirstcutSettings 1` opened nothing**: `openSettings()` threw silently on macOS 27
-       (`try?` swallowed it), so the screenshot workflow had no Settings screen. It now reports
-       the error and falls back to the AppKit action the Settings menu item itself sends
-       (`showSettingsWindow:`, then the macOS 13 spelling) — verified: the General window opens.
-     - Every screen was then launched and checked (pixel statistics — the agent cannot see, so
-       this is a structural pass): loupe, grid, compare2/4, Finish sheet, Settings, Welcome all
-       render content; no blank or one-colour region remains except where one belongs.
-     - What is still the owner's: the *look* — spacing, text truncation, Finder-likeness (§0.2
-       item 1). Those need eyes.
-- **Fixed — the ~/Documents TCC hang, and the timeout tool that made it findable.** `xcodebuild test`
-  on this machine was hanging indefinitely (no prompt, no failure, no output), which is the worst
-  failure mode there is. Causes, all of them now gone:
-  - `FixturePhotos.fixtureURL` asked the bundle for a `tests/fixtures/exiftool` **subdirectory**. But
-    `project.yml` copies each fixture folder as a *folder reference*, so the bundle holds a flat
-    `exiftool/`. The nested lookup never matched, so it fell through to the repository — inside
-    `~/Documents` — and the GUI test host raised a TCC consent prompt and waited forever. It now tries
-    the layouts that actually exist, and its repository fallback is off in any test process.
-  - `TestEnvironment.testPhotos` was a `static let` that `stat`ed `~/Documents/testing` on first
-    access **regardless of the opt-in**. The `FIRSTCUT_ALLOW_PHOTO_TESTS` gate covered the tests but
-    not the lookup, so even `testPhotoDiscoveryIsOptional` triggered it. It now returns nil without
-    touching the filesystem unless the opt-in is set.
-  - `FirstcutCoreBridge.generatedBindingsSource` read the generated bindings from the repository for
-    three tests. `scripts/build-core.sh` now also writes them as `FirstcutCore.bindings.txt` and
-    `project.yml` bundles that into each test target (Xcode silently refuses to copy a `.swift` file
-    through Copy Bundle Resources).
-  - `TestEnvironment.repositoryRoot` walked up looking for `project.yml`, i.e. stat'ed inside
-    `~/Documents` just to compute a path for a message. It is now pure path arithmetic.
-  - `Fixtures.bundled` no longer falls back to the repository at all; it returns nil and the test
-    fails with a message, which beats hanging.
-
-  `scripts/with-timeout.sh <seconds> <command>` now wraps every build and test run, so a hang is a
-  124 with a diagnosis instead of a frozen shell. It found the above in minutes. The full suite is
-  235 unit + 24 integration + 3 performance tests, green, in about 4 seconds.
-- **Fixed (§7.5 fact 1, the CR3's three JPEGs).** Measured, not assumed, on `Game1JENKS/IMG_3181.CR3`
-  and `IMG_6117.CR3`: a CR3 carries **160×120** (`THMB`), **1620×1080** (`PRVW`) and **6000×4000**
-  (the first image track's sample). The old doc comment called `PRVW` "full-size", which it is not.
-  - The core now reads the sample table (`stsz` + `stco`/`co64` under `trak/mdia/minf/stbl`) and
-    reports the full-resolution JPEG as `PhotoMeta.full_preview`, through the FFI to Swift's
-    `PhotoMeta.fullPreview`. **Every image track's `stsd` says `CRAW`**, including the one whose sample
-    is a JPEG, and all three are `vide`, so neither the codec nor the handler type identifies it —
-    the sample's own `FF D8` and `SOF` do, and the largest JPEG wins.
-  - **Display decodes now read that byte range** instead of handing the CR3 to ImageIO, so ImageIO
-    never parses the container or picks an image. `byteRangeDecodes` counts the ones served this way;
-    `decodeFull(url:)` stays as the fallback for a file with no reported range.
-  - A test asserts the range path and the container path give **identical pixels**, and that partial
-    or out-of-bounds ranges return nil (so a stale range falls back instead of showing a torn image).
-  - `tests/cr3_exiftool.rs` gained a test that all three JPEGs are found on every sampled photo, that
-    the bytes at each range really are a JPEG, and that `PRVW` is the 1620×1080 one — the fact that
-    has been got wrong twice.
-- **Still the owner's, for the reason that it is a judgement call, not for lack of a machine:** the
-  ground truth in `tests/fixtures/ground-truth/` (an agent must not synthesise it), the
-  Game1JENKS re-press decision, the "pick by eye" embedded-preview vs `CIRAWFilter` choice at
-  16", and the visual sign-off against Finder.
-
----
+> - **M5 shell hardening:** bundled Inter Regular/Medium/SemiBold with
+>   `firstcut_ui::install_fonts` (all UI snapshots regenerated); `rfd` native folder picker
+>   (Browse… plus File → Open Folder…); camera-card roots with several photo-bearing
+>   `DCIM/<roll>` folders now ask “Choose a Shoot” (`card_shoots`, `ask_bundle`,
+>   `bundle_window`, kittest `a_card_with_two_rolls_asks_which_shoot_to_open` and
+>   `bundle-chooser.png`); `FIRSTCUT_WGPU_BACKEND=gl|vulkan|metal|dx12|all` escape hatch;
+>   system font fallback disabled; a >260-character Windows-path scan test in
+>   `firstcut-meta`; branding icons under `assets/branding/` with attribution.
+> - **Exact RAW backend (D11):** `firstcut-decode-libraw` now tries **rawler 0.8** first on
+>   all three OSes, with LibRaw 0.21.1 as the macOS/Linux fallback and the rawler panic caught
+>   at the dependency boundary. A real orientation-8 CR3 develops to 4000×6000 portrait
+>   (`a_real_raw_develops_in_sensor_orientation_and_is_rotated_once`). Windows no longer has
+>   an exact-RAW gap. The crate still owns the workspace's only unsafe carve-out.
+> - **Exact RAW latency:** warm **0.40 s** on Game1JENKS/Game3KC (develop 0.37 + orientation
+>   0.03; release LTO fat), down from LibRaw's 1.03–1.05 s. `apply_orientation` is now
+>   destination-row parallel (0.14 → 0.03 s). First pixels are the display preview at
+>   **0.067 s** because the loupe paints `Tier::ExactRaw` when present and falls back to
+>   `Tier::Display` while it is in flight (D12). **The 0.119 s gate is below the ~0.12 s CRX
+>   decode floor** for 24 MP on this CPU — rawler decode alone is 0.12–0.17 s, LibRaw unpack
+>   0.20 s, Core Image 0.44 s first render. Owner decision recorded in plan §5.1; do not
+>   “fix” it with a visibly worse demosaic.
+> - **M6 packaging:** `cargo xtask package` builds `target/package` for the host: macOS
+>   `Firstcut.app` + zip + per-arch cask stamp + SHA-256; Windows zip; Linux AppImage (when
+>   `appimagetool` exists) and `.deb` (when `dpkg-deb` exists), else a `.tar.gz`. The macOS
+>   `Info.plist` carries the three document-folder usage strings, `NSHighResolutionCapable`,
+>   numeric bundle versions and the category. Ad-hoc codesign by default;
+>   `FIRSTCUT_CODESIGN_IDENTITY` upgrades it. `.github/workflows/v2-release.yml` runs the
+>   3-OS package matrix on an owner tag (or manual dispatch) and attaches artifacts/checksums
+>   to the Release. Tags/Releases stay the owner's.
+> - **M6 docs:** rewritten `README.md` (feature status, measured numbers, build/packaging),
+>   new `ROADMAP.md`, updated `CHANGELOG.md`, new `docs/control-protocol.md` and
+>   `docs/mcp.md`, refreshed `docs/parity-checklist.md` rows 17–18 and surfaces. The control
+>   channel methods are exactly `engine.execute`, `engine.state`, `engine.commands`,
+>   `ui.widgets`, `ui.clickWidget`, `ui.screenshot`; MCP is stdio JSON-RPC with
+>   `initialize`/`ping`/`tools/list`/`tools/call` and **no** `--connect` bridge yet.
+>
+> **Gates to run after these commits (in order):**
+>
+> 1. Per commit: `cargo fmt --all --check`; clippy for touched crates with `-D warnings`;
+>    touched-crate tests; `cargo xtask layers` when edges moved (rawler/rayon are external
+>    deps, so the 13 workspace edges should not).
+> 2. Milestone: `cargo xtask ci --summary-md` on this machine (fmt, clippy, layers, assets,
+>    workspace tests, `target/ci/report.json` + `summary.md`).
+> 3. Push, then the 3-OS matrix (`v2-ci`) must be green; the release workflow is separate
+>    and only an owner tag exercises it.
+> 4. `UPDATE_SNAPSHOTS=1 cargo test -p firstcut --test culling_ui` was needed once for Inter;
+>    after that the snapshot suite must pass unmodified on macOS, Windows and Linux (Linux
+>    keeps its 3.0 glyph-edge ceiling).
+>
+> **Blocked / owner-only (unchanged):** boundary ground-truth files (never synthesised),
+> preview-vs-Exact-RAW default judgement, Game1JENKS re-press decision, Lightroom/Capture One
+> sidecar round-trip, visual sign-off on each OS, Homebrew tap secret, and the `v2.0.0` tag.
+> The Exact RAW 0.119 s gate also needs an owner decision (accept 0.40 s + progressive first
+> paint, fund a native CRX/GPU decoder, or redefine the row as first-frame latency).
+>
+> **Useful commands / paths:** benchmark photo
+> `/Users/kathirdev/Documents/testing/Game1JENKS/IMG_6117.CR3` (the bench actually picks
+> `IMG_3181.CR3`); corpus `Game1JENKS`, `Game3KC`, `Game4VRE`, `Gane2NC`;
+> `cargo run -p firstcut -- --control 4317 <folder>`;
+> `cargo run -p firstcut-cli -- bench --decode --folder <folder> --repeat 5`;
+> `FIRSTCUT_TEST_PHOTOS=$HOME/Documents/testing FIRSTCUT_ALLOW_PHOTO_TESTS=1 cargo test
+> --workspace -- --include-ignored`. GitNexus is stale around the new files; re-index with
+> `node .gitnexus/run.cjs analyze --embeddings --pdg` if impact/detect_changes matter.
 
 ## 1. What Firstcut is
 
