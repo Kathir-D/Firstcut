@@ -28,6 +28,11 @@ use firstcut_types::PhotoId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Tier {
     Thumbnail,
+    /// The camera's small `PRVW` JPEG at its native size. One decode is ~9 ms on the M1 Pro
+    /// versus ~67 ms for the full embedded preview, which is what keeps a held arrow key from
+    /// outrunning the loupe: every frame is painted with real pixels while the sharp display
+    /// decode is still in flight.
+    Preview,
     Display,
     ExactRaw,
 }
@@ -36,6 +41,7 @@ impl Tier {
     pub fn name(self) -> &'static str {
         match self {
             Tier::Thumbnail => "thumbnail",
+            Tier::Preview => "preview",
             Tier::Display => "display",
             Tier::ExactRaw => "exactRaw",
         }
@@ -47,26 +53,33 @@ pub const THUMBNAIL_EDGE: u32 = 256;
 /// What a display decode asks for before the window has reported a size (v1's
 /// `fallbackDisplayEdge`).
 pub const FALLBACK_DISPLAY_EDGE: u32 = 2048;
+/// The navigation preview's target. The small `PRVW` JPEG is usually 1620×1080; asking for
+/// 2048 keeps `downsample_to` from halving it (its integer step would turn 1600 into 540 px).
+pub const PREVIEW_EDGE: u32 = 2048;
 
 /// Bytes each tier may hold. Split from one total so Settings → Performance keeps a single
-/// number: thumbnails are an eighth, displays five eighths, and Exact RAW the last quarter (one
-/// 6000×4000 develop is ≈92 MB, so the quarter holds a handful and the one-deep rule is what
-/// really bounds it).
+/// number, in sixteenths: thumbnails 1, navigation previews 1, displays 10 (five eighths), and
+/// Exact RAW the last 4 (one 6000×4000 develop is ≈92 MB, so the quarter holds a handful and
+/// the one-deep rule is what really bounds it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TierBudgets {
     pub thumbnail: usize,
+    pub preview: usize,
     pub display: usize,
     pub exact_raw: usize,
 }
 
 impl TierBudgets {
     pub fn from_total(total: usize) -> Self {
-        Self { thumbnail: total / 8, display: total.saturating_mul(5) / 8, exact_raw: total / 4 }
+        // Sixteenths: strip 1, navigation preview 1, display 10 (5/8), exact 4 (1/4). The
+        // preview is only ~7 MB a frame, so this still holds dozens of them.
+        Self { thumbnail: total / 16, preview: total / 16, display: total.saturating_mul(10) / 16, exact_raw: total / 4 }
     }
 
     pub fn of(self, tier: Tier) -> usize {
         match tier {
             Tier::Thumbnail => self.thumbnail,
+            Tier::Preview => self.preview,
             Tier::Display => self.display,
             Tier::ExactRaw => self.exact_raw,
         }
@@ -125,6 +138,9 @@ pub struct Stats {
     pub thumbnail_cache_hits: u64,
     pub thumbnail_cache_misses: u64,
     pub thumbnail_decodes: u64,
+    pub preview_cache_hits: u64,
+    pub preview_cache_misses: u64,
+    pub preview_decodes: u64,
     pub display_cache_hits: u64,
     pub display_cache_misses: u64,
     pub display_decodes: u64,
@@ -213,7 +229,7 @@ impl<V> Pipeline<V> {
 
     pub fn set_budgets(&mut self, budgets: TierBudgets) {
         self.budgets = budgets;
-        for tier in [Tier::Thumbnail, Tier::Display, Tier::ExactRaw] {
+        for tier in [Tier::Thumbnail, Tier::Preview, Tier::Display, Tier::ExactRaw] {
             self.evict(tier);
         }
     }
@@ -235,7 +251,7 @@ impl<V> Pipeline<V> {
         self.best_edge.retain(|key, _| next.contains_key(&key.id));
         self.failed.retain(|key| next.contains_key(&key.id));
         self.pending.retain(|key, _| next.contains_key(&key.id));
-        for tier in [Tier::Thumbnail, Tier::Display, Tier::ExactRaw] {
+        for tier in [Tier::Thumbnail, Tier::Preview, Tier::Display, Tier::ExactRaw] {
             let mut kept = VecDeque::new();
             for key in self.lru.get(&tier).into_iter().flatten() {
                 if next.contains_key(&key.id) {
@@ -283,7 +299,7 @@ impl<V> Pipeline<V> {
         {
             self.stats.focus_misses = self.stats.focus_misses.saturating_add(1);
         }
-        for tier in [Tier::Thumbnail, Tier::Display, Tier::ExactRaw] {
+        for tier in [Tier::Thumbnail, Tier::Preview, Tier::Display, Tier::ExactRaw] {
             self.evict(tier);
         }
     }
@@ -334,6 +350,7 @@ impl<V> Pipeline<V> {
         self.store(key, Entry { value, bytes, edge });
         match job.tier {
             Tier::Thumbnail => self.stats.thumbnail_decodes = self.stats.thumbnail_decodes.saturating_add(1),
+            Tier::Preview => self.stats.preview_decodes = self.stats.preview_decodes.saturating_add(1),
             Tier::Display => self.stats.display_decodes = self.stats.display_decodes.saturating_add(1),
             Tier::ExactRaw => {
                 self.stats.exact_raw_decodes = self.stats.exact_raw_decodes.saturating_add(1);
@@ -415,6 +432,7 @@ impl<V> Pipeline<V> {
     fn record_hit(&mut self, tier: Tier) {
         match tier {
             Tier::Thumbnail => self.stats.thumbnail_cache_hits = self.stats.thumbnail_cache_hits.saturating_add(1),
+            Tier::Preview => self.stats.preview_cache_hits = self.stats.preview_cache_hits.saturating_add(1),
             Tier::Display => self.stats.display_cache_hits = self.stats.display_cache_hits.saturating_add(1),
             Tier::ExactRaw => {}
         }
@@ -423,6 +441,7 @@ impl<V> Pipeline<V> {
     fn record_miss(&mut self, tier: Tier) {
         match tier {
             Tier::Thumbnail => self.stats.thumbnail_cache_misses = self.stats.thumbnail_cache_misses.saturating_add(1),
+            Tier::Preview => self.stats.preview_cache_misses = self.stats.preview_cache_misses.saturating_add(1),
             Tier::Display => self.stats.display_cache_misses = self.stats.display_cache_misses.saturating_add(1),
             Tier::ExactRaw => {}
         }
@@ -530,6 +549,11 @@ impl<V> Pipeline<V> {
         }
         if let Some(current_batch) = self.focus.windows.first() {
             for id in current_batch {
+                pinned.insert(Key { id: *id, tier: Tier::Preview });
+            }
+        }
+        if let Some(current_batch) = self.focus.windows.first() {
+            for id in current_batch {
                 pinned.insert(Key { id: *id, tier: Tier::Display });
             }
         }
@@ -556,15 +580,40 @@ impl<V> Pipeline<V> {
             let source = self.sources.get(&current);
             if let Some(source) = source {
                 let full = source.meta.width.max(source.meta.height).max(display_edge);
+                // The navigation preview is first: it is ~9 ms, so a held arrow key always has
+                // a real frame to paint while the ~67 ms display decode is still in flight.
+                demand.push(Demand { key: Key { id: current, tier: Tier::Preview }, target_edge: PREVIEW_EDGE, rank: 0 });
                 demand.push(Demand {
                     key: Key { id: current, tier: Tier::Display },
                     target_edge: if self.focus.zoomed { full } else { display_edge },
-                    rank: 0,
+                    rank: 1,
                 });
                 demand.push(Demand { key: Key { id: current, tier: Tier::Thumbnail }, target_edge: THUMBNAIL_EDGE, rank: 10 });
                 if self.focus.exact_raw {
-                    demand.push(Demand { key: Key { id: current, tier: Tier::ExactRaw }, target_edge: 0, rank: 5 });
+                    // Last, after the visible frame, its preview and the strip: an exact develop
+                    // takes every core for ~0.4 s, so it must never preempt navigation.
+                    demand.push(Demand { key: Key { id: current, tier: Tier::ExactRaw }, target_edge: 0, rank: 50 });
                 }
+            }
+        }
+
+        // Preview prefetch: the current batch only, four behind and eight ahead. One decode is
+        // ~9 ms, so a burst of arrows has warm pixels for the whole next screenful.
+        if let Some(position) = current_position {
+            for offset in -4i64..=8 {
+                if offset == 0 {
+                    continue;
+                }
+                let Some(index) = position.checked_add_signed(offset as isize) else { continue };
+                let Some(id) = current_batch.get(index).copied() else { continue };
+                if !self.sources.contains_key(&id) {
+                    continue;
+                }
+                demand.push(Demand {
+                    key: Key { id, tier: Tier::Preview },
+                    target_edge: PREVIEW_EDGE,
+                    rank: 100 + (offset.unsigned_abs() as u32) * 2 + u32::from(offset < 0),
+                });
             }
         }
 
@@ -582,7 +631,7 @@ impl<V> Pipeline<V> {
                 demand.push(Demand {
                     key: Key { id, tier: Tier::Display },
                     target_edge: if self.focus.zoomed || zoom_prefetch { full } else { display_edge },
-                    rank: 100 + (offset.unsigned_abs() as u32) * 2 + u32::from(offset < 0),
+                    rank: 200 + (offset.unsigned_abs() as u32) * 2 + u32::from(offset < 0),
                 });
             }
         }
@@ -689,7 +738,11 @@ mod tests {
         let mut pipeline = pipeline();
         pipeline.set_focus(focus_on(2));
         let first = pipeline.next_job().expect("a fresh window has work");
-        assert_eq!((first.id, first.tier), (PhotoId(2), Tier::Display), "the loupe's photo must be the first decode");
+        assert_eq!((first.id, first.tier), (PhotoId(2), Tier::Preview), "the fast navigation preview must land first");
+        assert!(pipeline.complete(&first, vec![0; 4], first.target_edge));
+        let second = pipeline.next_job().expect("the sharp display follows");
+        assert_eq!((second.id, second.tier), (PhotoId(2), Tier::Display), "the loupe's sharp frame follows the preview");
+        assert!(pipeline.complete(&second, vec![0; 4], second.target_edge));
         let mut order = Vec::new();
         while let Some(job) = pipeline.next_job() {
             order.push((job.id.0, job.tier));
@@ -702,6 +755,45 @@ mod tests {
         let first_next = order.iter().position(|(id, tier)| *id == 5 && *tier == Tier::Thumbnail).expect("next batch is fetched");
         let first_previous = order.iter().position(|(id, tier)| *id == 7 && *tier == Tier::Thumbnail).expect("previous batch is fetched");
         assert!(first_next < first_previous, "next is warmed before previous at equal distance");
+    }
+
+    /// A held arrow key paints the fast `PRVW` preview and defers the exact develop behind the
+    /// visible frame and the strip. This is the scheduling half of that promise; the app adds the
+    /// settle timer, and the benchmark row measures the ~7 ms preview against a 33 ms key repeat.
+    #[test]
+    fn the_navigation_preview_lands_before_the_display_and_the_exact_develop() {
+        let mut pipeline = pipeline();
+        pipeline.set_focus(focus_on(2).with_exact_raw());
+
+        let preview = pipeline.next_job().expect("the current preview is first");
+        assert_eq!((preview.id, preview.tier), (PhotoId(2), Tier::Preview));
+        assert!(pipeline.complete(&preview, vec![0; 8], preview.target_edge));
+
+        let display = pipeline.next_job().expect("the sharp display follows");
+        assert_eq!((display.id, display.tier), (PhotoId(2), Tier::Display));
+        assert!(pipeline.complete(&display, vec![0; 8], display.target_edge));
+
+        let strip = pipeline.next_job().expect("the strip frame follows the visible frame");
+        assert_eq!((strip.id, strip.tier), (PhotoId(2), Tier::Thumbnail));
+        assert!(pipeline.complete(&strip, vec![0; 8], strip.target_edge));
+
+        let exact = pipeline.next_job().expect("the exact develop is queued after the visible work");
+        assert_eq!((exact.id, exact.tier), (PhotoId(2), Tier::ExactRaw), "the 0.34 s develop must never preempt navigation");
+    }
+
+    #[test]
+    fn the_navigation_preview_is_prefetched_ahead_but_never_answers_a_display_request() {
+        let mut pipeline = pipeline();
+        pipeline.set_focus(focus_on(2));
+        settle(&mut pipeline, &[0; 8]);
+        assert!(pipeline.contains(PhotoId(1), Tier::Preview), "one behind is warm");
+        for id in 3..=4 {
+            assert!(pipeline.contains(PhotoId(id), Tier::Preview), "the rest of the current batch is warm");
+        }
+        assert!(!pipeline.contains(PhotoId(5), Tier::Preview), "preview prefetch stays inside the current batch");
+        assert!(pipeline.contains(PhotoId(3), Tier::Display), "the sharp prefetch is separate");
+        assert_eq!(pipeline.get(PhotoId(3), Tier::Preview).map(Vec::len), Some(8));
+        assert_eq!(pipeline.get(PhotoId(3), Tier::Display).map(Vec::len), Some(8));
     }
 
     /// Defect 1: `store(_:_:)`'s discard branch dropped the cancel without releasing the in-flight
@@ -737,7 +829,14 @@ mod tests {
         assert_eq!(pipeline.stats().display_cache_hits, 0);
         assert_eq!(pipeline.stats().display_cache_misses, 1);
 
-        let job = pipeline.next_job().expect("the request is queued");
+        let preview = pipeline.next_job().expect("the preview is queued first");
+        assert_eq!(preview.tier, Tier::Preview);
+        assert!(pipeline.get(PhotoId(1), Tier::Preview).is_none(), "queued is not decoded");
+        assert!(pipeline.complete(&preview, vec![1; 16], preview.target_edge));
+        assert_eq!(pipeline.get(PhotoId(1), Tier::Preview).map(Vec::len), Some(16));
+
+        let job = pipeline.next_job().expect("the display request is queued");
+        assert_eq!(job.tier, Tier::Display);
         assert!(pipeline.get(PhotoId(1), Tier::Display).is_none(), "queued is not decoded");
         assert_eq!(pipeline.stats().display_cache_hits, 0);
 
@@ -750,7 +849,7 @@ mod tests {
     /// tiers now have their own budgets and recency lists; a focus-window entry is never a victim.
     #[test]
     fn eviction_never_crosses_tiers_or_the_focus_window() {
-        let mut pipeline = Pipeline::new(TierBudgets { thumbnail: 64, display: 1024, exact_raw: 1024 }, bytes);
+        let mut pipeline = Pipeline::new(TierBudgets { thumbnail: 64, preview: 1024, display: 1024, exact_raw: 1024 }, bytes);
         pipeline.set_catalog(catalog());
         pipeline.set_focus(focus_on(1));
         settle(&mut pipeline, &[0; 16]);
@@ -816,11 +915,15 @@ mod tests {
         let mut pipeline = pipeline();
         pipeline.set_focus(focus_on(1));
         let job = pipeline.next_job().expect("queued");
+        assert_eq!(job.tier, Tier::Preview);
         assert!(pipeline.fail(&job));
         assert_eq!(pipeline.in_flight(), 0);
         pipeline.set_focus(focus_on(1));
+        let display = pipeline.next_job().expect("a failed preview does not block the sharp frame");
+        assert_eq!(display.tier, Tier::Display);
+        assert!(pipeline.complete(&display, vec![0; 4], display.target_edge));
         while let Some(job) = pipeline.next_job() {
-            assert!(!(job.id == PhotoId(1) && job.tier == Tier::Display), "a failed decode must not loop");
+            assert!(!(job.id == PhotoId(1) && job.tier == Tier::Preview), "a failed decode must not loop");
             pipeline.complete(&job, vec![0; 4], job.target_edge);
         }
     }

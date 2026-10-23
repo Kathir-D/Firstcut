@@ -657,18 +657,29 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     std::hint::black_box(&first_image);
     let first_on_screen_secs = scan_secs + first_decode_secs;
 
-    // §5 row 2: arrow → next. Eight different files, so the first round is genuinely cold.
+    // §5 row 2: arrow → next. Eight different files, so the first round is genuinely cold. The
+    // navigation preview is timed alongside the display: it is the frame the app paints first,
+    // and it has to land inside a held arrow key's ~33 ms repeat to keep the loupe from blanking.
     let mut arrow_medians = Vec::new();
+    let mut preview_medians = Vec::new();
     for run in 0..repeat {
         let mut times = Vec::new();
+        let mut preview_times = Vec::new();
         for photo in sources.iter().skip(1).take(ARROW_SAMPLES.saturating_sub(1)) {
             let path = dir.join(&photo.rel_path);
             let start = std::time::Instant::now();
             let image = firstcut_decode::decode_display_at(&path, photo, BENCH_VIEWPORT_EDGE).map_err(|err| format!("{}: {err}", photo.rel_path))?;
             times.push(start.elapsed().as_secs_f64());
             std::hint::black_box(&image);
+
+            let start = std::time::Instant::now();
+            let preview = firstcut_decode::decode_thumbnail(&path, photo, firstcut_engine::pipeline::PREVIEW_EDGE)
+                .map_err(|err| format!("{} preview: {err}", photo.rel_path))?;
+            preview_times.push(start.elapsed().as_secs_f64());
+            std::hint::black_box(&preview);
         }
         arrow_medians.push(median(&times));
+        preview_medians.push(median(&preview_times));
         if run == 0 && times.is_empty() {
             return Err("the shoot has only one photograph; the arrow row needs a second".to_string());
         }
@@ -677,6 +688,8 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
         return Err("repeat is at least 1".to_string());
     };
     let arrow_warm = arrow_medians.iter().copied().filter(|t| t.is_finite()).fold(f64::MAX, f64::min);
+    let preview_cold = preview_medians.first().copied().unwrap_or(f64::NAN);
+    let preview_warm = preview_medians.iter().copied().filter(|t| t.is_finite()).fold(f64::MAX, f64::min);
 
     // §5 row 3: Exact RAW, alternating with a display decode so neither side owns the cold read.
     let backend = firstcut_decode_libraw::backend();
@@ -725,6 +738,12 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
         arrow_warm,
         ARROW_SAMPLES - 1,
         verdict(arrow_warm <= 0.09)
+    );
+    println!(
+        "  arrow → nav preview     {:>7.3} s cold, {:>7.3} s warm   target ≤ 0.033 s (30 Hz hold)  {}",
+        preview_cold,
+        preview_warm,
+        verdict(preview_warm <= 0.033)
     );
     match (backend.is_some(), raw_photo, raw_times.iter().copied().reduce(f64::min), display_times.iter().copied().reduce(f64::min)) {
         (true, Some(photo), Some(raw), Some(display)) => {

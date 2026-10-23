@@ -9,11 +9,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use firstcut_decode::{DecodedImage, Histogram, RawDecode, decode_display, decode_display_at, decode_thumbnail, histogram};
 use firstcut_engine::model::{Model, Phase};
-use firstcut_engine::pipeline::{FALLBACK_DISPLAY_EDGE, Focus, Job, Pipeline, Source, THUMBNAIL_EDGE, Tier, TierBudgets};
+use firstcut_engine::pipeline::{FALLBACK_DISPLAY_EDGE, Focus, Job, PREVIEW_EDGE, Pipeline, Source, THUMBNAIL_EDGE, Tier, TierBudgets};
 use firstcut_engine::session::Session;
 use firstcut_engine::settings::SettingsStore;
 use firstcut_engine::watch::{FolderWatcher, watch};
@@ -353,6 +354,13 @@ impl eframe::App for Shell {
         if self.bank.pump(&mut self.model, viewport_edge, zoomed) {
             ui.ctx().request_repaint();
         }
+        // An exact develop is deliberately deferred while the cursor moves. Egui only repaints
+        // on input or a decode result, so schedule the wake that turns the setting back on once
+        // the cursor has been still for the settle window; otherwise the develop would wait for
+        // the next unrelated event.
+        if let Some(delay) = self.bank.exact_settle_remaining(&self.model) {
+            ui.ctx().request_repaint_after(delay);
+        }
         // Visual signatures may have re-cut unvisited batches; take the latest snapshot before the
         // screen paints so the strip never shows boundaries the session has already moved.
         self.model.drain_session_messages();
@@ -360,9 +368,9 @@ impl eframe::App for Shell {
         let current_id = self.model.current_photo_id();
         let current_frame = current_id.and_then(|id| self.bank.frame(id));
         let images = firstcut_ui::FrameImages {
-            current: current_id.zip(current_frame).map(|(id, frame)| (id, frame.image.as_ref())),
+            current: current_id.zip(current_frame.as_ref()).map(|(id, frame)| (id, frame.image().as_ref())),
             thumbs: &self.bank.thumbnails,
-            histogram: current_frame.map(|frame| &frame.histogram),
+            histogram: current_frame.as_ref().and_then(BestFrame::histogram),
             display: &self.bank.displays,
         };
         self.screen.show(ui, &mut self.model, &images);
@@ -431,9 +439,9 @@ impl Shell {
             let current_id = model.current_photo_id();
             let current_frame = current_id.and_then(|id| bank.frame(id));
             let images = firstcut_ui::FrameImages {
-                current: current_id.zip(current_frame).map(|(id, frame)| (id, frame.image.as_ref())),
+                current: current_id.zip(current_frame.as_ref()).map(|(id, frame)| (id, frame.image().as_ref())),
                 thumbs: &bank.thumbnails,
-                histogram: current_frame.map(|frame| &frame.histogram),
+                histogram: current_frame.as_ref().and_then(BestFrame::histogram),
                 display: &bank.displays,
             };
             screen.show(ui, model, &images);
@@ -474,9 +482,9 @@ impl Shell {
             let current_id = model.current_photo_id();
             let current_frame = current_id.and_then(|id| bank.frame(id));
             let images = firstcut_ui::FrameImages {
-                current: current_id.zip(current_frame).map(|(id, frame)| (id, frame.image.as_ref())),
+                current: current_id.zip(current_frame.as_ref()).map(|(id, frame)| (id, frame.image().as_ref())),
                 thumbs: &bank.thumbnails,
-                histogram: current_frame.map(|frame| &frame.histogram),
+                histogram: current_frame.as_ref().and_then(BestFrame::histogram),
                 display: &bank.displays,
             };
             screen.show(ui, model, &images);
@@ -494,12 +502,42 @@ impl Shell {
 
 // ---- decoding -----------------------------------------------------------------------------
 
+/// How long the cursor must rest before an exact develop is queued. A held arrow key moves
+/// every ~33 ms; the develop takes every core for ~0.4 s, so starting one mid-scroll would
+/// starve the preview/display decodes that keep the loupe painted. A short settle keeps the
+/// exact tier progressive without ever making navigation wait on it.
+const EXACT_RAW_SETTLE: Duration = Duration::from_millis(250);
+
 /// One decoded frame as the surfaces receive it: the pixels plus the histogram computed from
 /// those exact (already oriented) pixels. Caching them together is what makes the Info panel's
 /// data seam orientation-safe — there is no second decode to disagree with the loupe.
 struct Frame {
     image: Arc<egui::ColorImage>,
     histogram: Histogram,
+}
+
+/// What the loupe can paint for the cursor: a decoded frame (which carries a histogram) or a
+/// cached preview/thumbnail image (which does not). The UI only needs the pixels; the Info panel
+/// keeps the histogram from the last decoded frame.
+enum BestFrame<'a> {
+    Decoded(&'a Arc<Frame>),
+    Image(&'a Arc<egui::ColorImage>),
+}
+
+impl BestFrame<'_> {
+    fn image(&self) -> &Arc<egui::ColorImage> {
+        match self {
+            BestFrame::Decoded(frame) => &frame.image,
+            BestFrame::Image(image) => image,
+        }
+    }
+
+    fn histogram(&self) -> Option<&Histogram> {
+        match self {
+            BestFrame::Decoded(frame) => Some(&frame.histogram),
+            BestFrame::Image(_) => None,
+        }
+    }
 }
 
 fn frame_bytes(frame: &Arc<Frame>) -> usize {
@@ -524,8 +562,14 @@ struct DecodeBank {
     /// The filmstrip's pixels, kept as the same `Arc` the pipeline caches, so eviction in the
     /// policy is the only accounting and this map never holds a private copy.
     thumbnails: HashMap<u64, Arc<egui::ColorImage>>,
+    /// The fast navigation previews (the camera's small `PRVW` JPEG), same `Arc` rule. These
+    /// carry a histogram, so the Info panel does not blink while the sharp frame lands.
+    previews: HashMap<u64, Arc<Frame>>,
     /// Display-tier pixels by photo id, kept in step with the pipeline's cache.
     displays: HashMap<u64, Arc<egui::ColorImage>>,
+    /// When the cursor last moved, so a held arrow key defers the expensive exact develop.
+    last_navigation: Instant,
+    last_current: Option<PhotoId>,
     catalog_revision: u64,
     inflight_limit: usize,
     /// Thumbnails already offered to the batcher. A re-decode after eviction must not submit the
@@ -563,7 +607,10 @@ impl DecodeBank {
             next_worker: 0,
             results: receiver,
             thumbnails: HashMap::new(),
+            previews: HashMap::new(),
             displays: HashMap::new(),
+            last_navigation: Instant::now(),
+            last_current: None,
             catalog_revision: u64::MAX,
             inflight_limit: workers.max(1) * 2,
             signatures_sent: HashSet::new(),
@@ -588,6 +635,11 @@ impl DecodeBank {
                             if self.signatures_sent.insert(job.id.0) {
                                 model.submit_thumbnail_pixels(job.id, &decoded.rgba, decoded.width, decoded.height);
                             }
+                        }
+                        if job.tier == Tier::Preview {
+                            // The loupe still prefers the display then exact tiers; this is the
+                            // frame that appears within one key repeat while those decode.
+                            self.previews.insert(job.id.0, Arc::clone(&frame));
                         }
                         if job.tier == Tier::Display {
                             // Compare shows frames other than the cursor's; keep the same Arcs the
@@ -617,14 +669,13 @@ impl DecodeBank {
             self.pipeline.set_catalog(catalog);
         }
 
-        let focus = Focus {
-            windows: model.focus_windows(),
-            current: model.current_photo_id(),
-            viewport_edge,
-            zoomed,
-            zoom_lock: model.zoom_lock(),
-            exact_raw: model.exact_raw(),
-        };
+        let current = model.current_photo_id();
+        if current != self.last_current {
+            self.last_current = current;
+            self.last_navigation = Instant::now();
+        }
+        let exact_raw = model.exact_raw() && self.last_navigation.elapsed() >= EXACT_RAW_SETTLE;
+        let focus = Focus { windows: model.focus_windows(), current, viewport_edge, zoomed, zoom_lock: model.zoom_lock(), exact_raw };
         self.pipeline.set_focus(focus);
         self.fill_workers();
 
@@ -632,9 +683,20 @@ impl DecodeBank {
         // the cache rather than a second unbounded one.
         let keep: HashSet<u64> = self.thumbnails.keys().copied().filter(|id| self.pipeline.contains(PhotoId(*id), Tier::Thumbnail)).collect();
         self.thumbnails.retain(|id, _| keep.contains(id));
-        // Display Arcs are views of the pipeline's cache too: drop the ones it evicted.
+        // Display and preview Arcs are views of the pipeline's cache too: drop the ones it evicted.
         self.displays.retain(|id, _| self.pipeline.contains(PhotoId(*id), Tier::Display));
+        self.previews.retain(|id, _| self.pipeline.contains(PhotoId(*id), Tier::Preview));
         changed
+    }
+
+    /// How long until the cursor has rested long enough to queue the deferred exact develop.
+    /// `None` when the setting is off, there is no photograph, or the settle has already passed.
+    fn exact_settle_remaining(&self, model: &Model) -> Option<Duration> {
+        if !model.exact_raw() || self.last_current.is_none() {
+            return None;
+        }
+        let elapsed = self.last_navigation.elapsed();
+        (elapsed < EXACT_RAW_SETTLE).then(|| EXACT_RAW_SETTLE - elapsed)
     }
 
     fn fill_workers(&mut self) {
@@ -649,12 +711,19 @@ impl DecodeBank {
         }
     }
 
-    /// The best frame under the cursor: the Exact RAW develop when it has landed, otherwise the
-    /// display-sized embedded preview while it is still in flight. That fallback is what makes
-    /// turning Exact RAW on progressive — the loupe never blanks for the develop's ~0.4 s, and
-    /// the sharper sensor image replaces the preview in place when it arrives.
-    fn frame(&self, id: PhotoId) -> Option<&Arc<Frame>> {
-        self.pipeline.peek(id, Tier::ExactRaw).or_else(|| self.pipeline.peek(id, Tier::Display))
+    /// The best frame under the cursor, in sharpness order: the Exact RAW develop, the full
+    /// display preview, the fast navigation preview, then the filmstrip thumbnail. The last two
+    /// are what keep a held arrow key painted: a thumbnail is already decoded for most of the
+    /// shoot, and the ~9 ms `PRVW` decode lands inside one key repeat. The loupe therefore never
+    /// blanks while the ~67 ms display or ~0.4 s develop is still in flight.
+    fn frame(&self, id: PhotoId) -> Option<BestFrame<'_>> {
+        if let Some(frame) = self.pipeline.peek(id, Tier::ExactRaw).or_else(|| self.pipeline.peek(id, Tier::Display)) {
+            return Some(BestFrame::Decoded(frame));
+        }
+        if let Some(frame) = self.previews.get(&id.0) {
+            return Some(BestFrame::Decoded(frame));
+        }
+        self.thumbnails.get(&id.0).map(BestFrame::Image)
     }
 }
 
@@ -665,6 +734,8 @@ impl DecodeBank {
 fn decode_job(job: &Job, raw: Option<&dyn RawDecode>) -> Result<(DecodedImage, Histogram), String> {
     let image = match job.tier {
         Tier::Thumbnail => decode_thumbnail(&job.path, &job.meta, THUMBNAIL_EDGE),
+        // The camera's small PRVW JPEG: ~9 ms, and the frame that keeps a held arrow key painted.
+        Tier::Preview => decode_thumbnail(&job.path, &job.meta, PREVIEW_EDGE),
         Tier::Display => decode_display_at(&job.path, &job.meta, if job.target_edge == 0 { FALLBACK_DISPLAY_EDGE } else { job.target_edge }),
         Tier::ExactRaw => match raw {
             Some(backend) => backend.decode_raw(&job.path, &job.meta),
