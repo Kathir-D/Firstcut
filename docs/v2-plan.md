@@ -381,7 +381,11 @@ Landed: `cargo xtask package` writes `target/package` (macOS app/zip/cask/SHA-25
 zip, Linux AppImage + `.deb` with a `.tar.gz` fallback) and `.github/workflows/v2-release.yml`
 runs that on the 3-OS matrix for an owner-pushed tag; the README, roadmap, changelog,
 control-protocol, MCP and parity docs are rewritten. The package task is not part of
-`cargo xtask ci` (it is a release step, not a per-commit gate).
+`cargo xtask ci` (it is a release step, not a per-commit gate). The workflow was exercised on
+all three OSes by a `v2` push (`v2-release` run 39889169123): macOS produced a signed-ad-hoc
+`Firstcut.app` zip and cask, Windows a zip, Linux an AppImage and a `.deb`, each with SHA-256
+and a `SHA256SUMS-*`. Linux builds on `ubuntu-22.04` so the promised glibc 2.35 floor is the
+binary's real floor, not the runner's.
 
 ### Merge gate (owner does this)
 

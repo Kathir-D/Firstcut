@@ -4,11 +4,12 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
-**Status (2026-10-01): feature complete for v0.1.0, green on CI, and every agent-side item in
-[§0.3](#03-other-open-work) is now done** — the last of them, the T4 "Exact RAW" decode, landed in
-`087c22c`. The work was done on the Mac itself rather than in the cloud container, so the app builds
-here, the tests run against the real photos, and the timings in §7.3 are measured rather than
-estimated. **What is left is [§0.2](#02-left-for-the-owner)**: it needs a person, not a machine.
+**Status (2026-10-22): v2 is feature-complete for the merge gate and green on the 3-OS matrix.**
+The current handoff is [§0.5](#05-handoff-where-the-last-session-stopped); the contract is
+[docs/v2-plan.md](docs/v2-plan.md) and the merge-gate record is
+[docs/parity-checklist.md](docs/parity-checklist.md). Sections below §0.5 are the v1 history that
+the v2 port was measured against — kept for parity, not as current work. **What is left is
+[§0.2](#02-left-for-the-owner)**: it needs a person, not a machine.
 
 ---
 
@@ -190,8 +191,22 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > owner moves it, and agents never merge.
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`
-> and the 3-OS matrix green. This session has since landed (or is landing in the commits that
-> follow this file):
+> and the 3-OS matrix green. This session landed M5 and M6 on top of it:
+>
+> - Commits: `d324840` long-path scan test, `daeab6e` shell hardening (fonts/pickers/card
+>   chooser), `fe196e4` rawler + progressive Exact RAW, `5bebff2` packaging, `0240b7e` docs,
+>   `e123399` the glibc-2.35 release runner, `a3a7e84` packaging trigger, `9288775` the AppDir
+>   desktop fix. Tip is `9288775`, every commit pushed.
+> - **Gates green on the tip:** `cargo xtask ci --summary-md` locally (fmt, clippy, layers,
+>   assets, workspace tests); the 3-OS `v2-ci` matrix (macOS, Windows, Ubuntu) and the window
+>   smoke passed on `e123399` and again on `9288775` (run 39889175063 / 39889169051). The
+>   opt-in real-photo sweep is green (`scripts/test-with-photos.sh`, exit 0).
+> - **Packaging was exercised on all three OSes** by the `v2-release` workflow on `9288775`
+>   (run 39889169123): macOS `.app` zip + cask, Windows zip, Linux AppImage + `.deb`, each with
+>   SHA-256 and a `SHA256SUMS-*` file. The macOS artifact was unpacked and its binary smoke-run
+>   (`--smoke`, exit 0); the Windows/Linux artifacts were built and inspected but not launched
+>   from the artifact on their native machines (the CI matrix launches `cargo xtask smoke`,
+>   not the packaged binary).
 >
 > - **M5 shell hardening:** bundled Inter Regular/Medium/SemiBold with
 >   `firstcut_ui::install_fonts` (all UI snapshots regenerated); `rfd` native folder picker
@@ -229,18 +244,19 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   `ui.widgets`, `ui.clickWidget`, `ui.screenshot`; MCP is stdio JSON-RPC with
 >   `initialize`/`ping`/`tools/list`/`tools/call` and **no** `--connect` bridge yet.
 >
-> **Gates to run after these commits (in order):**
+> **What is left:**
 >
-> 1. Per commit: `cargo fmt --all --check`; clippy for touched crates with `-D warnings`;
->    touched-crate tests; `cargo xtask layers` when edges moved (rawler/rayon are external
->    deps, so the 13 workspace edges should not).
-> 2. Milestone: `cargo xtask ci --summary-md` on this machine (fmt, clippy, layers, assets,
->    workspace tests, `target/ci/report.json` + `summary.md`).
-> 3. Push, then the 3-OS matrix (`v2-ci`) must be green; the release workflow is separate
->    and only an owner tag exercises it.
-> 4. `UPDATE_SNAPSHOTS=1 cargo test -p firstcut --test culling_ui` was needed once for Inter;
->    after that the snapshot suite must pass unmodified on macOS, Windows and Linux (Linux
->    keeps its 3.0 glyph-edge ceiling).
+> 1. **Owner merge-gate items** (below) — the blocking ones are the boundary ground truth and
+>    the visual sign-off; the exact-RAW 0.119 s gate also needs the owner's disposition.
+> 2. If the owner wants a release before merging: set `FIRSTCUT_VERSION`/push the tag; the
+>    tag run is the only path that attaches artifacts to a GitHub Release. Tags and Releases
+>    are the owner's.
+> 3. Optional follow-up: run the packaged Windows/Linux binaries on native machines, and
+>    re-measure §5 after any further decoder work. The rest of M5/M6 is done.
+>
+> **Snapshot note:** `UPDATE_SNAPSHOTS=1 cargo test -p firstcut --test culling_ui` was needed
+> once for Inter; after that the suite passes unmodified on macOS, Windows and Linux (Linux
+> keeps its 3.0 glyph-edge ceiling).
 >
 > **Blocked / owner-only (unchanged):** boundary ground-truth files (never synthesised),
 > preview-vs-Exact-RAW default judgement, Game1JENKS re-press decision, Lightroom/Capture One

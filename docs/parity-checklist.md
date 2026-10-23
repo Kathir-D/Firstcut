@@ -1,7 +1,7 @@
 # v2 parity checklist — the merge gate, mirrored (docs/v2-plan.md §7)
 
-> Status, honest as of 2026-10-22, M4 closed; M5 (cross-platform hardening) and M6 (packaging +
-> docs) are in the working tree. Rows that moved carry their test names. Each row says where
+> Status, honest as of 2026-10-22: M4 closed, M5 (cross-platform hardening) and M6 (packaging +
+> docs) landed and green on the 3-OS matrix at `9288775`. Rows that moved carry their test names. Each row says where
 > its work happens (or landed), and — once a row is true — the named test that proves it.
 > **Struck-through = proven by a named test** (§7's rule); a row without ✔ still needs the
 > work or the owner's eyes. A status number (Mn) is the milestone whose work owns the row:
@@ -32,6 +32,7 @@ Rows, in §7's order:
 | 18 | §5 rows measured | ✔ measured / exact-RAW gate over | `firstcut-cli bench --decode --folder <game>`; numbers in `docs/v2-plan.md` §5.1. First photo 0.10–0.33 s ✔, arrow 0.067–0.082 s ✔, zoom decode 0.085–0.087 s, **Exact RAW 0.40 s warm vs the 0.119 s gate** (rawler: develop 0.37 + orientation 0.03). The gate is below the ~0.12 s CRX decode floor for 24 MP on this CPU; progressive display puts first pixels on screen at 0.067 s. Owner decision recorded in §5.1 |
 | 19 | Owner items (carried from todo §0.2): boundary ground truth, Exact RAW default, Game1JENKS pause decision, sidecar round-trip check, visual sign-off, Homebrew secret, tag v2.0.0 | **owner** | unchanged, do not synthesise; see todo.md |
 | 20 | Error alerts | ✔ | `Model::last_error` renders as a centered alert window in every phase; Dismiss dispatches `error.dismiss` (`the_culling_screen` harness's `an_error_shows_a_dismissible_alert`, snapshot `error-alert.png`). Success clears it in the engine, and the old inline message paths were removed |
+| 21 | Packaging: macOS `.app`/zip/cask, Windows zip, Linux AppImage + `.deb`, SHA-256 | ✔ built / native launch pending | `cargo xtask package` on the 3-OS `v2-release` run 39889169123 wrote `firstcut-0.2.0-dev-macos-arm64.zip` (+ cask), `…-windows-x64.zip`, `…-linux-x64.AppImage`, `…-linux-x64.deb` and their checksums. The macOS artifact was unpacked and smoke-run on this Mac (`--smoke`, exit 0); the Windows/Linux artifacts were built and inspected but not launched from the artifact on their native machines — the CI matrix launches `cargo xtask smoke`, not the packaged binary. Merge-gate item 2 still wants that owner check |
 
 ## Surfaces (what M1 proved end-to-end)
 
@@ -43,8 +44,8 @@ Rows, in §7's order:
   live session proved (`27e520b`); protocol documented in `docs/control-protocol.md`.
 - **MCP**: `firstcut-cli mcp` — `tools/list` generated from the registry, `tools/call`
   dispatches, `isError` on bad params — `34ff0ad`; documented in `docs/mcp.md`.
-- **Headless snapshot**: the two kittest PNGsdouble as the first screenshots; the README image
-  leg (agent-driven showcase scripts) lands at the docs leg.
+- **Headless snapshot**: the kittest PNGs double as the first screenshots; the
+  README image leg (agent-driven showcase scripts) remains an owner-approved shoot.
 
 > Merge gate statement (docs/v2-plan.md §7): the owner strikes through rows 1–18 before
 > fast-forwarding `main`; no row may move to done without a test name or the owner's word.
