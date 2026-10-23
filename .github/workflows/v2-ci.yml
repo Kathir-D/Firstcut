@@ -80,4 +80,7 @@ jobs:
             exit 1
           fi
           cat /tmp/weston.log
-          WAYLAND_DISPLAY=wayland-firstcut cargo xtask smoke
+          # Headless Mesa has no EGL device; force the software Vulkan ICD (lavapipe)
+          # and cap the run so a broken backend fails in minutes, not at the job timeout.
+          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          timeout 180s env WAYLAND_DISPLAY=wayland-firstcut FIRSTCUT_WGPU_BACKEND=vulkan cargo xtask smoke
