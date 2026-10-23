@@ -197,13 +197,14 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   chooser), `fe196e4` rawler + progressive Exact RAW, `5bebff2` packaging, `0240b7e` docs,
 >   `e123399` the glibc-2.35 release runner, `a3a7e84` packaging trigger, `9288775` the AppDir
 >   desktop fix, `b6939c2`/`d916671` handoff updates, `c77f97d`/`df96acc` the two Wayland CI
->   attempts (red; see below), `70b3881` the fix. Every commit is pushed. **The last code tip is
->   `70b3881` and its 3-OS matrix is green** (push run 39894995127, PR run 39895000789); the
->   docs tip after this edit is later but changes no code.
-> - **Gates green on the tip:** `cargo xtask ci --summary-md` locally (fmt, clippy, layers,
->   assets, workspace tests); the 3-OS `v2-ci` matrix (macOS, Windows, Ubuntu) and the window
->   smoke passed on `e123399` and again on `9288775` (run 39889175063 / 39889169051). The
->   opt-in real-photo sweep is green (`scripts/test-with-photos.sh`, exit 0).
+>   attempts (red; see below), `70b3881` the fix. Every commit is pushed. **The last code change
+>   is `70b3881`; every pushed commit after the Wayland fix, including the docs handoffs, is
+>   green on the 3-OS matrix.**
+> - **Gates:** `cargo xtask ci --summary-md` locally (fmt, clippy, layers, assets, workspace
+>   tests); the 3-OS `v2-ci` matrix (macOS, Windows, Ubuntu) and the window smoke passed on
+>   `e123399`, `9288775`, `70b3881` and every later push (runs 39886448813, 39889175063,
+>   39894995127, 39895868206). The opt-in real-photo sweep is green
+>   (`scripts/test-with-photos.sh`, exit 0).
 > - **Packaging was exercised on all three OSes** by the `v2-release` workflow on `9288775`
 >   (run 39889169123): macOS `.app` zip + cask, Windows zip, Linux AppImage + `.deb`, each with
 >   SHA-256 and a `SHA256SUMS-*` file. The macOS artifact was unpacked and its binary smoke-run
