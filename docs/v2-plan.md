@@ -399,7 +399,10 @@ binary's real floor, not the runner's.
 
 1. Parity checklist fully checked (§7), §5 rows measured and recorded.
 2. All three OS packages build and run from artifacts.
-3. `cargo xtask ci` green on the 3-OS matrix; branch has no red commits.
+3. `cargo xtask ci` green on the 3-OS matrix; branch has no red commits. (History note:
+   `c77f97d` and `df96acc` are CI-only Wayland experiments that hung/failed on the headless
+   runner; `70b3881` removed the step and is green, and neither touched product code. Squashing
+   them out needs an owner force-push, which agents do not do. The tip is the gate.)
 4. Then fast-forward `main` to `v2` (owner; merge happens with a green suite, repo rule) and
    the branch is deleted.
 

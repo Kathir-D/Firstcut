@@ -196,8 +196,10 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - Commits: `d324840` long-path scan test, `daeab6e` shell hardening (fonts/pickers/card
 >   chooser), `fe196e4` rawler + progressive Exact RAW, `5bebff2` packaging, `0240b7e` docs,
 >   `e123399` the glibc-2.35 release runner, `a3a7e84` packaging trigger, `9288775` the AppDir
->   desktop fix, `b6939c2` the handoff update. Every commit is pushed; the last code commit is
->   `9288775` and the docs tip is `b6939c2`.
+>   desktop fix, `b6939c2`/`d916671` handoff updates, `c77f97d`/`df96acc` the two Wayland CI
+>   attempts (red; see below), `70b3881` the fix. Every commit is pushed. **The last code tip is
+>   `70b3881` and its 3-OS matrix is green** (push run 39894995127, PR run 39895000789); the
+>   docs tip after this edit is later but changes no code.
 > - **Gates green on the tip:** `cargo xtask ci --summary-md` locally (fmt, clippy, layers,
 >   assets, workspace tests); the 3-OS `v2-ci` matrix (macOS, Windows, Ubuntu) and the window
 >   smoke passed on `e123399` and again on `9288775` (run 39889175063 / 39889169051). The
@@ -252,8 +254,9 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > 2. If the owner wants a release before merging: set `FIRSTCUT_VERSION`/push the tag; the
 >    tag run is the only path that attaches artifacts to a GitHub Release. Tags and Releases
 >    are the owner's.
-> 3. Optional follow-up: run the packaged Windows/Linux binaries on native machines, and
->    re-measure §5 after any further decoder work. The rest of M5/M6 is done.
+> 3. Optional follow-up: run the packaged Windows/Linux binaries on native machines, prove a
+>    real Wayland desktop, and re-measure §5 after any further decoder work. The rest of M5/M6
+>    is done.
 >
 > **Snapshot note:** `UPDATE_SNAPSHOTS=1 cargo test -p firstcut --test culling_ui` was needed
 > once for Inter; after that the suite passes unmodified on macOS, Windows and Linux (Linux
