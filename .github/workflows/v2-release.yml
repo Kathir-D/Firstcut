@@ -10,6 +10,12 @@ name: v2-release
 on:
   push:
     tags: ["v2*", "v0.2*"]
+    branches: [v2]
+    paths:
+      - .github/workflows/v2-release.yml
+      - packaging/**
+      - xtask/src/package.rs
+      - assets/branding/**
   workflow_dispatch:
 
 permissions:
