@@ -27,7 +27,9 @@ jobs:
         include:
           - os: macos-latest
           - os: windows-latest
-          - os: ubuntu-latest
+          # 22.04 is the glibc 2.35 floor the .deb and the README promise; building on
+          # ubuntu-latest would silently raise the floor to the runner's glibc.
+          - os: ubuntu-22.04
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
