@@ -238,6 +238,9 @@ fn package_linux(binary: &Path, out: &Path, base: &str, version: &str) -> Result
     copy(Path::new("assets/branding/firstcut-512.png"), &appdir.join("firstcut.png"))?;
     copy(Path::new("LICENSE"), &appdir.join("LICENSE.txt"))?;
     std::fs::write(desktop_dir.join("firstcut.desktop"), desktop_entry()).map_err(|e| format!("could not write .desktop: {e}"))?;
+    // appimagetool reads the desktop file from the AppDir root, not only from the installed
+    // applications directory; without this it aborts with "Desktop file not found".
+    std::fs::write(appdir.join("firstcut.desktop"), desktop_entry()).map_err(|e| format!("could not write the AppDir .desktop: {e}"))?;
     let app_run = appdir.join("AppRun");
     std::fs::write(&app_run, "#!/bin/sh\nHERE=\"$(dirname \"$(readlink -f \"$0\")\")\"\nexec \"$HERE/usr/bin/firstcut\" \"$@\"\n")
         .map_err(|e| format!("could not write AppRun: {e}"))?;
