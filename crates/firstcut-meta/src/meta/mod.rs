@@ -266,6 +266,12 @@ fn raw_format_of(extension: &str) -> Option<RawFormat> {
     })
 }
 
+/// Whether this path's extension is one the scanner opens. Used by the card-root chooser,
+/// which must decide what a folder holds before it starts the full scan.
+pub fn is_photo_path(path: &std::path::Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| kind_of(extension).is_some())
+}
+
 fn kind_of(extension: &str) -> Option<FileKind> {
     let lower = extension.to_ascii_lowercase();
     if let Some(format) = raw_format_of(&lower) {
@@ -1014,6 +1020,28 @@ mod tests {
             assert_eq!(names(&first), names(&again));
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_shoot_past_the_windows_max_path_still_scans() {
+        // Windows' classic limit is 260 UTF-16 units. Rust's `std::fs` uses the verbatim
+        // (`\\?\\`) form for long absolute paths, but the scan must not add its own length
+        // ceiling on the way in: shoot names with dates and a nested "Selects/Keep" folder get
+        // close enough in real use. On Unix this is just a long path and proves the same walk.
+        let root = std::env::temp_dir().join(format!("firstcut-long-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut folder = root.clone();
+        for depth in 0..10 {
+            folder.push(format!("shoot-folder-{depth:02}-abcdefghijklmnopqrstuvwxyz"));
+        }
+        std::fs::create_dir_all(&folder).unwrap();
+        let bytes = crate::meta::cr3::SyntheticCr3::r8().at("2026:08:27 19:54:00").build();
+        std::fs::write(folder.join("IMG_0001.CR3"), bytes).unwrap();
+
+        let scanned = scan_folder(&folder).unwrap();
+        assert_eq!(scanned.photos.len(), 1, "the deep shoot has its photo");
+        assert_eq!(scanned.photos[0].rel_path, "IMG_0001.CR3");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// The first-photo fast path (todo.md §7.3, "folder open → first photo < 1 s") has to make the
