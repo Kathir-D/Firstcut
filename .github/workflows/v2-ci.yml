@@ -62,25 +62,8 @@ jobs:
         run: cargo xtask ci --summary-md
       - name: cargo xtask smoke (X11; window opens, paints, exits 0)
         run: cargo xtask smoke
-      - name: cargo xtask smoke (Wayland headless)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get install -y weston
-          export XDG_RUNTIME_DIR=/tmp/firstcut-xdg
-          mkdir -p "$XDG_RUNTIME_DIR"
-          chmod 700 "$XDG_RUNTIME_DIR"
-          weston --backend=headless-backend.so --use-pixman --socket=wayland-firstcut --idle-time=0 \
-            --width=1200 --height=760 >/tmp/weston.log 2>&1 &
-          for _ in $(seq 1 50); do
-            [ -S "$XDG_RUNTIME_DIR/wayland-firstcut" ] && break
-            sleep 0.2
-          done
-          if [ ! -S "$XDG_RUNTIME_DIR/wayland-firstcut" ]; then
-            cat /tmp/weston.log
-            exit 1
-          fi
-          cat /tmp/weston.log
-          # Headless Mesa has no EGL device; force the software Vulkan ICD (lavapipe)
-          # and cap the run so a broken backend fails in minutes, not at the job timeout.
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          timeout 180s env WAYLAND_DISPLAY=wayland-firstcut FIRSTCUT_WGPU_BACKEND=vulkan cargo xtask smoke
+      # Wayland is deliberately not smoke-tested here. GitHub's headless Linux runner has
+      # no DRM device, so Mesa cannot create a Wayland EGL surface and lavapipe exposes no
+      # Wayland WSI; the compositor starts, but wgpu has no surface it can bind. A real
+      # Wayland desktop (or the `FIRSTCUT_WGPU_BACKEND=gl` escape hatch) is the proof;
+      # this runner proves X11 window creation only. See docs/v2-plan.md §6, M5.

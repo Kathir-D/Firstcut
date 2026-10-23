@@ -367,6 +367,14 @@ the macOS `Info.plist` (M6) carries the document-folder usage strings; and rawle
 Windows' Exact RAW gap. Windows DPI is winit's per-monitor awareness; the watcher and the
 long-path test are exercised by the 3-OS matrix, not by hand on this Mac.
 
+Wayland is the one platform path the headless matrix cannot prove. `winit` selects Wayland
+when `WAYLAND_DISPLAY` is set and X11 otherwise, and `FIRSTCUT_WGPU_BACKEND=gl` is the
+old-driver escape hatch, but a GitHub runner has no DRM device: Weston starts headless, then
+Mesa cannot create a Wayland EGL surface and lavapipe exposes no Wayland WSI, so wgpu fails
+with `Failed to create surface for any enabled backend` (attempted in run 39894441419 and
+removed from CI). The X11 smoke is the automated proof; a real Wayland desktop and the GL
+fallback are owner checks. This is recorded rather than silently claimed.
+
 ### M6 — Packaging + docs + merge gate
 
 - `cargo xtask package` per OS: mac `.app` (+ release zip, cask stamp), Windows zip, Linux
