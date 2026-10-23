@@ -4,6 +4,7 @@
 
 mod ci;
 mod layers;
+mod package;
 mod smoke;
 
 fn main() -> std::process::ExitCode {
@@ -12,6 +13,13 @@ fn main() -> std::process::ExitCode {
         Some("ci") if args.iter().any(|a| a == "--summary-md") => ci::run(true),
         Some("ci") => ci::run(false),
         Some("layers") => layers::run().ok().map_or(1, |()| 0),
+        Some("package") => package::run().map_or_else(
+            |error| {
+                eprintln!("package: {error}");
+                1
+            },
+            |()| 0,
+        ),
         Some("smoke") => smoke::run().ok().map_or(1, |()| 0),
         _ => {
             print_help();
