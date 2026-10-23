@@ -48,6 +48,7 @@ receives partial v2 state.
 | D10 | Presentation | **No Liquid Glass** | Dark translucent panels, one bundled font family (Inter), open icon set (Lucide). SF Symbols is Apple-licensed and cannot be bundled cross-platform |
 | D11 | Exact RAW developer | **rawler 0.8 first, LibRaw fallback** | rawler is pure Rust, builds on all three OSes (closing the Windows gap), and develops the M1 Pro benchmark CR3 in ~0.36 s warm versus LibRaw's ~1.03 s. LibRaw stays the macOS/Linux fallback for formats rawler refuses; the unsafe carve-out does not widen |
 | D12 | Exact RAW presentation | **Progressive, never a blank loupe** | The display-sized embedded preview paints first; the sensor develop replaces it in place when it lands. Exact RAW is still a tier of its own and the timing row below measures the develop itself, not the first frame |
+| D13 | Held-arrow navigation (owner directive, 2026-10-22) | **Fast `PRVW` tier + deferred exact develop** | A held arrow key moves every ~33 ms, faster than the ~67 ms full embedded-preview decode and much faster than the ~0.34 s sensor develop. The loupe now paints the camera's 1620×1080 `PRVW` JPEG in ~7 ms (prefetched four behind/eight ahead), the sharp display replaces it, and the exact develop is queued only after the cursor rests for 250 ms. Progress is never cancelled by navigation and exact is never allowed to starve it |
 
 ## 3. What survives, what dies
 
@@ -145,8 +146,13 @@ first-photo fast path (header + preview on screen while the scan runs), reconcil
 events, and the on-demand **Exact RAW** develop tier as its own cache tier (current photo
 only, dropped on focus change).
 
-Tiers: thumbnail → display (T2 display-sized) → Exact RAW (T4 full develop via rawler).
-T4's memory (≈92 MB/frame at 6000×4000) is the tier's own budget, as in v1.
+Tiers: thumbnail → **navigation preview** (the camera's small `PRVW` JPEG at native
+size) → display (T2 display-sized) → Exact RAW (T4 full develop via rawler). The preview
+tier exists for a held arrow key: one decode is ~7 ms, so it lands inside the ~33 ms key
+repeat even when the ~67 ms display decode has not; it is prefetched four behind and eight
+ahead inside the current batch. T4's memory (≈92 MB/frame at 6000×4000) is the tier's own
+budget, as in v1, and its demand is queued last — the app additionally defers it for
+250 ms after the cursor stops so a develop's all-core ~0.34 s never slows navigation.
 
 **Exact RAW backend (D11, revised in M5):** `rawler` 0.8 is the developer on every
 platform; LibRaw remains the macOS/Linux fallback and the pixel cross-check. rawler is
@@ -156,10 +162,13 @@ boundary) falls through to LibRaw on macOS/Linux; on Windows it is a typed error
 loupe keeps the display preview. The unsafe carve-out is unchanged and still covers only
 the LibRaw FFI.
 
-**Progressive Exact RAW (D12):** enabling the tier queues the develop, but the loupe
-keeps painting the display decode until the 92 MB sensor frame arrives and swaps in
-place. The user never waits on a blank viewer; the benchmark still reports the develop's
-own time separately so the performance gate stays honest.
+**Progressive Exact RAW (D12/D13):** enabling the tier queues the develop, but the loupe
+keeps painting the sharp display (or, while scrolling, the faster navigation preview)
+until the 92 MB sensor frame arrives and swaps in place. The user never waits on a blank
+viewer; the benchmark still reports the develop's own time separately so the performance
+gate stays honest. The develop is queued only after the cursor has been still for 250 ms,
+because it temporarily takes every core and would otherwise starve the previews that keep
+a held arrow key smooth.
 
 EXIF orientation is applied exactly once, in the decode backend; a develop must not
 re-apply it. This rule is a named test.
@@ -261,7 +270,7 @@ The cold-file-cache trap is the standing rule: **whichever decode runs first pay
 read**. Warm or alternate before believing a ratio. `waitUntilIdle`-class invariants get
 dedicated tests (v1's biggest gap).
 
-### 5.1 Measured on this machine (v2, 2026-10-20)
+### 5.1 Measured on this machine (v2, 2026-10-22)
 
 `firstcut-cli bench --decode --folder <game> --repeat 5`, release build, Apple M1 Pro,
 idle machine, real CR3s. These are decode-only timings (no GPU upload), which is why the
@@ -269,29 +278,39 @@ zoom row is labelled as a lower bound.
 
 | Row | Game1JENKS (708) | Game3KC (920) | Gate | Verdict |
 | --- | --- | --- | --- | --- |
-| First photo after open (cold first-touch) | 0.272 s (scan 0.185 + display 0.086) | 0.334 s (scan 0.246 + display 0.088) | ≤ 0.5 s | **OK** |
-| First photo after open (warm re-run) | 0.118 s | (scan warm 0.03 s) | ≤ 0.5 s | **OK** |
-| Arrow → next photo (7 files, median) | 0.070 s | 0.082 s | ≤ 0.09 s | **OK** |
-| 1:1 zoom re-decode (embedded full preview) | 0.195–0.201 s | 0.196 s | v1 parity on GPU | decode half only |
-| Exact RAW develop (rawler, warm) | **0.40 s** (develop 0.37 + orientation 0.03) | **0.40 s** | ≤ 0.119 s (1.5× v1) | **OVER TARGET, owner decision** |
-| Exact RAW first pixels (progressive display) | 0.067 s (the display decode the loupe already paints) | 0.08 s | ≤ 0.119 s | **OK for first frame** |
+| First photo after open (cold first-touch) | 0.106 s (scan 0.033 + display 0.073) | 0.319 s (scan 0.248 + display 0.072) | ≤ 0.5 s | **OK** |
+| First photo after open (warm re-run) | 0.098 s | (scan warm ~0.03 s) | ≤ 0.5 s | **OK** |
+| Arrow → next photo (7 files, median) | 0.067 s | 0.078 s | ≤ 0.09 s | **OK** |
+| Arrow → navigation preview (7 files, median) | **0.007 s** | **0.008 s** | ≤ 0.033 s (a 30 Hz held key) | **OK** |
+| 1:1 zoom re-decode (embedded full preview) | 0.086 s | 0.085 s | v1 parity on GPU | decode half only |
+| Exact RAW develop (rawler, warm) | **0.342 s** (decode 0.12 + develop 0.18 + pack/orientation 0.04) | **0.342 s** | ≤ 0.119 s (1.5× v1) | **OVER TARGET, owner decision** |
+| Exact RAW first pixels (progressive display) | 0.067 s (the display decode the loupe already paints) | 0.078 s | ≤ 0.119 s | **OK for first frame** |
+
+Held-arrow navigation is now bounded by the 7–8 ms preview, not the 67–78 ms display:
+the preview is prefetched four behind/eight ahead and the exact develop waits for a
+250 ms settle, so a held key paints real pixels every repeat instead of blanking or
+cancelling in-flight work. That is the D13 behavior; the arrow row above remains the
+display-tier number the §5 gate names.
 
 **The Exact RAW row cannot meet 0.119 s on this machine, and that is a hardware floor,
-not a tuning knob.** rawler's CRX decode alone is ~0.12–0.17 s for a 24 MP frame; the
-demosaic and colour pipeline add ~0.20 s, and the orientation-8 rotate adds 0.03 s (it is
-destination-row parallel in `firstcut_decode::apply_orientation`, down from 0.14 s when it
-was a scalar pointer chase). LibRaw measured 1.03–1.05 s (unpack 0.20 + AHD 0.66 + RGBA
-0.02 + orientation 0.14), and Apple's `CIRAWFilter` measured ~0.44 s for the first full
-render (~0.18 s warm `toBitmap`) — both slower than rawler, and the v1 0.079 s comment did
-not reproduce. A GPU demosaic would remove most of rawler's ~0.13 s demosaic, but not the
-~0.12 s CRX decode, leaving a projected ~0.25 s floor — still over target.
+not a tuning knob.** rawler's CRX decode alone is ~0.12 s warm for a 24 MP frame; the
+demosaic and colour pipeline add ~0.18 s, and the f32→RGBA pack plus orientation add
+~0.04 s (the pack was ~0.043 s single-threaded and is now ≤0.01 s with rayon; orientation
+is destination-row parallel in `firstcut_decode::apply_orientation`, down from 0.14 s when
+it was a scalar pointer chase). That pack change is most of the improvement from the
+previously recorded 0.40 s to 0.342 s. LibRaw measured 1.03–1.05 s (unpack 0.20 + AHD
+0.66 + RGBA 0.02 + orientation 0.14), and Apple's `CIRAWFilter` measured ~0.44 s for the
+first full render (~0.18 s warm `toBitmap`) — both slower than rawler, and the v1 0.079 s
+comment did not reproduce. A GPU demosaic would remove most of rawler's ~0.18 s develop,
+but not the ~0.12 s CRX decode or the ~0.04 s pack/orientation, leaving a projected
+~0.16 s floor — still over target.
 
-What ships is the fastest honest pair: rawler at 0.40 s for the full sensor develop (LTO
-fat in the release profile), and progressive display so the first pixels — the embedded
-display preview — are on screen in 0.067 s and are replaced in place when the develop
-lands. Faster LibRaw demosaics (PPG 0.30 s, linear 0.34 s) are deliberately not chosen:
-they visibly degrade pixels, which trades the point of the Exact RAW tier for a
-benchmark. Owner options: accept 0.40 s with progressive first paint, fund a native
+What ships is the fastest honest pair: rawler at 0.342 s for the full sensor develop (LTO
+fat in the release profile), and progressive first paint so the navigation preview is on
+screen in 0.007 s, the sharp display in 0.067 s, and the sensor frame replaces it in place
+when it lands. Faster LibRaw demosaics (PPG 0.30 s, linear 0.34 s) are deliberately not
+chosen: they visibly degrade pixels, which trades the point of the Exact RAW tier for a
+benchmark. Owner options: accept 0.342 s with progressive first paint, fund a native
 CRX/GPU decoder (the only route to the decode floor itself), or redefine the row as
 first-frame latency. Recorded here so the gate stays honest.
 

@@ -198,8 +198,22 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   `e123399` the glibc-2.35 release runner, `a3a7e84` packaging trigger, `9288775` the AppDir
 >   desktop fix, `b6939c2`/`d916671` handoff updates, `c77f97d`/`df96acc` the two Wayland CI
 >   attempts (red; see below), `70b3881` the fix. Every commit is pushed. **The last code change
->   is `70b3881`; every pushed commit after the Wayland fix, including the docs handoffs, is
->   green on the 3-OS matrix.**
+>   on the M5/M6 tip was `70b3881`; every pushed commit after the Wayland fix, including the docs
+>   handoffs, is green on the 3-OS matrix.** Later in this session, the owner asked for
+>   held-arrow scrolling with nothing stalling, which added D13:
+> - `c778973` **Pack Exact RAW pixels in parallel.** The f32→RGBA8 pack was 0.043 s on the M1
+>   Pro; rayon brings it under 0.01 s. Warm exact develop fell from 0.40 s to **0.342 s** on
+>   both Game1JENKS and Game3KC (decode 0.12 + develop 0.18 + pack/orientation 0.04).
+> - `5fe8c7a` **Keep a held arrow key on the fast navigation preview** (D13). A new
+>   `Tier::Preview` decodes the camera's small `PRVW` JPEG in **0.007–0.008 s** (versus
+>   0.067–0.078 s for the full display), prefetches four behind/eight ahead, and the loupe
+>   falls back exact → display → preview → thumbnail. The exact develop is now queued only
+>   after the cursor rests 250 ms, with a scheduled repaint so it still starts on an idle
+>   window; it can no longer starve navigation. A held arrow key paints real pixels every
+>   ~33 ms repeat instead of blanking or cancelling in-flight work.
+> - The §5.1 table and parity row 18 now record the 0.342 s exact develop and the 7–8 ms
+>   preview. The 0.119 s exact gate remains over target for the same decode floor; D13 is
+>   about navigation latency, not the sensor-develop gate.
 > - **Gates:** `cargo xtask ci --summary-md` locally (fmt, clippy, layers, assets, workspace
 >   tests); the 3-OS `v2-ci` matrix (macOS, Windows, Ubuntu) and the window smoke passed on
 >   `e123399`, `9288775`, `70b3881` and every later push (runs 39886448813, 39889175063,
@@ -225,14 +239,16 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   at the dependency boundary. A real orientation-8 CR3 develops to 4000×6000 portrait
 >   (`a_real_raw_develops_in_sensor_orientation_and_is_rotated_once`). Windows no longer has
 >   an exact-RAW gap. The crate still owns the workspace's only unsafe carve-out.
-> - **Exact RAW latency:** warm **0.40 s** on Game1JENKS/Game3KC (develop 0.37 + orientation
->   0.03; release LTO fat), down from LibRaw's 1.03–1.05 s. `apply_orientation` is now
->   destination-row parallel (0.14 → 0.03 s). First pixels are the display preview at
->   **0.067 s** because the loupe paints `Tier::ExactRaw` when present and falls back to
->   `Tier::Display` while it is in flight (D12). **The 0.119 s gate is below the ~0.12 s CRX
->   decode floor** for 24 MP on this CPU — rawler decode alone is 0.12–0.17 s, LibRaw unpack
->   0.20 s, Core Image 0.44 s first render. Owner decision recorded in plan §5.1; do not
->   “fix” it with a visibly worse demosaic.
+> - **Exact RAW latency:** warm **0.342 s** on Game1JENKS/Game3KC (decode 0.12 + develop
+>   0.18 + parallel pack/orientation 0.04; release LTO fat), down from the earlier 0.40 s and
+>   LibRaw's 1.03–1.05 s. `apply_orientation` is destination-row parallel (0.14 → 0.03 s), and
+>   the f32→RGBA8 pack is now rayon-parallel (0.043 → <0.01 s). First pixels are the
+>   navigation preview at **0.007 s**, then the display preview at **0.067–0.078 s**, because
+>   the loupe paints exact → display → `Tier::Preview` → thumbnail while the develop is in
+>   flight (D12/D13). **The 0.119 s gate is below the ~0.12 s CRX decode floor** for 24 MP on
+>   this CPU — rawler decode alone is 0.12 s warm, LibRaw unpack 0.20 s, Core Image 0.44 s
+>   first render. Owner decision recorded in plan §5.1; do not “fix” it with a visibly worse
+>   demosaic.
 > - **M6 packaging:** `cargo xtask package` builds `target/package` for the host: macOS
 >   `Firstcut.app` + zip + per-arch cask stamp + SHA-256; Windows zip; Linux AppImage (when
 >   `appimagetool` exists) and `.deb` (when `dpkg-deb` exists), else a `.tar.gz`. The macOS
@@ -266,7 +282,7 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > **Blocked / owner-only (unchanged):** boundary ground-truth files (never synthesised),
 > preview-vs-Exact-RAW default judgement, Game1JENKS re-press decision, Lightroom/Capture One
 > sidecar round-trip, visual sign-off on each OS, Homebrew tap secret, and the `v2.0.0` tag.
-> The Exact RAW 0.119 s gate also needs an owner decision (accept 0.40 s + progressive first
+> The Exact RAW 0.119 s gate also needs an owner decision (accept 0.342 s + progressive first
 > paint, fund a native CRX/GPU decoder, or redefine the row as first-frame latency).
 >
 > **Useful commands / paths:** benchmark photo

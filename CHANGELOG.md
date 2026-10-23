@@ -20,7 +20,9 @@ sweep (§4.5) is enforced across the workspace.
   recorder/import/export, recent shoots, live folder watching and sidecar import.
 - Exact RAW sensor develop through rawler on every OS, with LibRaw as the macOS/Linux fallback
   (D11). Progressive display keeps the loupe on the embedded preview until the develop lands
-  (D12); the warm 24 MP develop is 0.40 s on the M1 Pro, first pixels 0.067 s.
+  (D12); the warm 24 MP develop is 0.342 s on the M1 Pro, first pixels 0.067 s. A held arrow
+  key now paints the camera's 7 ms `PRVW` navigation preview and defers the exact develop for
+  250 ms (D13), so scrolling never blanks or starves the visible frame.
 - Native folder picker via `rfd`, including camera-card roots with multiple rolls asking
   “Choose a Shoot”.
 - `cargo xtask package`: macOS `.app` + zip + cask stamp, Windows zip, Linux AppImage + `.deb`,
