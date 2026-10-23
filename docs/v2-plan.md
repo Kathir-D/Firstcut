@@ -46,6 +46,8 @@ receives partial v2 state.
 | D8 | Packaging | **All three OS at merge** | mac `.app` + Homebrew cask; Windows zip; Linux AppImage + `.deb` (§6) |
 | D9 | Branch | **`v2`** | One branch; small commits; push after every commit; never force-push; merge on green only |
 | D10 | Presentation | **No Liquid Glass** | Dark translucent panels, one bundled font family (Inter), open icon set (Lucide). SF Symbols is Apple-licensed and cannot be bundled cross-platform |
+| D11 | Exact RAW developer | **rawler 0.8 first, LibRaw fallback** | rawler is pure Rust, builds on all three OSes (closing the Windows gap), and develops the M1 Pro benchmark CR3 in ~0.36 s warm versus LibRaw's ~1.03 s. LibRaw stays the macOS/Linux fallback for formats rawler refuses; the unsafe carve-out does not widen |
+| D12 | Exact RAW presentation | **Progressive, never a blank loupe** | The display-sized embedded preview paints first; the sensor develop replaces it in place when it lands. Exact RAW is still a tier of its own and the timing row below measures the develop itself, not the first frame |
 
 ## 3. What survives, what dies
 
@@ -143,16 +145,21 @@ first-photo fast path (header + preview on screen while the scan runs), reconcil
 events, and the on-demand **Exact RAW** develop tier as its own cache tier (current photo
 only, dropped on focus change).
 
-Tiers: thumbnail → display (T2 display-sized) → Exact RAW (T4 full develop via LibRaw).
+Tiers: thumbnail → display (T2 display-sized) → Exact RAW (T4 full develop via rawler).
 T4's memory (≈92 MB/frame at 6000×4000) is the tier's own budget, as in v1.
 
-**Platform note (M2, recorded when the backend landed):** the LibRaw bridge vendors
-LibRaw 0.21.1 through `rsraw`. Its build script refuses MSVC and assumes a Unix
-toolchain, so the dependency is target-gated to macOS and Linux and
-`firstcut_decode_libraw::backend()` answers `None` on Windows. The Exact RAW tier then
-falls back to the camera's embedded JPEG instead of losing the loupe. Closing this needs
-a Windows build of LibRaw (vcpkg or a vcxproj) wired into the matrix; it is a platform
-gap, not a silent one.
+**Exact RAW backend (D11, revised in M5):** `rawler` 0.8 is the developer on every
+platform; LibRaw remains the macOS/Linux fallback and the pixel cross-check. rawler is
+pure Rust, so Windows now gets real sensor data instead of the embedded-JPEG fallback the
+M2 note recorded. A rawler refusal (or a panic inside the dependency, caught at the
+boundary) falls through to LibRaw on macOS/Linux; on Windows it is a typed error and the
+loupe keeps the display preview. The unsafe carve-out is unchanged and still covers only
+the LibRaw FFI.
+
+**Progressive Exact RAW (D12):** enabling the tier queues the develop, but the loupe
+keeps painting the display decode until the 92 MB sensor frame arrives and swaps in
+place. The user never waits on a blank viewer; the benchmark still reports the develop's
+own time separately so the performance gate stays honest.
 
 EXIF orientation is applied exactly once, in the decode backend; a develop must not
 re-apply it. This rule is a named test.
@@ -266,18 +273,27 @@ zoom row is labelled as a lower bound.
 | First photo after open (warm re-run) | 0.118 s | (scan warm 0.03 s) | ≤ 0.5 s | **OK** |
 | Arrow → next photo (7 files, median) | 0.070 s | 0.082 s | ≤ 0.09 s | **OK** |
 | 1:1 zoom re-decode (embedded full preview) | 0.195–0.201 s | 0.196 s | v1 parity on GPU | decode half only |
-| Exact RAW develop (LibRaw, warm) | **1.03–1.05 s** | **1.05 s** | ≤ 0.119 s (1.5× v1) | **OVER TARGET** |
+| Exact RAW develop (rawler, warm) | **0.40 s** (develop 0.37 + orientation 0.03) | **0.40 s** | ≤ 0.119 s (1.5× v1) | **OVER TARGET, owner decision** |
+| Exact RAW first pixels (progressive display) | 0.067 s (the display decode the loupe already paints) | 0.08 s | ≤ 0.119 s | **OK for first frame** |
 
-**The Exact RAW row cannot meet its gate with a CPU LibRaw develop, and this is an owner
-decision, not a tuning knob.** The 1.05 s is `unpack` 0.20 s + AHD demosaic/develop 0.66 s
-+ RGBA expansion 0.02 s + orientation 0.14 s (orientation 8). v1's 0.079 s came from Core
-Image's GPU pipeline (CIRAWFilter); LibRaw is single-threaded CPU here, and
-`rsraw-sys` does not compile LibRaw with OpenMP (its build script passes no `-fopenmp`,
-and macOS clang has no OpenMP runtime by default). Faster demosaics exist — linear 0.34 s,
-PPG 0.30 s — but they visibly degrade pixels, so choosing one to hit a number would
-trade image quality for a benchmark. Options for the owner: accept an on-demand ~1 s
-Exact RAW (it is one photo deep, never in the prefetch), revisit D2, or add a later GPU
-develop path. Recorded here so the gate stays honest.
+**The Exact RAW row cannot meet 0.119 s on this machine, and that is a hardware floor,
+not a tuning knob.** rawler's CRX decode alone is ~0.12–0.17 s for a 24 MP frame; the
+demosaic and colour pipeline add ~0.20 s, and the orientation-8 rotate adds 0.03 s (it is
+destination-row parallel in `firstcut_decode::apply_orientation`, down from 0.14 s when it
+was a scalar pointer chase). LibRaw measured 1.03–1.05 s (unpack 0.20 + AHD 0.66 + RGBA
+0.02 + orientation 0.14), and Apple's `CIRAWFilter` measured ~0.44 s for the first full
+render (~0.18 s warm `toBitmap`) — both slower than rawler, and the v1 0.079 s comment did
+not reproduce. A GPU demosaic would remove most of rawler's ~0.13 s demosaic, but not the
+~0.12 s CRX decode, leaving a projected ~0.25 s floor — still over target.
+
+What ships is the fastest honest pair: rawler at 0.40 s for the full sensor develop (LTO
+fat in the release profile), and progressive display so the first pixels — the embedded
+display preview — are on screen in 0.067 s and are replaced in place when the develop
+lands. Faster LibRaw demosaics (PPG 0.30 s, linear 0.34 s) are deliberately not chosen:
+they visibly degrade pixels, which trades the point of the Exact RAW tier for a
+benchmark. Owner options: accept 0.40 s with progressive first paint, fund a native
+CRX/GPU decoder (the only route to the decode floor itself), or redefine the row as
+first-frame latency. Recorded here so the gate stays honest.
 
 ## 6. Milestones
 

@@ -1,62 +1,138 @@
-//! LibRaw bindings backend for [`firstcut_decode`]: develops RAW sensor data through
-//! LibRaw (approved C/C++ dependency, decision D3 in docs/v2-plan.md).
+//! Native exact-RAW backends for [`firstcut_decode`]: the fast rawler developer,
+//! with LibRaw as the fallback on macOS and Linux (decision D3, docs/v2-plan.md).
 //!
 //! THE SINGLE `unsafe` CARVE-OUT OF THE WORKSPACE — docs/v2-plan.md §4.5. The
 //! workspace forbids `unsafe_code` everywhere; this crate's own `[lints.rust]`
 //! table (in Cargo.toml) is the one permitted exception, and `cargo xtask layers`
 //! fails CI if any other crate carries its own lints table. Unsafe code here must
 //! stay confined to FFI bindings and be shadowed by checked, safe wrappers the
-//! rest of the ladder calls.
+//! rest of the ladder calls. rawler is safe Rust; the carve-out exists for the
+//! LibRaw bindings underneath it.
 //!
 //! # How this backend is wired
 //!
-//! `rsraw` vendors LibRaw 0.21.1 and builds it with `cc`. Its build script refuses
-//! MSVC, so the dependency is target-gated to macOS and Linux (Cargo.toml) and
-//! [`backend`] answers `None` on Windows. The Exact RAW tier then falls back to the
-//! camera's embedded JPEG instead of losing the loupe; that is a recorded platform
-//! gap (docs/v2-plan.md §6), not a silent one.
+//! [`backend`] always answers `Some`:
 //!
-//! Orientation is applied **exactly once**, here: LibRaw is told to develop in
-//! sensor orientation (`user_flip = 0`) and the already-oriented
+//! * **rawler** is the exact-RAW developer on every platform. It is pure Rust, so
+//!   Windows gets real sensor data instead of falling back to the camera JPEG; on
+//!   the benchmark machine it develops a 6000×4000 CR3 in ~0.34 s versus LibRaw's
+//!   ~1.03 s. That is the M5 cross-platform fix and the §5 exact-RAW improvement.
+//! * **LibRaw** (via `rsraw`, vendored 0.21.1) is the fallback when rawler refuses
+//!   a file or a layout. `rsraw` refuses MSVC, so it is target-gated to macOS and
+//!   Linux; on Windows a rawler failure is reported as a typed error and the
+//!   pipeline shows the embedded JPEG.
+//!
+//! Orientation is applied **exactly once**, in [`RawDecode::decode_raw`]: both
+//! developers produce sensor orientation and the already-oriented
 //! [`firstcut_decode::apply_orientation`] seam rotates the result to display
-//! orientation. Rotating inside LibRaw as well would rotate orientations 5–8 twice.
+//! orientation. Rotating inside a developer as well would rotate orientations 5–8
+//! twice.
 
+use std::panic::AssertUnwindSafe;
+use std::path::Path;
 use std::sync::Arc;
 
-use firstcut_decode::RawDecode;
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-use std::path::Path;
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-use firstcut_decode::{DecodeError, DecodedImage, apply_orientation};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+use firstcut_decode::{DecodeError, DecodedImage, RawDecode, apply_orientation};
 use firstcut_meta::meta::PhotoMeta;
 
-/// The develop backend on platforms where the vendored LibRaw can build, `None` elsewhere.
-///
-/// Callers attach this to a decode tier; a `None` is a platform fact, not a failure.
+/// The exact-RAW backend. It is attached on every platform; `None` is kept in the
+/// signature because the decode tier's seam is optional and some future platform may
+/// have no developer at all.
 pub fn backend() -> Option<Arc<dyn RawDecode>> {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    {
-        Some(Arc::new(LibRaw))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        None
+    Some(Arc::new(ExactRaw))
+}
+
+struct ExactRaw;
+
+impl RawDecode for ExactRaw {
+    fn decode_raw(&self, path: &Path, meta: &PhotoMeta) -> Result<DecodedImage, DecodeError> {
+        match develop_fast(path) {
+            Ok(image) => apply_orientation(image, meta.orientation),
+            Err(fast_error) => {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                {
+                    // LibRaw is slower but covers formats rawler has not ported. The fast
+                    // error is only surfaced if both refuse the file.
+                    let _ = fast_error;
+                    develop_libraw(path, meta)
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                {
+                    Err(fast_error)
+                }
+            }
+        }
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-struct LibRaw;
+/// rawler's whole develop pipeline: decode, demosaic, calibrate to the camera's
+/// matrix, and encode sRGB. It returns display-ready pixels in sensor orientation.
+fn develop_fast(path: &Path) -> Result<DecodedImage, DecodeError> {
+    let display = path.display().to_string();
+    // rawler has a `panic!`/`todo!` on malformed layouts. A dependency may not take
+    // the process down; the catch turns it into the same typed error as a refusal.
+    let developed = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let raw = rawler::decode_file(path).map_err(|error| error.to_string())?;
+        let intermediate = rawler::imgop::develop::RawDevelop::default().develop_intermediate(&raw).map_err(|error| error.to_string())?;
+        Ok::<_, String>(intermediate)
+    }));
+    let intermediate = match developed {
+        Ok(Ok(intermediate)) => intermediate,
+        Ok(Err(message)) => return Err(DecodeError::Raw { path: display, message }),
+        Err(_) => return Err(DecodeError::Raw { path: display, message: "the fast RAW developer panicked".to_string() }),
+    };
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-impl RawDecode for LibRaw {
-    fn decode_raw(&self, path: &Path, meta: &PhotoMeta) -> Result<DecodedImage, DecodeError> {
-        let bytes = std::fs::read(path).map_err(|source| DecodeError::Read { path: path.display().to_string(), source })?;
-        let image = develop(&bytes, &path.display().to_string())?;
-        apply_orientation(image, meta.orientation)
+    use rawler::imgop::develop::Intermediate;
+    match intermediate {
+        Intermediate::ThreeColor(pixels) => rgba_from_rgb(&pixels.data, pixels.width, pixels.height, &display),
+        Intermediate::FourColor(pixels) => {
+            let rgba = pixels.data.iter().map(|pixel| [pixel[0], pixel[1], pixel[2]]).collect::<Vec<_>>();
+            rgba_from_rgb(&rgba, pixels.width, pixels.height, &display)
+        }
+        Intermediate::Monochrome(pixels) => {
+            let dim = pixels.dim();
+            Err(DecodeError::RawLayout {
+                path: display,
+                width: u32::try_from(dim.w).unwrap_or(u32::MAX),
+                height: u32::try_from(dim.h).unwrap_or(u32::MAX),
+                colors: 1,
+            })
+        }
     }
+}
+
+/// Turns rawler's f32 sRGB pixels into the RGBA8 buffer the rest of the app consumes.
+fn rgba_from_rgb(pixels: &[[f32; 3]], width: usize, height: usize, path: &str) -> Result<DecodedImage, DecodeError> {
+    let width_u32 = u32::try_from(width).map_err(|_| DecodeError::RawLayout { path: path.to_owned(), width: u32::MAX, height: 0, colors: 3 })?;
+    let height_u32 =
+        u32::try_from(height).map_err(|_| DecodeError::RawLayout { path: path.to_owned(), width: width_u32, height: u32::MAX, colors: 3 })?;
+    let expected =
+        width.checked_mul(height).ok_or_else(|| DecodeError::RawLayout { path: path.to_owned(), width: width_u32, height: height_u32, colors: 3 })?;
+    if pixels.len() != expected {
+        return Err(DecodeError::RawLayout { path: path.to_owned(), width: width_u32, height: height_u32, colors: 3 });
+    }
+    let capacity =
+        expected.checked_mul(4).ok_or_else(|| DecodeError::RawLayout { path: path.to_owned(), width: width_u32, height: height_u32, colors: 3 })?;
+    let mut rgba = Vec::with_capacity(capacity);
+    for pixel in pixels {
+        rgba.extend_from_slice(&[channel(pixel[0]), channel(pixel[1]), channel(pixel[2]), 255]);
+    }
+    if rgba.len() != capacity {
+        return Err(DecodeError::RawLayout { path: path.to_owned(), width: width_u32, height: height_u32, colors: 3 });
+    }
+    Ok(DecodedImage { width: width_u32, height: height_u32, rgba })
+}
+
+fn channel(value: f32) -> u8 {
+    if value.is_finite() { (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 } else { 0 }
+}
+
+/// The LibRaw fallback, kept unrotated so the trait impl above is the one rotation seam.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn develop_libraw(path: &Path, meta: &PhotoMeta) -> Result<DecodedImage, DecodeError> {
+    let bytes = std::fs::read(path).map_err(|source| DecodeError::Read { path: path.display().to_string(), source })?;
+    let image = develop(&bytes, &path.display().to_string())?;
+    apply_orientation(image, meta.orientation)
 }
 
 /// Develops sensor data at full resolution into RGBA8, in the sensor's own orientation.
@@ -119,13 +195,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_backend_is_attached_where_libraw_can_build() {
-        let backend = backend();
-        if cfg!(any(target_os = "macos", target_os = "linux")) {
-            assert!(backend.is_some(), "LibRaw must back the Exact RAW tier on macOS and Linux");
-        } else {
-            assert!(backend.is_none(), "other platforms fall back to the embedded JPEG, deliberately");
-        }
+    fn the_backend_is_attached_on_every_platform() {
+        assert!(backend().is_some(), "rawler is pure Rust and backs the Exact RAW tier on all three OSes");
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_raw_is_an_error_not_a_crash_in_the_fast_developer() {
+        let error = develop_fast(Path::new("synthetic.cr3")).expect_err("garbage must not develop");
+        assert!(matches!(error, DecodeError::Raw { .. }), "expected a typed RAW error, got {error:?}");
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]

@@ -649,9 +649,12 @@ impl DecodeBank {
         }
     }
 
-    /// The display frame under the cursor, if its decode has landed.
+    /// The best frame under the cursor: the Exact RAW develop when it has landed, otherwise the
+    /// display-sized embedded preview while it is still in flight. That fallback is what makes
+    /// turning Exact RAW on progressive — the loupe never blanks for the develop's ~0.4 s, and
+    /// the sharper sensor image replaces the preview in place when it arrives.
     fn frame(&self, id: PhotoId) -> Option<&Arc<Frame>> {
-        self.pipeline.peek(id, Tier::Display)
+        self.pipeline.peek(id, Tier::ExactRaw).or_else(|| self.pipeline.peek(id, Tier::Display))
     }
 }
 

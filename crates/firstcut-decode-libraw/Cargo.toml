@@ -9,12 +9,14 @@ rust-version.workspace = true
 [dependencies]
 firstcut-decode = { workspace = true }
 firstcut-meta = { workspace = true }
+# The fast exact-RAW developer. Pure Rust, so it builds on Windows too; LibRaw stays
+# as the fallback for formats rawler refuses (and as the quality cross-check).
+rawler = "0.8"
 
 # `rsraw` vendors LibRaw 0.21.1 and compiles it with `cc`; its build script refuses MSVC
-# outright, and its `-pthread` flag assumes a Unix toolchain. The dependency is therefore
-# target-gated to the two platforms the backend supports today, and `backend()` returns
-# `None` elsewhere (Windows falls back to the embedded JPEG; see the note in
-# docs/v2-plan.md §6).
+# outright, and its `-pthread` flag assumes a Unix toolchain. LibRaw is therefore the
+# *fallback* on macOS/Linux only; rawler above is the backend on all three platforms
+# (docs/v2-plan.md §4.2, §5.1).
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 rsraw = "0.1.1"
 

@@ -77,3 +77,7 @@ opt-level = 1
 
 [profile.release]
 debug = "line-tables-only"
+# The exact-RAW developer is the one hot path where LTO earns its (packaging-only)
+# build time: rawler's decode + demosaic + colour pipeline crosses several crates.
+lto = "fat"
+codegen-units = 1

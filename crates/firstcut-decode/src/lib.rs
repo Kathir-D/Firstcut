@@ -10,6 +10,7 @@
 //! Full RAW decode (Exact tier) attaches at M2 via the backend trait [`RawDecode`]; this crate
 //! holds the trait so the surfaces can already compile against "a decode", not "a backend".
 
+use rayon::prelude::*;
 use std::path::Path;
 
 use firstcut_meta::meta::{ByteRange, PhotoMeta};
@@ -182,38 +183,50 @@ pub fn apply_orientation(image: DecodedImage, orientation: u8) -> Result<Decoded
     let DecodedImage { width, height, rgba } = image;
     let swaps = orientation_swaps_axes(orientation);
     let (out_width, out_height) = if swaps { (height, width) } else { (width, height) };
-    let expected = usize::try_from(out_width)
-        .ok()
-        .and_then(|w| usize::try_from(out_height).ok().and_then(|h| w.checked_mul(h)))
-        .and_then(|area| area.checked_mul(4))
-        .ok_or(DecodeError::OrientationOverflow { width, height, orientation })?;
+    let width = usize::try_from(width).map_err(|_| DecodeError::OrientationOverflow { width, height, orientation })?;
+    let height = usize::try_from(height).map_err(|_| DecodeError::OrientationOverflow { width: u32::MAX, height, orientation })?;
+    let out_width = usize::try_from(out_width).map_err(|_| DecodeError::OrientationOverflow { width: u32::MAX, height: u32::MAX, orientation })?;
+    let out_height = usize::try_from(out_height).map_err(|_| DecodeError::OrientationOverflow { width: u32::MAX, height: u32::MAX, orientation })?;
+    let expected = out_width.checked_mul(out_height).and_then(|area| area.checked_mul(4)).ok_or(DecodeError::OrientationOverflow {
+        width: u32::MAX,
+        height: u32::MAX,
+        orientation,
+    })?;
     if expected != rgba.len() {
-        return Err(DecodeError::SizeMismatch { width: out_width, height: out_height, expected });
+        return Err(DecodeError::SizeMismatch {
+            width: u32::try_from(out_width).unwrap_or(u32::MAX),
+            height: u32::try_from(out_height).unwrap_or(u32::MAX),
+            expected,
+        });
     }
+    if out_width == 0 || out_height == 0 {
+        return Ok(DecodedImage { width: u32::try_from(out_width).unwrap_or(0), height: u32::try_from(out_height).unwrap_or(0), rgba: Vec::new() });
+    }
+    let row_bytes = out_width.checked_mul(4).ok_or(DecodeError::OrientationOverflow { width: u32::MAX, height: u32::MAX, orientation })?;
     let mut out = vec![0u8; expected];
-    for y in 0..height {
-        for x in 0..width {
-            // EXIF orientation is a transform of the *stored* frame into display orientation.
-            let (dx, dy) = match orientation {
-                2 => (width - 1 - x, y),
-                3 => (width - 1 - x, height - 1 - y),
-                4 => (x, height - 1 - y),
-                5 => (y, x),
-                6 => (height - 1 - y, x),
-                7 => (height - 1 - y, width - 1 - x),
-                8 => (y, width - 1 - x),
-                _ => (x, y),
+    // Destination-oriented and row-parallel: each output row writes a contiguous slice, so a
+    // portrait 24 MP rotate is memory-bandwidth bound instead of a scalar pointer chase. The
+    // inverse of the EXIF transform names the source pixel for each destination pixel.
+    out.par_chunks_mut(row_bytes).enumerate().for_each(|(dy, row)| {
+        for dx in 0..out_width {
+            let (sx, sy) = match orientation {
+                2 => (width - 1 - dx, dy),
+                3 => (width - 1 - dx, height - 1 - dy),
+                4 => (dx, height - 1 - dy),
+                5 => (dy, dx),
+                6 => (dy, height - 1 - dx),
+                7 => (width - 1 - dy, height - 1 - dx),
+                8 => (width - 1 - dy, dx),
+                _ => (dx, dy),
             };
-            let source = (usize::try_from(y).unwrap_or(0) * usize::try_from(width).unwrap_or(0) + usize::try_from(x).unwrap_or(0)).saturating_mul(4);
-            let destination =
-                (usize::try_from(dy).unwrap_or(0) * usize::try_from(out_width).unwrap_or(0) + usize::try_from(dx).unwrap_or(0)).saturating_mul(4);
-            // Checked slices: a corrupt dimension must never index past the buffer.
-            if let (Some(from), Some(to)) = (rgba.get(source..source.saturating_add(4)), out.get_mut(destination..destination.saturating_add(4))) {
+            let Some(source) = sy.checked_mul(width).and_then(|row| row.checked_add(sx)).and_then(|pixel| pixel.checked_mul(4)) else { continue };
+            let destination = dx * 4;
+            if let (Some(from), Some(to)) = (rgba.get(source..source.saturating_add(4)), row.get_mut(destination..destination.saturating_add(4))) {
                 to.copy_from_slice(from);
             }
         }
-    }
-    Ok(DecodedImage { width: out_width, height: out_height, rgba: out })
+    });
+    Ok(DecodedImage { width: u32::try_from(out_width).unwrap_or(u32::MAX), height: u32::try_from(out_height).unwrap_or(u32::MAX), rgba: out })
 }
 
 /// The histogram lives in `firstcut-types` so the Info panel can name it without depending on a
