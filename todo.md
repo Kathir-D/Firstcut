@@ -196,7 +196,8 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - Commits: `d324840` long-path scan test, `daeab6e` shell hardening (fonts/pickers/card
 >   chooser), `fe196e4` rawler + progressive Exact RAW, `5bebff2` packaging, `0240b7e` docs,
 >   `e123399` the glibc-2.35 release runner, `a3a7e84` packaging trigger, `9288775` the AppDir
->   desktop fix. Tip is `9288775`, every commit pushed.
+>   desktop fix, `b6939c2` the handoff update. Every commit is pushed; the last code commit is
+>   `9288775` and the docs tip is `b6939c2`.
 > - **Gates green on the tip:** `cargo xtask ci --summary-md` locally (fmt, clippy, layers,
 >   assets, workspace tests); the 3-OS `v2-ci` matrix (macOS, Windows, Ubuntu) and the window
 >   smoke passed on `e123399` and again on `9288775` (run 39889175063 / 39889169051). The
