@@ -214,6 +214,10 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > - The §5.1 table and parity row 18 now record the 0.342 s exact develop and the 7–8 ms
 >   preview. The 0.119 s exact gate remains over target for the same decode floor; D13 is
 >   about navigation latency, not the sensor-develop gate.
+> - **Gates for the follow-up:** local `cargo xtask ci --summary-md` passed on the docs tip;
+>   the 3-OS `v2-ci` push run on the code tip `5fe8c7a` is green (run `39900808432`), and the
+>   final PR run on `0de5bc4` is green (run `39900919296`). Tip is `0de5bc4` (docs only after
+>   `5fe8c7a`), working tree clean.
 > - **Gates:** `cargo xtask ci --summary-md` locally (fmt, clippy, layers, assets, workspace
 >   tests); the 3-OS `v2-ci` matrix (macOS, Windows, Ubuntu) and the window smoke passed on
 >   `e123399`, `9288775`, `70b3881` and every later push (runs 39886448813, 39889175063,
