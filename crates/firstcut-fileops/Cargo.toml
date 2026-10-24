@@ -1,0 +1,21 @@
+[package]
+name = "firstcut-fileops"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+firstcut-types = { workspace = true }
+firstcut-xmp = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# unix-only volume facts; nix does not build for windows targets
+nix = { version = "0.30", default-features = false, features = ["fs", "user"] }

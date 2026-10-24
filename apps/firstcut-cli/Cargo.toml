@@ -1,0 +1,24 @@
+[package]
+name = "firstcut-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+firstcut-batching = { workspace = true }
+firstcut-catalog = { workspace = true }
+firstcut-decode = { workspace = true }
+firstcut-decode-libraw = { workspace = true }
+firstcut-engine = { workspace = true }
+firstcut-meta = { workspace = true }
+firstcut-types = { workspace = true }
+firstcut-xmp = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

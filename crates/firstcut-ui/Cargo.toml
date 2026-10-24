@@ -1,0 +1,16 @@
+[package]
+name = "firstcut-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+firstcut-engine = { workspace = true }
+firstcut-types = { workspace = true }
+egui = { workspace = true }
+serde_json = { workspace = true }
