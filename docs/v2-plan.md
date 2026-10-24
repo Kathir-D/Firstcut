@@ -309,14 +309,16 @@ develop still waits for a 250 ms settle. That is the D13 behavior; the arrow row
 remains the single display-tier number the §5 gate names.
 
 The display target is now a fit, not a fixed long edge. A 3:2 photograph on a 16:9 4K pane
-occupies 3240×2160, so the 3840 px square the old code requested decoded and uploaded 18%
-extra width; a 1440×900 1x laptop pane asks for 1350 px, which the camera's 1620 px `PRVW`
-already covers, so the display tier never pays the 6000×4000 entropy decode. That path
-measures 376–462 frames/s with four workers versus 48–55 frames/s at the 4K fit, and both
-are above the 20/s held-key budget. The 5K/6K pane sizes (4320/5076 px) are computed but not
-separately benchmarked. The GPU texture cache is capped at 768 MB and trims least-recently
-painted frames, because 28 MB per 4K texture would otherwise grow without bound on a long
-hold even while the CPU pipeline stays inside its budget.
+occupies 3240×2160; asking for 3840 was 15.6% wider than the pane and, under the old
+integer-stride reduction, actually produced 3000×2000, which the loupe then upscaled by 8%.
+The exact 3240 target removes that softness and makes the budget estimate honest. A
+1440×900 1x laptop pane asks for 1350 px, which the camera's 1620 px `PRVW` already covers,
+so the display tier never pays the 6000×4000 entropy decode. That path measures 376–462
+frames/s with four workers versus 48–55 frames/s at the 4K fit, and both are above the 20/s
+held-key budget. The 5K/6K pane sizes (4320/5076 px) are computed but not separately
+benchmarked. The GPU texture cache is capped at 768 MB and trims least-recently painted
+frames, because 28 MB per 4K texture would otherwise grow without bound on a long hold even
+while the CPU pipeline stays inside its budget.
 
 **The Exact RAW row cannot meet 0.119 s on this machine, and that is a hardware floor,
 not a tuning knob.** rawler's CRX decode alone is ~0.12 s warm for a 24 MP frame; the
