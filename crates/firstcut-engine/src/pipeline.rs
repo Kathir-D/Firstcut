@@ -28,8 +28,8 @@ use firstcut_types::PhotoId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Tier {
     Thumbnail,
-    /// The camera's small `PRVW` JPEG at its native size. One decode is ~9 ms on the M1 Pro
-    /// versus ~67 ms for the full embedded preview, which is what keeps a held arrow key from
+    /// The camera's small `PRVW` JPEG at its native size. One decode is ~6–8 ms on the M1 Pro
+    /// versus ~57–68 ms for the full embedded preview, which is what keeps a held arrow key from
     /// outrunning the loupe: every frame is painted with real pixels while the sharp display
     /// decode is still in flight.
     Preview,
@@ -56,6 +56,17 @@ pub const FALLBACK_DISPLAY_EDGE: u32 = 2048;
 /// The navigation preview's target. The small `PRVW` JPEG is usually 1620×1080; asking for
 /// 2048 keeps `downsample_to` from halving it (its integer step would turn 1600 into 540 px).
 pub const PREVIEW_EDGE: u32 = 2048;
+
+/// How far the sharp display tier is prefetched around the cursor. A display decode is ~57–68 ms
+/// on an M1 Pro, so one worker cannot keep up with a 20 Hz held arrow (50 ms/frame); four workers
+/// can (53–61 frames/s measured), but only if the work starts early enough. These are caps:
+/// [`Pipeline::display_window`] shrinks them when the backing edge is large enough that the
+/// frames would not fit the display budget.
+const DISPLAY_PREFETCH_AHEAD: usize = 32;
+const DISPLAY_PREFETCH_BEHIND: usize = 12;
+/// The next batch's first frames are warmed before the cursor crosses the batch boundary. Without
+/// this, every boundary is a cold start exactly when the user is moving fastest.
+const DISPLAY_PREFETCH_NEXT_BATCH: usize = 8;
 
 /// Bytes each tier may hold. Split from one total so Settings → Performance keeps a single
 /// number, in sixteenths: thumbnails 1, navigation previews 1, displays 10 (five eighths), and
@@ -563,6 +574,26 @@ impl<V> Pipeline<V> {
         pinned
     }
 
+    /// How many neighbours the display tier can prefetch in each direction without letting the
+    /// demand set itself exceed the display budget. The estimates use a square (4 bytes per
+    /// pixel) so a portrait photo cannot be underestimated.
+    fn display_window(&self, display_edge: u32) -> (usize, usize, usize) {
+        if self.focus.zoomed {
+            return (3, 2, 0);
+        }
+        let edge = display_edge.max(1) as usize;
+        let frame_estimate = edge.saturating_mul(edge).saturating_mul(4);
+        let slots = self.budgets.display.checked_div(frame_estimate).unwrap_or(0);
+        // At a 2048 px edge there is room for the full head; at 5–6K the same eight-frame
+        // heads would crowd out the current batch, so the head shrinks with the budget.
+        let head = (slots / 8).clamp(2, DISPLAY_PREFETCH_NEXT_BATCH);
+        // Leave room for the visible frame, the strip and both neighbouring batch heads.
+        let wanted = slots.saturating_sub(4 + 2 * head).clamp(8, DISPLAY_PREFETCH_AHEAD + DISPLAY_PREFETCH_BEHIND);
+        let ahead = (wanted.saturating_mul(3) / 4).clamp(4, DISPLAY_PREFETCH_AHEAD);
+        let behind = wanted.saturating_sub(ahead).clamp(2, DISPLAY_PREFETCH_BEHIND);
+        (ahead, behind, head)
+    }
+
     fn rebuild_demand(&mut self) {
         let mut demand: Vec<Demand> = Vec::new();
         let current = self.focus.current;
@@ -580,8 +611,8 @@ impl<V> Pipeline<V> {
             let source = self.sources.get(&current);
             if let Some(source) = source {
                 let full = source.meta.width.max(source.meta.height).max(display_edge);
-                // The navigation preview is first: it is ~9 ms, so a held arrow key always has
-                // a real frame to paint while the ~67 ms display decode is still in flight.
+                // The navigation preview is first: it is ~6–8 ms, so a held arrow key always has
+                // a real frame to paint while the ~57–68 ms display decode is still in flight.
                 demand.push(Demand { key: Key { id: current, tier: Tier::Preview }, target_edge: PREVIEW_EDGE, rank: 0 });
                 demand.push(Demand {
                     key: Key { id: current, tier: Tier::Display },
@@ -617,9 +648,14 @@ impl<V> Pipeline<V> {
             }
         }
 
-        // Display prefetch: the current batch only, two behind and three ahead (pipeline-api.md).
+        // Display prefetch: a long forward-biased window, bounded by the display budget. At
+        // 20 Hz the cursor needs a frame every 50 ms; a ~57–68 ms decode cannot answer that on
+        // demand, but four workers can stay ahead if they are given the next second of frames
+        // while the current one is painted. The window is deliberately after the current
+        // batch's strip thumbnails (rank 1_000) and before the next batch's strip (rank 2_000).
+        let (ahead, behind, head) = self.display_window(display_edge);
         if let Some(position) = current_position {
-            for offset in -2i64..=3 {
+            for offset in -(behind as i64)..=(ahead as i64) {
                 if offset == 0 {
                     continue;
                 }
@@ -631,8 +667,22 @@ impl<V> Pipeline<V> {
                 demand.push(Demand {
                     key: Key { id, tier: Tier::Display },
                     target_edge: if self.focus.zoomed || zoom_prefetch { full } else { display_edge },
-                    rank: 200 + (offset.unsigned_abs() as u32) * 2 + u32::from(offset < 0),
+                    rank: 1_500 + (offset.unsigned_abs() as u32) * 2 + u32::from(offset < 0),
                 });
+            }
+        }
+        // Warm the heads of both neighbouring batches too: a batch boundary must not turn a
+        // held arrow into a cold start in either direction. These sit just before the
+        // neighbouring batches' strip thumbnails.
+        if !self.focus.zoomed {
+            for (window, base_rank) in [(1usize, 1_800u32), (2usize, 1_900u32)] {
+                let Some(batch) = self.focus.windows.get(window) else { continue };
+                for (index, id) in batch.iter().take(head).enumerate() {
+                    if !self.sources.contains_key(id) || self.focus.current == Some(*id) {
+                        continue;
+                    }
+                    demand.push(Demand { key: Key { id: *id, tier: Tier::Display }, target_edge: display_edge, rank: base_rank + index as u32 });
+                }
             }
         }
 
@@ -709,6 +759,10 @@ mod tests {
 
     fn catalog() -> Vec<Source> {
         (1..=8).map(|id| photo(id, 6000, 4000)).collect()
+    }
+
+    fn wide_catalog() -> Vec<Source> {
+        (1..=80).map(|id| photo(id, 6000, 4000)).collect()
     }
 
     fn focus_on(current: u64) -> Focus {
@@ -794,6 +848,36 @@ mod tests {
         assert!(pipeline.contains(PhotoId(3), Tier::Display), "the sharp prefetch is separate");
         assert_eq!(pipeline.get(PhotoId(3), Tier::Preview).map(Vec::len), Some(8));
         assert_eq!(pipeline.get(PhotoId(3), Tier::Display).map(Vec::len), Some(8));
+    }
+
+    /// A held arrow key at 20 Hz gets a ~1.6 s sharp-frame lead, not just three neighbours. The
+    /// four decode workers need that lead because one display decode (~57–68 ms) is slower than the
+    /// 50 ms key interval; the preview tier still paints immediately while the lead is built.
+    #[test]
+    fn the_display_window_prefetches_the_next_second_of_a_held_arrow() {
+        let mut pipeline = Pipeline::new(TierBudgets::default(), bytes);
+        pipeline.set_catalog(wide_catalog());
+        let first: Vec<PhotoId> = (1..=40).map(PhotoId).collect();
+        let second: Vec<PhotoId> = (41..=80).map(PhotoId).collect();
+        pipeline.set_focus(Focus { windows: vec![first, second], current: Some(PhotoId(20)), viewport_edge: 2048, ..Focus::default() });
+        settle(&mut pipeline, &[0; 8]);
+
+        for id in 8..=40 {
+            assert!(pipeline.contains(PhotoId(id), Tier::Display), "current batch neighbour {id} is warm");
+        }
+        assert!(!pipeline.contains(PhotoId(7), Tier::Display), "the window is bounded, not the whole catalog");
+        for id in 41..=48 {
+            assert!(pipeline.contains(PhotoId(id), Tier::Display), "the next batch's head is warm too");
+        }
+        assert!(!pipeline.contains(PhotoId(49), Tier::Display), "only the next batch's head is prefetched");
+    }
+
+    #[test]
+    fn a_large_retina_edge_shrinks_the_display_window_to_the_budget() {
+        let pipeline = pipeline();
+        assert_eq!(pipeline.display_window(2048), (32, 12, 8));
+        let (ahead, behind, head) = pipeline.display_window(6000);
+        assert!(ahead < 32 && behind < 12 && head < 8, "a 6000 px frame is ~144 MB; the window must shrink: {ahead}/{behind}/{head}");
     }
 
     /// Defect 1: `store(_:_:)`'s discard branch dropped the cancel without releasing the in-flight
@@ -931,14 +1015,20 @@ mod tests {
     #[test]
     fn a_rescan_keeps_the_entries_whose_photos_stayed() {
         let mut pipeline = pipeline();
+        let mut catalog_with_extra = catalog();
+        catalog_with_extra.push(photo(9, 6000, 4000));
+        pipeline.set_catalog(catalog_with_extra);
         pipeline.set_focus(focus_on(1));
         settle(&mut pipeline, &[0; 8]);
         let display_bytes = pipeline.cached_bytes(Tier::Display);
+        // Photo 9 is outside the focus window and was never demanded, so its departure is
+        // genuinely unrelated to the loupe's cached display frames.
         let mut next = catalog();
-        next.retain(|source| source.meta.id != PhotoId(8));
+        next.push(photo(9, 6000, 4000));
+        next.retain(|source| source.meta.id != PhotoId(9));
         pipeline.update_catalog(next);
         assert!(pipeline.contains(PhotoId(1), Tier::Display), "an unrelated file leaving must not blank the loupe");
-        assert!(!pipeline.contains(PhotoId(8), Tier::Thumbnail));
+        assert!(!pipeline.contains(PhotoId(9), Tier::Thumbnail));
         assert_eq!(pipeline.cached_bytes(Tier::Display), display_bytes, "the bytes still present are not recounted");
     }
 

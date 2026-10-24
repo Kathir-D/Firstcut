@@ -42,17 +42,20 @@ you ask for it.
 
 | Path | Measured |
 | --- | --- |
-| First photo after opening a 708-file shoot | 0.10–0.32 s |
-| Held arrow, navigation preview (`PRVW`) | 0.007–0.008 s |
-| Next photo, embedded display preview | 0.067–0.078 s |
-| 1:1 zoom re-decode (embedded full preview) | 0.085–0.086 s |
-| Exact RAW, first pixels (display preview) | 0.067 s |
-| Exact RAW, full sensor develop | 0.342 s (decode 0.12 + develop 0.18 + pack/orientation 0.04) |
+| First photo after opening a 708-file shoot | 0.24–0.29 s |
+| Held arrow, navigation preview (`PRVW`) | 0.006–0.008 s |
+| Next photo, embedded display preview | 0.057–0.068 s |
+| Display throughput, four decode workers | 54–59 frames/s |
+| 1:1 zoom re-decode (embedded full preview) | 0.085 s |
+| Exact RAW, first pixels (display preview) | 0.057–0.068 s |
+| Exact RAW, full sensor develop | 0.343 s (decode 0.12 + develop 0.18 + pack/orientation 0.04) |
 
-The exact develop is 0.342 s because a 24 MP CRX decode alone is ~0.12 s on this CPU;
-the 0.119 s target is below that floor. The loupe stays responsive by painting the 7 ms
-navigation preview while an arrow key is held, then the sharp display, and swapping the
-sensor frame in when the cursor rests. Details and the owner options are in
+The exact develop is 0.343 s because a 24 MP CRX decode alone is ~0.12 s on this CPU;
+the 0.119 s target is below that floor. A held arrow key is not decode-latency bound: the
+loupe paints the 6–8 ms navigation preview every repeat, the display tier is prefetched
+32 ahead/12 behind (plus batch heads), and four workers sustain 54–59 frames/s against a
+20 Hz frame budget of 20/s, so after a short lead-in the sharp frame is already waiting.
+The sensor frame swaps in when the cursor rests. Details and the owner options are in
 [docs/v2-plan.md](docs/v2-plan.md) §5.1 (decision D13).
 
 ## Build and run

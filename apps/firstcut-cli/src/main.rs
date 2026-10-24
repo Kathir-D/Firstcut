@@ -628,6 +628,11 @@ fn verdict(inside: bool) -> &'static str {
 const BENCH_VIEWPORT_EDGE: u32 = 2048;
 /// How many photographs the arrow row steps through (the first is the "first photo" row).
 const ARROW_SAMPLES: usize = 8;
+/// The sustained-throughput row: how many display decodes four workers finish per second. At a
+/// 20 Hz held arrow the budget is 20 frames/s; four ~57–68 ms decodes in parallel measured
+/// 53–61/s, which is what makes the display prefetch window able to stay ahead.
+const THROUGHPUT_SAMPLES: usize = 24;
+const THROUGHPUT_WORKERS: usize = 4;
 
 /// Times the §5 decode rows on real files: first photo after open, arrow → next, Exact RAW develop,
 /// and a 1:1 re-decode. The rows alternate the preview and RAW develop across rounds, which is v1's
@@ -721,6 +726,36 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     }
     let zoom_best = zoom_times.iter().copied().filter(|t| t.is_finite()).fold(f64::MAX, f64::min);
 
+    // §5 row 5: sustained display throughput with the app's four-worker bank. The queue is the
+    // same full-preview decode, spread over different photographs so the workers do not contend
+    // on one file; the result is the ceiling the prefetch window is designed around.
+    let throughput_samples: Vec<&firstcut_meta::meta::PhotoMeta> = sources.iter().copied().cycle().take(THROUGHPUT_SAMPLES).collect();
+    let throughput_start = std::time::Instant::now();
+    std::thread::scope(|scope| -> Result<(), String> {
+        let mut handles = Vec::new();
+        for worker in 0..THROUGHPUT_WORKERS {
+            let samples = &throughput_samples;
+            handles.push(scope.spawn(move || -> Result<(), String> {
+                for photo in samples.iter().skip(worker).step_by(THROUGHPUT_WORKERS) {
+                    let image = firstcut_decode::decode_display_at(&dir.join(&photo.rel_path), photo, BENCH_VIEWPORT_EDGE)
+                        .map_err(|err| format!("{}: {err}", photo.rel_path))?;
+                    std::hint::black_box(&image);
+                }
+                Ok(())
+            }));
+        }
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => return Err(err),
+                Err(_) => return Err("a decode worker panicked during the throughput row".to_string()),
+            }
+        }
+        Ok(())
+    })?;
+    let throughput_secs = throughput_start.elapsed().as_secs_f64();
+    let throughput_fps = if throughput_secs > 0.0 { THROUGHPUT_SAMPLES as f64 / throughput_secs } else { f64::NAN };
+
     println!("folder: {}", dir.display());
     println!("photos: {} ({} with a full preview), {repeat} round(s)", scan.photos.len(), sources.len());
     println!();
@@ -761,6 +796,11 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
         _ => println!("  Exact RAW develop       not measured: no RAW photograph in this folder"),
     }
     println!("  1:1 zoom re-decode      {:>7.3} s warm (embedded full preview)   GPU upload not included", zoom_best);
+    println!(
+        "  display throughput      {:>7.1} frames/s ({THROUGHPUT_WORKERS} workers, {THROUGHPUT_SAMPLES} decodes)   target ≥ 20  {}",
+        throughput_fps,
+        verdict(throughput_fps >= 20.0)
+    );
     println!();
     println!("Cold = the first round; warm = the fastest of {repeat}. The cold-file-cache rule applies:");
     println!("whichever decode runs first pays for the read, so the warm row is the comparable one.");

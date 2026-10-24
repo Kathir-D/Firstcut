@@ -715,7 +715,7 @@ impl DecodeBank {
     /// display preview, the fast navigation preview, then the filmstrip thumbnail. The last two
     /// are what keep a held arrow key painted: a thumbnail is already decoded for most of the
     /// shoot, and the ~9 ms `PRVW` decode lands inside one key repeat. The loupe therefore never
-    /// blanks while the ~67 ms display or ~0.4 s develop is still in flight.
+    /// blanks while the ~57–68 ms display or ~0.4 s develop is still in flight.
     fn frame(&self, id: PhotoId) -> Option<BestFrame<'_>> {
         if let Some(frame) = self.pipeline.peek(id, Tier::ExactRaw).or_else(|| self.pipeline.peek(id, Tier::Display)) {
             return Some(BestFrame::Decoded(frame));

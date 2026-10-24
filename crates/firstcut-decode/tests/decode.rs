@@ -4,7 +4,8 @@
 use std::path::Path;
 
 use firstcut_decode::{
-    DecodeError, DecodedImage, apply_orientation, decode_display, decode_display_at, decode_jpeg, histogram, orientation_swaps_axes, read_range,
+    DecodeError, DecodedImage, apply_orientation, decode_display, decode_display_at, decode_jpeg, downsample_to, histogram, orientation_swaps_axes,
+    read_range,
 };
 use firstcut_meta::meta::{ByteRange, EmbeddedPreview, FileKind, PhotoMeta, RawFormat};
 
@@ -232,6 +233,17 @@ fn decode_display_applies_the_exif_orientation_exactly_once() {
     // The 8×8 fixture is square, so geometry alone cannot see the rotation; the pixels can.
     let expected = apply_orientation(upright, 6).unwrap();
     assert_eq!(shown, expected, "decode_display must apply the tag, and only once");
+}
+
+#[test]
+fn the_parallel_downsample_keeps_the_sampled_grid_and_geometry() {
+    // 4.8 MB is above the parallel threshold; the sampled grid must be identical to the
+    // sequential path and every destination row must be filled exactly once.
+    let image = framed(1200, 1000, &[(30, 21, [10, 20, 30]), (1197, 999, [40, 50, 60])]);
+    let reduced = downsample_to(image, 512);
+    assert_eq!((reduced.width, reduced.height), (400, 334), "ceil(1200/3) × ceil(1000/3)");
+    assert_eq!(pixel(&reduced, 10, 7), [10, 20, 30, 255], "destination (10, 7) samples source (30, 21)");
+    assert_eq!(pixel(&reduced, 399, 333), [40, 50, 60, 255], "the last destination pixel is the clamped last sample");
 }
 
 #[test]

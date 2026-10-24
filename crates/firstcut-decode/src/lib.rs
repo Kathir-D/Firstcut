@@ -101,25 +101,54 @@ pub fn downsample_to(image: DecodedImage, target_edge: u32) -> DecodedImage {
     let step = width.div_ceil(target_edge).max(height.div_ceil(target_edge)).max(1);
     let new_width = width.div_ceil(step);
     let new_height = height.div_ceil(step);
-    let Some(capacity) =
-        usize::try_from(new_width).ok().and_then(|w| usize::try_from(new_height).ok().and_then(|h| w.checked_mul(h))).and_then(|n| n.checked_mul(4))
-    else {
+    let Some(new_width_usize) = usize::try_from(new_width).ok() else {
         return DecodedImage { width: 0, height: 0, rgba: Vec::new() };
     };
-    let mut reduced = Vec::with_capacity(capacity);
-    let mut y = 0;
-    while y < height {
-        let mut x = 0;
-        while x < width {
-            let index = (usize::try_from(y).unwrap_or(0) * usize::try_from(width).unwrap_or(0) + usize::try_from(x).unwrap_or(0)).saturating_mul(4);
-            if let Some(pixel) = rgba.get(index..index.saturating_add(4)) {
-                reduced.extend_from_slice(pixel);
-            }
-            x = x.saturating_add(step);
+    let Some(new_height_usize) = usize::try_from(new_height).ok() else {
+        return DecodedImage { width: 0, height: 0, rgba: Vec::new() };
+    };
+    let Some(capacity) = new_width_usize.checked_mul(new_height_usize).and_then(|n| n.checked_mul(4)) else {
+        return DecodedImage { width: 0, height: 0, rgba: Vec::new() };
+    };
+    let Some(row_bytes) = new_width_usize.checked_mul(4) else {
+        return DecodedImage { width: 0, height: 0, rgba: Vec::new() };
+    };
+    let width_usize = usize::try_from(width).unwrap_or(usize::MAX);
+    let height_usize = usize::try_from(height).unwrap_or(usize::MAX);
+    let step_usize = usize::try_from(step).unwrap_or(usize::MAX);
+    let mut reduced = vec![0u8; capacity];
+    // A full 24 MP display frame is ~11 MB after reduction; reducing it on one core costs
+    // several milliseconds that a held arrow cannot spare. Rows are independent, so the
+    // large case is parallel while the 256 px filmstrip stays sequential (rayon's fan-out
+    // would cost more than the copy).
+    if rgba.len() > 4_000_000 && new_height_usize > 1 {
+        reduced.par_chunks_mut(row_bytes).enumerate().for_each(|(y, row)| {
+            downsample_row(row, &rgba, width_usize, height_usize, step_usize, y);
+        });
+    } else {
+        for (y, row) in reduced.chunks_mut(row_bytes).enumerate() {
+            downsample_row(row, &rgba, width_usize, height_usize, step_usize, y);
         }
-        y = y.saturating_add(step);
     }
     DecodedImage { width: new_width, height: new_height, rgba: reduced }
+}
+
+/// Copies every `step`-th pixel of one destination row. Every index is checked: a scan result
+/// that disagrees with the buffer returns a black pixel instead of panicking.
+fn downsample_row(row: &mut [u8], rgba: &[u8], width: usize, height: usize, step: usize, y: usize) {
+    let Some(last_y) = height.checked_sub(1) else { return };
+    let sy = y.saturating_mul(step).min(last_y);
+    let Some(last_x) = width.checked_sub(1) else { return };
+    for (x, destination) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let sx = x.saturating_mul(step).min(last_x);
+        let Some(source) = sy.checked_mul(width).and_then(|base| base.checked_add(sx)).and_then(|pixel| pixel.checked_mul(4)) else {
+            continue;
+        };
+        let Some(end) = source.checked_add(4) else { continue };
+        if let Some(pixel) = rgba.get(source..end) {
+            destination.copy_from_slice(pixel);
+        }
+    }
 }
 
 /// Reads a file's byte range and decodes it as JPEG. The range is what `core-meta` recorded at
