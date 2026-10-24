@@ -198,8 +198,9 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > `bench --decode` adds a four-worker throughput row: **59.4 frames/s** on Game1JENKS and
 > **54.4** on Game3KC, versus the **20/s** a 20 Hz hold needs. The 6–8 ms preview still paints
 > every frame during the ~0.5 s lead-in and across batch boundaries; exact is unchanged at
-> **0.343 s** and still over the 0.119 s gate. Local `cargo xtask ci --summary-md` is green;
-> the 3-OS run for `86e2640` is the remaining check.
+> **0.343 s** and still over the 0.119 s gate. Local `cargo xtask ci --summary-md` is green,
+> and both the push run and the PR run passed on all three OSes (`40098339219` for
+> `86e2640`, `40098366383` for `f572992`).
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`
 > and the 3-OS matrix green. This session landed M5 and M6 on top of it:
