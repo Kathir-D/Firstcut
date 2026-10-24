@@ -54,8 +54,8 @@ pub const THUMBNAIL_EDGE: u32 = 256;
 /// What a display decode asks for before the window has reported a size (v1's
 /// `fallbackDisplayEdge`).
 pub const FALLBACK_DISPLAY_EDGE: u32 = 2048;
-/// The navigation preview's target. The small `PRVW` JPEG is usually 1620×1080; asking for
-/// 2048 keeps `downsample_to` from halving it (its integer step would turn 1600 into 540 px).
+/// The navigation preview's target. The small `PRVW` JPEG is usually 1620×1080, so this returns
+/// it untouched; a larger embedded preview is capped at 2048.
 pub const PREVIEW_EDGE: u32 = 2048;
 
 /// How far the sharp display tier is prefetched around the cursor. A display decode is ~57–68 ms

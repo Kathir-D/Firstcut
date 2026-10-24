@@ -4,7 +4,7 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
-**Status (2026-10-22): v2 is feature-complete for the merge gate and green on the 3-OS matrix.**
+**Status (2026-10-24): v2 is feature-complete for the merge gate and green on the 3-OS matrix.**
 The current handoff is [§0.5](#05-handoff-where-the-last-session-stopped); the contract is
 [docs/v2-plan.md](docs/v2-plan.md) and the merge-gate record is
 [docs/parity-checklist.md](docs/parity-checklist.md). Sections below §0.5 are the v1 history that
@@ -201,6 +201,23 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > **0.343 s** and still over the 0.119 s gate. Local `cargo xtask ci --summary-md` is green,
 > and both the push run and the PR run passed on all three OSes (`40098339219` for
 > `86e2640`, `40098366383` for `f572992`).
+>
+> **2026-10-24 update — display decoding is fitted to the pane.** `10e93bc` reports the
+> loupe's backing width×height (`CullScreen::viewport_size`) and fits each oriented photo into
+> that rectangle (`fit_edge`); `decode_display_at` then reads the smallest embedded JPEG that
+> covers the target. A 3:2 frame on a 16:9 4K pane asks for **3240 px**, not 3840; a
+> 1440×900 1x laptop pane asks for **1350 px**, which the camera's 1620 px `PRVW` already
+> covers, so the 6000×4000 entropy decode is skipped. Four-worker throughput measured
+> **462/376 frames/s** at 1350 (PRVW path), **54.6/48.3** at 3240 (4K 3:2 fit), and
+> **60.7/51.7** at the 2048 baseline. Zoom scales the fit (2× a 1350 fit = 2700 px; only the
+> native zoom reaches 6000), the downsample now hits the requested edge instead of an integer
+> stride undershoot (512, not 400), the display budget uses the viewport rectangle, and the GPU
+> texture cache trims at 768 MB. Local `cargo xtask ci --summary-md` and both opt-in real-photo
+> tests are green; the 3-OS push run `40105296572` is green on `10e93bc`.
+>
+> **Next:** no code is pending for this objective. Still open: the owner's Exact RAW decision
+> (accept 0.343 s with progressive display vs fund a native decoder), the optional
+> half-resolution exact prototype, and the existing owner-only merge-gate items in §0.2.
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`
 > and the 3-OS matrix green. This session landed M5 and M6 on top of it:
