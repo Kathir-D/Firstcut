@@ -120,6 +120,19 @@ fn range_past_end_is_an_error_not_a_panic() {
 }
 
 #[test]
+fn the_display_target_picks_the_smallest_embedded_jpeg_that_covers_it() {
+    let container = Container::with_two_jpegs();
+    // The full-preview range is deliberately broken: if a request covered only by the 8 px
+    // PRVW ever reads the full copy, this test errors instead of passing silently.
+    let broken_full = EmbeddedPreview { range: ByteRange { offset: container.full.offset, len: 1 }, width: 6000, height: 4000 };
+    let preview = EmbeddedPreview { range: container.small, width: 8, height: 8 };
+    let meta = photo_meta("IMG_0001.CR3".to_string(), Some(broken_full), Some(preview));
+    let image = decode_display_at(&container, &meta, 8).expect("the PRVW covers an 8 px request");
+    assert_eq!((image.width, image.height), (8, 8));
+    assert!(decode_display_at(&container, &meta, 9).is_err(), "a 9 px request must go to the broken full preview");
+}
+
+#[test]
 fn decode_display_prefers_the_full_preview() {
     let container = Container::with_two_jpegs();
     let meta = photo_meta(
@@ -236,14 +249,21 @@ fn decode_display_applies_the_exif_orientation_exactly_once() {
 }
 
 #[test]
-fn the_parallel_downsample_keeps_the_sampled_grid_and_geometry() {
-    // 4.8 MB is above the parallel threshold; the sampled grid must be identical to the
-    // sequential path and every destination row must be filled exactly once.
-    let image = framed(1200, 1000, &[(30, 21, [10, 20, 30]), (1197, 999, [40, 50, 60])]);
+fn the_parallel_downsample_hits_the_requested_edge_without_an_integer_stride_undershoot() {
+    // 4.8 MB is above the parallel threshold. The long side is exactly 512 (not a 3-pixel
+    // stride's 400), the aspect is preserved, and every destination row is filled.
+    let image = framed(1200, 1000, &[(23, 16, [10, 20, 30]), (1197, 997, [40, 50, 60])]);
     let reduced = downsample_to(image, 512);
-    assert_eq!((reduced.width, reduced.height), (400, 334), "ceil(1200/3) × ceil(1000/3)");
-    assert_eq!(pixel(&reduced, 10, 7), [10, 20, 30, 255], "destination (10, 7) samples source (30, 21)");
-    assert_eq!(pixel(&reduced, 399, 333), [40, 50, 60, 255], "the last destination pixel is the clamped last sample");
+    assert_eq!((reduced.width, reduced.height), (512, 427), "the long side is the requested 512 px");
+    assert_eq!(pixel(&reduced, 10, 7), [10, 20, 30, 255], "destination (10, 7) samples source (23, 16)");
+    assert_eq!(pixel(&reduced, 511, 426), [40, 50, 60, 255], "the last destination pixel is the clamped last sample");
+}
+
+#[test]
+fn a_smaller_frame_is_not_upscaled() {
+    let image = framed(1200, 1000, &[(0, 0, [1, 2, 3])]);
+    let same = downsample_to(image, 2000);
+    assert_eq!((same.width, same.height), (1200, 1000));
 }
 
 #[test]

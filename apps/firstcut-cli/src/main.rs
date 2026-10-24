@@ -21,6 +21,7 @@ use firstcut_batching::batch::fixture::Folder;
 use firstcut_batching::batch::signals::Decision;
 use firstcut_batching::batch::{BatchParams, PhotoId, batch_with};
 use firstcut_batching::order;
+use firstcut_engine::pipeline::{Viewport, fit_edge};
 
 mod mcp;
 mod run;
@@ -726,35 +727,15 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     }
     let zoom_best = zoom_times.iter().copied().filter(|t| t.is_finite()).fold(f64::MAX, f64::min);
 
-    // §5 row 5: sustained display throughput with the app's four-worker bank. The queue is the
-    // same full-preview decode, spread over different photographs so the workers do not contend
-    // on one file; the result is the ceiling the prefetch window is designed around.
-    let throughput_samples: Vec<&firstcut_meta::meta::PhotoMeta> = sources.iter().copied().cycle().take(THROUGHPUT_SAMPLES).collect();
-    let throughput_start = std::time::Instant::now();
-    std::thread::scope(|scope| -> Result<(), String> {
-        let mut handles = Vec::new();
-        for worker in 0..THROUGHPUT_WORKERS {
-            let samples = &throughput_samples;
-            handles.push(scope.spawn(move || -> Result<(), String> {
-                for photo in samples.iter().skip(worker).step_by(THROUGHPUT_WORKERS) {
-                    let image = firstcut_decode::decode_display_at(&dir.join(&photo.rel_path), photo, BENCH_VIEWPORT_EDGE)
-                        .map_err(|err| format!("{}: {err}", photo.rel_path))?;
-                    std::hint::black_box(&image);
-                }
-                Ok(())
-            }));
-        }
-        for handle in handles {
-            match handle.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => return Err(err),
-                Err(_) => return Err("a decode worker panicked during the throughput row".to_string()),
-            }
-        }
-        Ok(())
-    })?;
-    let throughput_secs = throughput_start.elapsed().as_secs_f64();
-    let throughput_fps = if throughput_secs > 0.0 { THROUGHPUT_SAMPLES as f64 / throughput_secs } else { f64::NAN };
+    // §5 row 5: sustained display throughput with the app's four-worker bank. The same decode
+    // is spread over different photographs so workers do not contend on one file. Three targets
+    // show the system-level effect of the fitted viewport: a small laptop pane uses the camera's
+    // PRVW, while 4K/5K must pay for the full-preview entropy decode.
+    let laptop_edge = fit_edge(6000, 4000, 1, Viewport::new(1440, 900));
+    let monitor_edge = fit_edge(6000, 4000, 1, Viewport::new(3840, 2160));
+    let throughput_full = display_throughput(dir, &sources, BENCH_VIEWPORT_EDGE)?;
+    let throughput_laptop = display_throughput(dir, &sources, laptop_edge)?;
+    let throughput_monitor = display_throughput(dir, &sources, monitor_edge)?;
 
     println!("folder: {}", dir.display());
     println!("photos: {} ({} with a full preview), {repeat} round(s)", scan.photos.len(), sources.len());
@@ -797,14 +778,71 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     }
     println!("  1:1 zoom re-decode      {:>7.3} s warm (embedded full preview)   GPU upload not included", zoom_best);
     println!(
-        "  display throughput      {:>7.1} frames/s ({THROUGHPUT_WORKERS} workers, {THROUGHPUT_SAMPLES} decodes)   target ≥ 20  {}",
-        throughput_fps,
-        verdict(throughput_fps >= 20.0)
+        "  display throughput      {:>7.1} fps @ {BENCH_VIEWPORT_EDGE} px ({THROUGHPUT_WORKERS} workers, {THROUGHPUT_SAMPLES} decodes)   target ≥ 20  {}",
+        throughput_full,
+        verdict(throughput_full >= 20.0)
     );
+    println!(
+        "  display throughput      {:>7.1} fps @ {laptop_edge} px (laptop fit, PRVW path)   target ≥ 20  {}",
+        throughput_laptop,
+        verdict(throughput_laptop >= 20.0)
+    );
+    println!(
+        "  display throughput      {:>7.1} fps @ {monitor_edge} px (4K 3:2 fit, full preview)   target ≥ 20  {}",
+        throughput_monitor,
+        verdict(throughput_monitor >= 20.0)
+    );
+    println!();
+    println!("fitted display targets (6000×4000 / 3:2 sensor, camera PRVW is 1620 px):");
+    for (name, width, height) in [
+        ("13\" 1x laptop pane", 1440, 900),
+        ("14\" Retina 2x pane", 3024, 1964),
+        ("4K 16:9 monitor", 3840, 2160),
+        ("5K 16:9 monitor", 5120, 2880),
+        ("6K 16:9 monitor", 6016, 3384),
+    ] {
+        let target = fit_edge(6000, 4000, 1, Viewport::new(width, height));
+        let source = if target <= 1620 { "PRVW decode (~6–8 ms)" } else { "full preview (~57–68 ms)" };
+        println!("  {name:<22} {width:>4}×{height:<4} → {target:>4} px  {source}");
+    }
     println!();
     println!("Cold = the first round; warm = the fastest of {repeat}. The cold-file-cache rule applies:");
     println!("whichever decode runs first pays for the read, so the warm row is the comparable one.");
     Ok(())
+}
+
+/// Four workers decoding `THROUGHPUT_SAMPLES` display frames at `target_edge`, spread over the
+/// scan so no two workers read the same file at once. Returns frames per second.
+fn display_throughput(dir: &std::path::Path, sources: &[&firstcut_meta::meta::PhotoMeta], target_edge: u32) -> Result<f64, String> {
+    let samples: Vec<&firstcut_meta::meta::PhotoMeta> = sources.iter().copied().cycle().take(THROUGHPUT_SAMPLES).collect();
+    if samples.is_empty() {
+        return Err("the throughput row needs at least one photograph".to_string());
+    }
+    let start = std::time::Instant::now();
+    std::thread::scope(|scope| -> Result<(), String> {
+        let mut handles = Vec::new();
+        for worker in 0..THROUGHPUT_WORKERS {
+            let samples = &samples;
+            handles.push(scope.spawn(move || -> Result<(), String> {
+                for photo in samples.iter().skip(worker).step_by(THROUGHPUT_WORKERS) {
+                    let image = firstcut_decode::decode_display_at(&dir.join(&photo.rel_path), photo, target_edge)
+                        .map_err(|err| format!("{}: {err}", photo.rel_path))?;
+                    std::hint::black_box(&image);
+                }
+                Ok(())
+            }));
+        }
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => return Err(err),
+                Err(_) => return Err("a decode worker panicked during the throughput row".to_string()),
+            }
+        }
+        Ok(())
+    })?;
+    let secs = start.elapsed().as_secs_f64();
+    Ok(if secs > 0.0 { THROUGHPUT_SAMPLES as f64 / secs } else { f64::NAN })
 }
 
 /// The middle value of a set of timings (`NaN`-free, never indexes).

@@ -10,7 +10,7 @@
 //! through `ctx.load_texture`, so an unchanged photo costs nothing) and the zoom/pan the user is
 //! in the middle of.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use egui::{Color32, FontId, Image, Key, RichText, Sense, Stroke, TextureHandle, Vec2, pos2, vec2};
@@ -31,6 +31,10 @@ const STRIP: Color32 = Color32::from_rgb(21, 21, 21);
 const FOREGROUND: Color32 = Color32::from_rgb(232, 232, 236);
 /// The cursor's outline on the filmstrip (v1's selection accent).
 const ACCENT: Color32 = Color32::from_rgb(244, 200, 0);
+/// GPU textures are the other half of the display budget: a 4K fit is ~28 MB and a 6K 4-up is
+/// ~275 MB. The pipeline evicts its CPU frames, but a texture cache that kept every photo ever
+/// shown would still grow without bound on a long hold; this cap keeps the recently painted ones.
+const TEXTURE_BUDGET: usize = 768 * 1024 * 1024;
 const THUMB_WIDTH: f32 = 128.0;
 /// Each filmstrip frame's image area; the file name and stars go underneath it.
 const THUMB_IMAGE_HEIGHT: f32 = 78.0;
@@ -52,6 +56,9 @@ pub struct CullScreen {
     /// The pixel size is kept beside the handle: zooming asks the decode pipeline for a bigger
     /// copy of the same photo, and a size change must rebuild the texture.
     textures: HashMap<u64, (usize, usize, TextureHandle)>,
+    /// Access order for `textures`; the front is the oldest. Kept in step with every paint so
+    /// the budget trims photos the user has actually left, never the pane in front of them.
+    texture_order: VecDeque<u64>,
     /// The loupe's zoom, relative to the fit-to-pane size (1.0 = the whole photo shown).
     zoom: f32,
     /// The loupe's pan while zoomed in; the pane centres the photo at rest.
@@ -112,6 +119,7 @@ impl CullScreen {
     pub fn new() -> Self {
         Self {
             textures: HashMap::new(),
+            texture_order: VecDeque::new(),
             zoom: 1.0,
             pan: Vec2::ZERO,
             viewport_pixels: Vec2::ZERO,
@@ -137,16 +145,23 @@ impl CullScreen {
         }
     }
 
-    /// The viewer's long edge in backing pixels, or 0 before the first layout. The app turns
-    /// this into a display-tier decode target.
-    pub fn viewport_edge(&self) -> u32 {
-        let edge = self.viewport_pixels.x.max(self.viewport_pixels.y);
-        if edge.is_finite() && edge > 0.0 { edge.round().min(u32::MAX as f32) as u32 } else { 0 }
+    /// The viewer's backing size in physical pixels, or `(0, 0)` before the first layout. The app
+    /// fits each photo's own aspect into this rectangle, so a 3:2 frame on a 16:9 monitor does
+    /// not ask for the monitor's unused width.
+    pub fn viewport_size(&self) -> (u32, u32) {
+        let physical = |points: f32| if points.is_finite() && points > 0.0 { points.round().min(u32::MAX as f32) as u32 } else { 0 };
+        (physical(self.viewport_pixels.x), physical(self.viewport_pixels.y))
     }
 
     /// Whether the loupe is showing pixels beyond fit-to-pane (the 1:1 tier).
     pub fn is_zoomed(&self) -> bool {
         self.zoom > 1.01
+    }
+
+    /// The loupe's zoom relative to fit. The app uses it to size the display decode: 2× a 1350 px
+    /// fit is 2700 px, not the 6000 px sensor.
+    pub fn zoom(&self) -> f32 {
+        self.zoom
     }
 
     /// The folder the File → Open dialog asked for, if any. The app takes it and runs its own
@@ -189,6 +204,8 @@ impl CullScreen {
         // Photos that left the shoot no longer need their GPU memory; a rescan can drop hundreds.
         let known: Vec<u64> = model.photos().iter().map(|photo| photo.meta.id.0).collect();
         self.textures.retain(|id, _| known.contains(id));
+        let live = &self.textures;
+        self.texture_order.retain(|id| live.contains_key(id));
 
         // The viewer's canvas follows the setting every frame; 0.12 gray is v1's default, and
         // `from_gray(31)` is the value the hardcoded background used before this screen existed.
@@ -235,7 +252,23 @@ impl CullScreen {
         self.error_alert(ui.ctx(), model);
         self.open_folder_window(ui.ctx());
         self.bundle_window(ui.ctx());
+        self.trim_textures();
         self.escape_consumed = false;
+    }
+
+    /// Drops the least-recently painted textures until the cache is back under its budget. The
+    /// current pane and the filmstrip were touched this frame, so they sit at the back of the
+    /// order and survive; a screen with more than the whole budget of visible pixels (four 6K
+    /// panes) still paints because the cap is far above that case.
+    fn trim_textures(&mut self) {
+        let bytes = |width: usize, height: usize| width.saturating_mul(height).saturating_mul(4);
+        let mut total: usize = self.textures.values().map(|(width, height, _)| bytes(*width, *height)).sum();
+        while total > TEXTURE_BUDGET {
+            let Some(id) = self.texture_order.pop_front() else { break };
+            if let Some((width, height, _)) = self.textures.remove(&id) {
+                total = total.saturating_sub(bytes(width, height));
+            }
+        }
     }
 
     /// v1's error alert: the message stays on screen, modal to the window's attention, until
@@ -755,6 +788,7 @@ impl CullScreen {
                     .or_else(|| images.current.filter(|(id, _)| id.0 == pane.id).map(|(_, pixels)| pixels))
                     .or_else(|| images.thumbs.get(&pane.id).map(|pixels| pixels.as_ref()));
                 if let Some(pixels) = pixels {
+                    touch_texture(&mut self.texture_order, pane.id);
                     let texture = load_texture(&mut self.textures, panel.ctx(), pane.id, pixels);
                     let image_size = vec2(pixels.width() as f32, pixels.height() as f32);
                     let fit = fit_into(rect.size() - vec2(0.0, 22.0), image_size);
@@ -824,6 +858,7 @@ impl CullScreen {
         let current_id = model.current_photo_id().map(|id| id.0);
         for cell in &cells {
             if let Some(pixels) = images.thumbs.get(&cell.id) {
+                touch_texture(&mut self.texture_order, cell.id);
                 load_texture(&mut self.textures, ui.ctx(), cell.id, pixels);
             }
         }
@@ -981,6 +1016,7 @@ impl CullScreen {
         // Textures staged first: the paint pass never mutates the screen.
         for thumb in &thumbs {
             if let Some(pixels) = images.thumbs.get(&thumb.id) {
+                touch_texture(&mut self.texture_order, thumb.id);
                 load_texture(&mut self.textures, ui.ctx(), thumb.id, pixels);
             }
         }
@@ -1039,6 +1075,7 @@ impl CullScreen {
                 self.last_photo = Some(id.0);
             }
 
+            touch_texture(&mut self.texture_order, id.0);
             let texture = load_texture(&mut self.textures, panel.ctx(), id.0, pixels);
             let image_size = vec2(pixels.width() as f32, pixels.height() as f32);
             let fit = fit_into(available.size(), image_size);
@@ -1552,6 +1589,15 @@ fn paint_thumb(
     .inner
 }
 
+/// Moves `id` to the back of the paint order, creating no duplicate. The order is short (one
+/// entry per texture) so the linear search is cheaper than a second map.
+fn touch_texture(order: &mut VecDeque<u64>, id: u64) {
+    if let Some(index) = order.iter().position(|candidate| *candidate == id) {
+        order.remove(index);
+    }
+    order.push_back(id);
+}
+
 /// GPU texture for one photo's pixels, decoded once and cached until the photo is gone.
 ///
 /// Oversized frames are downsampled before the upload: egui asserts a texture no wider than
@@ -1733,6 +1779,17 @@ fn fit_into(into: Vec2, image: Vec2) -> Vec2 {
 mod tests {
     use super::*;
     use firstcut_types::ColorLabel;
+
+    #[test]
+    fn touching_a_texture_moves_it_to_the_back_without_duplicates() {
+        let mut order = VecDeque::from([1, 2, 3]);
+        touch_texture(&mut order, 2);
+        assert_eq!(order, VecDeque::from([1, 3, 2]));
+        touch_texture(&mut order, 4);
+        assert_eq!(order, VecDeque::from([1, 3, 2, 4]));
+        touch_texture(&mut order, 1);
+        assert_eq!(order, VecDeque::from([3, 2, 4, 1]));
+    }
 
     /// The real-photo crash the M1 showcase run caught: a 6000×4000 preview went to
     /// `load_texture` raw and egui's max-texture-side assert killed the frame.

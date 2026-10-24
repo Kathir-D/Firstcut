@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use firstcut_decode::{DecodedImage, Histogram, RawDecode, decode_display, decode_display_at, decode_thumbnail, histogram};
 use firstcut_engine::model::{Model, Phase};
-use firstcut_engine::pipeline::{FALLBACK_DISPLAY_EDGE, Focus, Job, PREVIEW_EDGE, Pipeline, Source, THUMBNAIL_EDGE, Tier, TierBudgets};
+use firstcut_engine::pipeline::{FALLBACK_DISPLAY_EDGE, Focus, Job, PREVIEW_EDGE, Pipeline, Source, THUMBNAIL_EDGE, Tier, TierBudgets, Viewport};
 use firstcut_engine::session::Session;
 use firstcut_engine::settings::SettingsStore;
 use firstcut_engine::watch::{FolderWatcher, watch};
@@ -349,9 +349,10 @@ impl eframe::App for Shell {
 
         // Finished decodes land in the cache, then what the surfaces want next is queued — ahead
         // of repainting, so a decode has the whole frame's time to get back before the next try.
-        let viewport_edge = self.screen.viewport_edge();
+        let (viewport_width, viewport_height) = self.screen.viewport_size();
+        let viewport = Viewport::new(viewport_width, viewport_height);
         let zoomed = self.screen.is_zoomed();
-        if self.bank.pump(&mut self.model, viewport_edge, zoomed) {
+        if self.bank.pump(&mut self.model, viewport, zoomed, self.screen.zoom()) {
             ui.ctx().request_repaint();
         }
         // An exact develop is deliberately deferred while the cursor moves. Egui only repaints
@@ -619,7 +620,7 @@ impl DecodeBank {
 
     /// Drains finished decodes, reconciles the catalog when the model says it changed, reports
     /// the focus window, and fills the workers. `true` when pixels arrived.
-    fn pump(&mut self, model: &mut Model, viewport_edge: u32, zoomed: bool) -> bool {
+    fn pump(&mut self, model: &mut Model, viewport: Viewport, zoomed: bool, zoom: f32) -> bool {
         let mut changed = false;
         loop {
             match self.results.try_recv() {
@@ -675,7 +676,7 @@ impl DecodeBank {
             self.last_navigation = Instant::now();
         }
         let exact_raw = model.exact_raw() && self.last_navigation.elapsed() >= EXACT_RAW_SETTLE;
-        let focus = Focus { windows: model.focus_windows(), current, viewport_edge, zoomed, zoom_lock: model.zoom_lock(), exact_raw };
+        let focus = Focus { windows: model.focus_windows(), current, viewport, zoomed, zoom, zoom_lock: model.zoom_lock(), exact_raw };
         self.pipeline.set_focus(focus);
         self.fill_workers();
 

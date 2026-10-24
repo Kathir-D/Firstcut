@@ -24,7 +24,11 @@ sweep (§4.5) is enforced across the workspace.
   arrow key paints the camera's 6–8 ms `PRVW` navigation preview, the sharp display is
   prefetched 32 ahead/12 behind (four workers measure 54–59 frames/s, so a 20 Hz hold has
   ~3× headroom), and the exact develop waits for a 250 ms settle (D13). Scrolling neither
-  blanks nor starves the visible frame.
+  blanks nor starves the visible frame. Display decodes are fitted to the pane's physical
+  width×height and read the smallest embedded JPEG that covers the target: a 3:2 photo on a
+  16:9 4K pane is 3240 px (not 3840), a 1440×900 1x laptop pane uses the 1620 px `PRVW`
+  instead of the full entropy decode (376–462 frames/s with four workers), and a 2× zoom
+  asks for 2700 px rather than the sensor. The texture cache is bounded at 768 MB.
 - Native folder picker via `rfd`, including camera-card roots with multiple rolls asking
   “Choose a Shoot”.
 - `cargo xtask package`: macOS `.app` + zip + cask stamp, Windows zip, Linux AppImage + `.deb`,

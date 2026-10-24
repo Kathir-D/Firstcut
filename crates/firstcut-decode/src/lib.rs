@@ -13,7 +13,7 @@
 use rayon::prelude::*;
 use std::path::Path;
 
-use firstcut_meta::meta::{ByteRange, PhotoMeta};
+use firstcut_meta::meta::{ByteRange, EmbeddedPreview, PhotoMeta};
 use thiserror::Error;
 use zune_core::bytestream::ZCursor;
 use zune_core::colorspace::ColorSpace;
@@ -71,14 +71,28 @@ pub fn decode_display(path: &Path, meta: &PhotoMeta) -> Result<DecodedImage, Dec
     decode_display_at(path, meta, u32::MAX)
 }
 
-/// The same decode, subsampled by the JPEG decoder to at most `target_edge` on both axes. A
-/// thumbnail is this call at 256 px; the display tier asks for the viewer's backing edge. The
-/// EXIF orientation is applied after the subsample, so the returned longest edge is the target
-/// edge rotated as the photograph will be shown.
+/// The display image at `target_edge` on its longer side. The smallest embedded JPEG that
+/// actually covers the target is chosen first: on a small window the camera's 1620×1080 `PRVW`
+/// is enough, so the 6000×4000 entropy decode is never touched. A target beyond the `PRVW` uses
+/// the full preview, and any remaining reduction is nearest-neighbour. The EXIF orientation is
+/// applied last, so the returned longest edge is the target edge as the photograph is shown.
 pub fn decode_display_at(path: &Path, meta: &PhotoMeta, target_edge: u32) -> Result<DecodedImage, DecodeError> {
-    let shown = meta.full_preview.or(meta.preview).ok_or_else(|| DecodeError::NoEmbeddedJpeg { path: path.display().to_string() })?;
+    let shown = select_display_source(meta.preview, meta.full_preview, target_edge)
+        .ok_or_else(|| DecodeError::NoEmbeddedJpeg { path: path.display().to_string() })?;
     let image = downsample_to(read_range(path, shown.range)?, target_edge);
     apply_orientation(image, meta.orientation)
+}
+
+/// Picks the smallest embedded JPEG whose longer side covers `target_edge`. A full preview is
+/// the test image for the 1:1 path (`u32::MAX`). A preview-only file still returns its preview
+/// even when the target is larger — a slight upscale is better than no image.
+fn select_display_source(preview: Option<EmbeddedPreview>, full: Option<EmbeddedPreview>, target_edge: u32) -> Option<EmbeddedPreview> {
+    let preview_edge = preview.map(|image| image.width.max(image.height)).unwrap_or(0);
+    match (preview, full) {
+        (Some(preview), _) if target_edge <= preview_edge => Some(preview),
+        (_, Some(full)) => Some(full),
+        (preview, None) => preview,
+    }
 }
 
 /// The filmstrip's tier: the small `PRVW` JPEG when the container has one (1620×1080 rather
@@ -90,17 +104,19 @@ pub fn decode_thumbnail(path: &Path, meta: &PhotoMeta, target_edge: u32) -> Resu
     apply_orientation(image, meta.orientation)
 }
 
-/// Nearest-neighbour reduction to at most `target_edge` on the longer side. The stride is
-/// shared by both axes so the aspect survives; a frame already small enough is returned as-is.
-/// This is the 256 px reduction the filmstrip and the histogram use.
+/// Nearest-neighbour reduction to exactly `target_edge` on the longer side. The output geometry
+/// is proportional, not an integer stride: asking for 512 px from a 1200×1000 frame used to give
+/// 400×334 (a 22% undershoot that the window then upscaled). It now gives 512×427. The sampler
+/// still reads real source pixels, so no colour is invented. A frame already small enough is
+/// returned as-is. This is the 256 px reduction the filmstrip and the histogram use.
 pub fn downsample_to(image: DecodedImage, target_edge: u32) -> DecodedImage {
     let DecodedImage { width, height, rgba } = image;
-    if width == 0 || height == 0 || target_edge == 0 || width.max(height) <= target_edge {
+    let long = width.max(height);
+    if width == 0 || height == 0 || target_edge == 0 || long <= target_edge {
         return DecodedImage { width, height, rgba };
     }
-    let step = width.div_ceil(target_edge).max(height.div_ceil(target_edge)).max(1);
-    let new_width = width.div_ceil(step);
-    let new_height = height.div_ceil(step);
+    let new_width = proportional_edge(width, target_edge, long);
+    let new_height = proportional_edge(height, target_edge, long);
     let Some(new_width_usize) = usize::try_from(new_width).ok() else {
         return DecodedImage { width: 0, height: 0, rgba: Vec::new() };
     };
@@ -115,32 +131,42 @@ pub fn downsample_to(image: DecodedImage, target_edge: u32) -> DecodedImage {
     };
     let width_usize = usize::try_from(width).unwrap_or(usize::MAX);
     let height_usize = usize::try_from(height).unwrap_or(usize::MAX);
-    let step_usize = usize::try_from(step).unwrap_or(usize::MAX);
     let mut reduced = vec![0u8; capacity];
-    // A full 24 MP display frame is ~11 MB after reduction; reducing it on one core costs
-    // several milliseconds that a held arrow cannot spare. Rows are independent, so the
-    // large case is parallel while the 256 px filmstrip stays sequential (rayon's fan-out
-    // would cost more than the copy).
-    if rgba.len() > 4_000_000 && new_height_usize > 1 {
+    // A 2048-edge display frame is ~11 MB after reduction; reducing it on one core costs
+    // several milliseconds that a held arrow cannot spare. Rows are independent, so a large
+    // output is parallel while the 256 px filmstrip stays sequential (rayon's fan-out would
+    // cost more than the copy).
+    if capacity > 1_000_000 && new_height_usize > 1 {
         reduced.par_chunks_mut(row_bytes).enumerate().for_each(|(y, row)| {
-            downsample_row(row, &rgba, width_usize, height_usize, step_usize, y);
+            downsample_row(row, &rgba, width_usize, height_usize, new_width_usize, new_height_usize, y);
         });
     } else {
         for (y, row) in reduced.chunks_mut(row_bytes).enumerate() {
-            downsample_row(row, &rgba, width_usize, height_usize, step_usize, y);
+            downsample_row(row, &rgba, width_usize, height_usize, new_width_usize, new_height_usize, y);
         }
     }
     DecodedImage { width: new_width, height: new_height, rgba: reduced }
 }
 
-/// Copies every `step`-th pixel of one destination row. Every index is checked: a scan result
-/// that disagrees with the buffer returns a black pixel instead of panicking.
-fn downsample_row(row: &mut [u8], rgba: &[u8], width: usize, height: usize, step: usize, y: usize) {
+/// One axis of the proportional reduction, rounded to nearest. `long` is the source's longer
+/// side; dividing by it makes the longer output side exactly `target_edge` without overflowing
+/// `u32` intermediate products.
+fn proportional_edge(edge: u32, target_edge: u32, long: u32) -> u32 {
+    if long == 0 {
+        return edge.max(1);
+    }
+    let numerator = u128::from(edge) * u128::from(target_edge) + u128::from(long / 2);
+    u32::try_from(numerator / u128::from(long)).unwrap_or(u32::MAX).max(1)
+}
+
+/// Copies the nearest source pixel for one destination row. Every index is checked: a scan
+/// result that disagrees with the buffer returns a black pixel instead of panicking.
+fn downsample_row(row: &mut [u8], rgba: &[u8], width: usize, height: usize, new_width: usize, new_height: usize, y: usize) {
     let Some(last_y) = height.checked_sub(1) else { return };
-    let sy = y.saturating_mul(step).min(last_y);
+    let sy = scaled_index(y, new_height, height).min(last_y);
     let Some(last_x) = width.checked_sub(1) else { return };
     for (x, destination) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-        let sx = x.saturating_mul(step).min(last_x);
+        let sx = scaled_index(x, new_width, width).min(last_x);
         let Some(source) = sy.checked_mul(width).and_then(|base| base.checked_add(sx)).and_then(|pixel| pixel.checked_mul(4)) else {
             continue;
         };
@@ -149,6 +175,13 @@ fn downsample_row(row: &mut [u8], rgba: &[u8], width: usize, height: usize, step
             destination.copy_from_slice(pixel);
         }
     }
+}
+
+/// `destination * source / destination_len`, in u64 so a 6000 px axis cannot overflow. The
+/// caller only passes non-zero lengths.
+fn scaled_index(destination: usize, destination_len: usize, source_len: usize) -> usize {
+    let numerator = (destination as u64).saturating_mul(source_len as u64);
+    usize::try_from(numerator / destination_len.max(1) as u64).unwrap_or(usize::MAX)
 }
 
 /// Reads a file's byte range and decodes it as JPEG. The range is what `core-meta` recorded at
@@ -315,4 +348,31 @@ pub trait RawDecode: Send + Sync {
     /// Decodes `path` at the photo's own resolution. Errors are typed here, so a backend's C
     /// failures still surface the way the never-crash rule wants.
     fn decode_raw(&self, path: &Path, meta: &PhotoMeta) -> Result<DecodedImage, DecodeError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_display_source;
+    use firstcut_meta::meta::{ByteRange, EmbeddedPreview};
+
+    fn embedded(width: u32, height: u32) -> EmbeddedPreview {
+        EmbeddedPreview { range: ByteRange { offset: 0, len: 0 }, width, height }
+    }
+
+    #[test]
+    fn the_smallest_embedded_jpeg_that_covers_the_target_is_the_one_decoded() {
+        let preview = embedded(1620, 1080);
+        let full = embedded(6000, 4000);
+        assert_eq!(select_display_source(Some(preview), Some(full), 1500).map(|image| image.width), Some(1620));
+        assert_eq!(select_display_source(Some(preview), Some(full), 1620).map(|image| image.width), Some(1620));
+        assert_eq!(select_display_source(Some(preview), Some(full), 1621).map(|image| image.width), Some(6000));
+        assert_eq!(select_display_source(Some(preview), Some(full), 3240).map(|image| image.width), Some(6000));
+    }
+
+    #[test]
+    fn a_preview_only_file_still_has_an_image() {
+        let preview = embedded(1620, 1080);
+        assert_eq!(select_display_source(Some(preview), None, 4000).map(|image| image.width), Some(1620));
+        assert!(select_display_source(None, None, 4000).is_none());
+    }
 }

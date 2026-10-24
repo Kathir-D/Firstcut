@@ -20,6 +20,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
+use firstcut_decode::orientation_swaps_axes;
 use firstcut_meta::meta::PhotoMeta;
 use firstcut_types::PhotoId;
 
@@ -112,6 +113,69 @@ pub struct Source {
     pub meta: PhotoMeta,
 }
 
+/// The loupe's physical (backing-pixel) size. Both axes are needed: a 3:2 photograph shown on a
+/// 16:9 monitor does not fill the screen's long edge, so sizing from one "edge" number decodes
+/// and uploads pixels nobody can see. `width`/`height` are zero before the first layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Viewport {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Viewport {
+    pub const fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+
+    pub fn long_edge(self) -> u32 {
+        self.width.max(self.height)
+    }
+
+    fn area(self) -> u64 {
+        u64::from(self.width).saturating_mul(u64::from(self.height))
+    }
+}
+
+/// The longest edge a zoomed view actually displays: the fitted edge scaled by `zoom`, never
+/// beyond the sensor's own long edge. This keeps a 2× laptop view from decoding all 24 MP.
+pub fn zoomed_edge(fit: u32, full: u32, zoom: f32) -> u32 {
+    let fit = fit.max(1);
+    let full = full.max(fit);
+    if !zoom.is_finite() || zoom <= 1.0 {
+        return fit;
+    }
+    let scaled = f64::from(fit) * f64::from(zoom);
+    if !scaled.is_finite() {
+        return full;
+    }
+    (scaled.ceil() as u32).clamp(fit, full)
+}
+
+/// The longest edge, in backing pixels, that a photograph of `width`×`height` (sensor space,
+/// with EXIF `orientation`) occupies when fitted inside `viewport`. This is the number the
+/// display decoder should extract: a 3:2 photo on a 3840×2160 monitor is 3240 px wide, not
+/// 3840, and a portrait photo on the same monitor is only 2160 px. The result never upscales a
+/// photograph smaller than the viewer.
+pub fn fit_edge(width: u32, height: u32, orientation: u8, viewport: Viewport) -> u32 {
+    if viewport.is_empty() {
+        return FALLBACK_DISPLAY_EDGE;
+    }
+    let (width, height) = if orientation_swaps_axes(orientation) { (height, width) } else { (width, height) };
+    if width == 0 || height == 0 {
+        return viewport.long_edge().max(1);
+    }
+    let scale = (f64::from(viewport.width) / f64::from(width)).min(f64::from(viewport.height) / f64::from(height)).min(1.0);
+    let edge = (f64::from(width.max(height)) * scale).round();
+    if !edge.is_finite() {
+        return viewport.long_edge().max(1);
+    }
+    (edge as u32).max(1).min(viewport.long_edge().max(1))
+}
+
 /// What the user can reach next (v1's `FocusRequest`). `windows` is in priority order: the
 /// current batch first, then the neighbouring batches nearest-first with next before previous.
 /// Only the first three are guaranteed; the rest are optional prefetch.
@@ -119,11 +183,15 @@ pub struct Source {
 pub struct Focus {
     pub windows: Vec<Vec<PhotoId>>,
     pub current: Option<PhotoId>,
-    /// Backing pixels of the viewer's longest edge; `0` before the window has a size.
-    pub viewport_edge: u32,
-    /// At 100% right now: decode the photograph's own pixels.
+    /// The loupe's backing pixels. The pipeline fits each photograph's own aspect into this
+    /// rectangle; `0×0` before the window has a size falls back to [`FALLBACK_DISPLAY_EDGE`].
+    pub viewport: Viewport,
+    /// At 100% right now (actually `zoom > 1.01`): decode only the pixels the zoom displays.
     pub zoomed: bool,
-    /// Prefetch the frame the user is about to arrow to at 1:1 as well.
+    /// The loupe's zoom relative to fit (1.0 = the whole photo). A 2× view of a 1350 px fit
+    /// needs 2700 px, not the 6000 px sensor; only the native zoom reaches the sensor edge.
+    pub zoom: f32,
+    /// Prefetch the frame the user is about to arrow to at the same zoom as well.
     pub zoom_lock: bool,
     pub exact_raw: bool,
 }
@@ -575,15 +643,19 @@ impl<V> Pipeline<V> {
     }
 
     /// How many neighbours the display tier can prefetch in each direction without letting the
-    /// demand set itself exceed the display budget. The estimates use a square (4 bytes per
-    /// pixel) so a portrait photo cannot be underestimated.
-    fn display_window(&self, display_edge: u32) -> (usize, usize, usize) {
+    /// demand set itself exceed the display budget. A fitted frame can never occupy more than
+    /// the viewport rectangle, so the rectangle's area is the exact upper bound; using a square
+    /// of the long edge would shrink a 4K/5K window by the monitor's unused aspect margin.
+    fn display_window(&self, viewport: Viewport) -> (usize, usize, usize) {
         if self.focus.zoomed {
             return (3, 2, 0);
         }
-        let edge = display_edge.max(1) as usize;
-        let frame_estimate = edge.saturating_mul(edge).saturating_mul(4);
-        let slots = self.budgets.display.checked_div(frame_estimate).unwrap_or(0);
+        let frame_bytes = if viewport.is_empty() {
+            u64::from(FALLBACK_DISPLAY_EDGE).saturating_mul(u64::from(FALLBACK_DISPLAY_EDGE)).saturating_mul(4)
+        } else {
+            viewport.area().saturating_mul(4)
+        };
+        let slots = usize::try_from((self.budgets.display as u64) / frame_bytes.max(1)).unwrap_or(usize::MAX);
         // At a 2048 px edge there is room for the full head; at 5–6K the same eight-frame
         // heads would crowd out the current batch, so the head shrinks with the budget.
         let head = (slots / 8).clamp(2, DISPLAY_PREFETCH_NEXT_BATCH);
@@ -597,26 +669,21 @@ impl<V> Pipeline<V> {
     fn rebuild_demand(&mut self) {
         let mut demand: Vec<Demand> = Vec::new();
         let current = self.focus.current;
-        let display_edge = if self.focus.zoomed {
-            0
-        } else if self.focus.viewport_edge > 0 {
-            self.focus.viewport_edge
-        } else {
-            FALLBACK_DISPLAY_EDGE
-        };
+        let viewport = self.focus.viewport;
         let current_batch = self.focus.windows.first().cloned().unwrap_or_default();
         let current_position = current.and_then(|id| current_batch.iter().position(|candidate| *candidate == id));
 
         if let Some(current) = current {
             let source = self.sources.get(&current);
             if let Some(source) = source {
-                let full = source.meta.width.max(source.meta.height).max(display_edge);
+                let full = source.meta.width.max(source.meta.height);
                 // The navigation preview is first: it is ~6–8 ms, so a held arrow key always has
                 // a real frame to paint while the ~57–68 ms display decode is still in flight.
                 demand.push(Demand { key: Key { id: current, tier: Tier::Preview }, target_edge: PREVIEW_EDGE, rank: 0 });
+                let fitted = fit_edge(source.meta.width, source.meta.height, source.meta.orientation, viewport);
                 demand.push(Demand {
                     key: Key { id: current, tier: Tier::Display },
-                    target_edge: if self.focus.zoomed { full } else { display_edge },
+                    target_edge: if self.focus.zoomed { zoomed_edge(fitted, full, self.focus.zoom) } else { fitted },
                     rank: 1,
                 });
                 demand.push(Demand { key: Key { id: current, tier: Tier::Thumbnail }, target_edge: THUMBNAIL_EDGE, rank: 10 });
@@ -653,7 +720,7 @@ impl<V> Pipeline<V> {
         // demand, but four workers can stay ahead if they are given the next second of frames
         // while the current one is painted. The window is deliberately after the current
         // batch's strip thumbnails (rank 1_000) and before the next batch's strip (rank 2_000).
-        let (ahead, behind, head) = self.display_window(display_edge);
+        let (ahead, behind, head) = self.display_window(viewport);
         if let Some(position) = current_position {
             for offset in -(behind as i64)..=(ahead as i64) {
                 if offset == 0 {
@@ -664,9 +731,11 @@ impl<V> Pipeline<V> {
                 let Some(source) = self.sources.get(&id) else { continue };
                 let full = source.meta.width.max(source.meta.height);
                 let zoom_prefetch = self.focus.zoom_lock && offset == 1;
+                let fitted = fit_edge(source.meta.width, source.meta.height, source.meta.orientation, viewport);
+                let target_edge = if self.focus.zoomed || zoom_prefetch { zoomed_edge(fitted, full, self.focus.zoom) } else { fitted };
                 demand.push(Demand {
                     key: Key { id, tier: Tier::Display },
-                    target_edge: if self.focus.zoomed || zoom_prefetch { full } else { display_edge },
+                    target_edge,
                     rank: 1_500 + (offset.unsigned_abs() as u32) * 2 + u32::from(offset < 0),
                 });
             }
@@ -678,10 +747,12 @@ impl<V> Pipeline<V> {
             for (window, base_rank) in [(1usize, 1_800u32), (2usize, 1_900u32)] {
                 let Some(batch) = self.focus.windows.get(window) else { continue };
                 for (index, id) in batch.iter().take(head).enumerate() {
-                    if !self.sources.contains_key(id) || self.focus.current == Some(*id) {
+                    let Some(source) = self.sources.get(id) else { continue };
+                    if self.focus.current == Some(*id) {
                         continue;
                     }
-                    demand.push(Demand { key: Key { id: *id, tier: Tier::Display }, target_edge: display_edge, rank: base_rank + index as u32 });
+                    let fitted = fit_edge(source.meta.width, source.meta.height, source.meta.orientation, viewport);
+                    demand.push(Demand { key: Key { id: *id, tier: Tier::Display }, target_edge: fitted, rank: base_rank + index as u32 });
                 }
             }
         }
@@ -769,7 +840,7 @@ mod tests {
         Focus {
             windows: vec![vec![PhotoId(1), PhotoId(2), PhotoId(3), PhotoId(4)], vec![PhotoId(5), PhotoId(6)], vec![PhotoId(7), PhotoId(8)]],
             current: Some(PhotoId(current)),
-            viewport_edge: 2048,
+            viewport: Viewport::new(2048, 1365),
             ..Focus::default()
         }
     }
@@ -859,7 +930,12 @@ mod tests {
         pipeline.set_catalog(wide_catalog());
         let first: Vec<PhotoId> = (1..=40).map(PhotoId).collect();
         let second: Vec<PhotoId> = (41..=80).map(PhotoId).collect();
-        pipeline.set_focus(Focus { windows: vec![first, second], current: Some(PhotoId(20)), viewport_edge: 2048, ..Focus::default() });
+        pipeline.set_focus(Focus {
+            windows: vec![first, second],
+            current: Some(PhotoId(20)),
+            viewport: Viewport::new(2048, 1365),
+            ..Focus::default()
+        });
         settle(&mut pipeline, &[0; 8]);
 
         for id in 8..=40 {
@@ -873,10 +949,55 @@ mod tests {
     }
 
     #[test]
+    fn the_display_target_fits_the_photo_aspect_into_the_physical_viewport() {
+        // 3:2 on a 16:9 4K panel: height is the constraint, so the extracted long edge is
+        // 3240 px — the screen's 3840 would decode and upload 18% extra width nobody sees.
+        assert_eq!(fit_edge(6000, 4000, 1, Viewport::new(3840, 2160)), 3240);
+        // A 1x laptop pane: 900 px tall, so 1350 px wide.
+        assert_eq!(fit_edge(6000, 4000, 1, Viewport::new(1440, 900)), 1350);
+        // A 14" Retina pane at 2x: 1964 px tall, 2946 px wide.
+        assert_eq!(fit_edge(6000, 4000, 1, Viewport::new(3024, 1964)), 2946);
+        // Portrait photo on the same 4K panel: only the height fits.
+        assert_eq!(fit_edge(4000, 6000, 1, Viewport::new(3840, 2160)), 2160);
+        // Orientation 6 swaps the axes before fitting.
+        assert_eq!(fit_edge(6000, 4000, 6, Viewport::new(3840, 2160)), 2160);
+        // A small frame is never upscaled.
+        assert_eq!(fit_edge(1600, 1000, 1, Viewport::new(3840, 2160)), 1600);
+        assert_eq!(fit_edge(6000, 4000, 1, Viewport::default()), FALLBACK_DISPLAY_EDGE);
+    }
+
+    #[test]
+    fn a_zoom_decodes_the_pixels_the_zoom_shows_not_the_whole_sensor() {
+        assert_eq!(zoomed_edge(1350, 6000, 1.0), 1350);
+        assert_eq!(zoomed_edge(1350, 6000, 2.0), 2700);
+        assert_eq!(zoomed_edge(1350, 6000, 12.0), 6000);
+        assert_eq!(zoomed_edge(3240, 6000, 1.5), 4860);
+        assert_eq!(zoomed_edge(3240, 6000, 2.0), 6000, "never beyond the sensor's long edge");
+    }
+
+    #[test]
+    fn the_current_display_job_carries_the_fitted_target() {
+        let mut pipeline = pipeline();
+        pipeline.set_focus(Focus {
+            windows: vec![vec![PhotoId(1)]],
+            current: Some(PhotoId(1)),
+            viewport: Viewport::new(3840, 2160),
+            ..Focus::default()
+        });
+        // The preview is rank 0; the display is rank 1 and must ask for 3240, not 3840.
+        let preview = pipeline.next_job().expect("preview first");
+        assert_eq!(preview.tier, Tier::Preview);
+        assert!(pipeline.complete(&preview, vec![0; 4], preview.target_edge));
+        let display = pipeline.next_job().expect("display second");
+        assert_eq!(display.tier, Tier::Display);
+        assert_eq!(display.target_edge, 3240, "a 3:2 photo on a 3840×2160 pane is 3240 px wide");
+    }
+
+    #[test]
     fn a_large_retina_edge_shrinks_the_display_window_to_the_budget() {
         let pipeline = pipeline();
-        assert_eq!(pipeline.display_window(2048), (32, 12, 8));
-        let (ahead, behind, head) = pipeline.display_window(6000);
+        assert_eq!(pipeline.display_window(Viewport::new(2048, 1365)), (32, 12, 8));
+        let (ahead, behind, head) = pipeline.display_window(Viewport::new(6000, 4000));
         assert!(ahead < 32 && behind < 12 && head < 8, "a 6000 px frame is ~144 MB; the window must shrink: {ahead}/{behind}/{head}");
     }
 
@@ -941,7 +1062,12 @@ mod tests {
 
         // Churn thumbnails outside whatever window is current until the thumbnail budget spills.
         for id in 3..=8 {
-            pipeline.set_focus(Focus { windows: vec![vec![PhotoId(id)]], current: Some(PhotoId(id)), viewport_edge: 2048, ..Focus::default() });
+            pipeline.set_focus(Focus {
+                windows: vec![vec![PhotoId(id)]],
+                current: Some(PhotoId(id)),
+                viewport: Viewport::new(2048, 1365),
+                ..Focus::default()
+            });
             settle(&mut pipeline, &[0; 40]);
         }
         assert!(pipeline.cached_bytes(Tier::Thumbnail) <= 64, "the thumbnail tier stays inside its own budget");
@@ -987,7 +1113,12 @@ mod tests {
         settle(&mut pipeline, &[0; 8]);
         assert!(pipeline.contains(PhotoId(1), Tier::Display));
         // Make photos 1 and 2 the whole focus, then shed.
-        pipeline.set_focus(Focus { windows: vec![vec![PhotoId(1), PhotoId(2)]], current: Some(PhotoId(2)), viewport_edge: 2048, ..Focus::default() });
+        pipeline.set_focus(Focus {
+            windows: vec![vec![PhotoId(1), PhotoId(2)]],
+            current: Some(PhotoId(2)),
+            viewport: Viewport::new(2048, 1365),
+            ..Focus::default()
+        });
         pipeline.shed_to_focus();
         assert!(pipeline.contains(PhotoId(1), Tier::Display), "the focus window survives a pressure shed");
         assert!(!pipeline.contains(PhotoId(3), Tier::Thumbnail), "everything outside it does not");
