@@ -184,11 +184,22 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 
 ### 0.5 Handoff: where the last session stopped
 
-> **As of 2026-10-22 (v2).** The `v2` branch is the pure-Rust rewrite;
+> **As of 2026-10-24 (v2).** The `v2` branch is the pure-Rust rewrite;
 > **`docs/v2-plan.md` is its contract**, `docs/parity-checklist.md` is the merge-gate record,
 > and agent rules live in `AGENTS.md`. The draft PR is
 > https://github.com/Kathir-D/Firstcut/pull/6 (`v2` → `main`); it stays a draft until the
 > owner moves it, and agents never merge.
+>
+> **2026-10-24 update — the 20 Hz held arrow.** `86e2640` keeps the sharp display ahead
+> of a 20 Hz hold: the display tier is prefetched **32 ahead/12 behind** inside the current
+> batch, plus **eight-frame heads** of the next and previous batches, all bounded by the
+> display budget (2048 px gets the full window; 5–6K shrinks it). The 24 MP downsample is now
+> rayon-parallel, cutting the single display decode to **0.057–0.068 s** (was 0.067–0.078).
+> `bench --decode` adds a four-worker throughput row: **59.4 frames/s** on Game1JENKS and
+> **54.4** on Game3KC, versus the **20/s** a 20 Hz hold needs. The 6–8 ms preview still paints
+> every frame during the ~0.5 s lead-in and across batch boundaries; exact is unchanged at
+> **0.343 s** and still over the 0.119 s gate. Local `cargo xtask ci --summary-md` is green;
+> the 3-OS run for `86e2640` is the remaining check.
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`
 > and the 3-OS matrix green. This session landed M5 and M6 on top of it:
@@ -243,11 +254,11 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 >   at the dependency boundary. A real orientation-8 CR3 develops to 4000×6000 portrait
 >   (`a_real_raw_develops_in_sensor_orientation_and_is_rotated_once`). Windows no longer has
 >   an exact-RAW gap. The crate still owns the workspace's only unsafe carve-out.
-> - **Exact RAW latency:** warm **0.342 s** on Game1JENKS/Game3KC (decode 0.12 + develop
+> - **Exact RAW latency:** warm **0.343 s** on Game1JENKS/Game3KC (decode 0.12 + develop
 >   0.18 + parallel pack/orientation 0.04; release LTO fat), down from the earlier 0.40 s and
 >   LibRaw's 1.03–1.05 s. `apply_orientation` is destination-row parallel (0.14 → 0.03 s), and
 >   the f32→RGBA8 pack is now rayon-parallel (0.043 → <0.01 s). First pixels are the
->   navigation preview at **0.007 s**, then the display preview at **0.067–0.078 s**, because
+>   navigation preview at **0.006–0.008 s**, then the display preview at **0.057–0.068 s**, because
 >   the loupe paints exact → display → `Tier::Preview` → thumbnail while the develop is in
 >   flight (D12/D13). **The 0.119 s gate is below the ~0.12 s CRX decode floor** for 24 MP on
 >   this CPU — rawler decode alone is 0.12 s warm, LibRaw unpack 0.20 s, Core Image 0.44 s
@@ -286,7 +297,7 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > **Blocked / owner-only (unchanged):** boundary ground-truth files (never synthesised),
 > preview-vs-Exact-RAW default judgement, Game1JENKS re-press decision, Lightroom/Capture One
 > sidecar round-trip, visual sign-off on each OS, Homebrew tap secret, and the `v2.0.0` tag.
-> The Exact RAW 0.119 s gate also needs an owner decision (accept 0.342 s + progressive first
+> The Exact RAW 0.119 s gate also needs an owner decision (accept 0.343 s + progressive first
 > paint, fund a native CRX/GPU decoder, or redefine the row as first-frame latency).
 >
 > **Useful commands / paths:** benchmark photo
