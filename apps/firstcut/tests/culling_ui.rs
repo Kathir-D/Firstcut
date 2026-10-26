@@ -73,7 +73,7 @@ fn the_culling_screen_shows_the_strip_and_rates_through_keys() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
         let images = FrameImages { current, thumbs: &bank, histogram: Some(&histogram), display: &bank };
         screen.show(ui, &mut model, &images);
     });
@@ -162,7 +162,7 @@ fn the_clipping_overlay_marks_highlight_clipped_pixels() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
         let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
         screen.show(ui, &mut model, &images);
     });
@@ -187,7 +187,7 @@ fn the_open_folder_dialog_takes_a_path() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
         let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
         screen.show(ui, &mut model, &images);
     });
@@ -240,7 +240,7 @@ fn the_whole_batch_reject_asks_first_and_flags_every_frame() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
         let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
         screen.show(ui, &mut model, &images);
     });
@@ -274,7 +274,7 @@ fn the_finish_sheet_moves_the_shoot_and_undoes_it() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
         let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
         screen.show(ui, &mut model, &images);
     });
@@ -343,7 +343,7 @@ fn the_finish_sheet_shows_the_typed_gate_for_a_permanent_delete() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
         let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
         screen.show(ui, &mut model, &images);
     });
@@ -414,7 +414,7 @@ fn the_settings_window_edits_general_and_viewer_through_the_model() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
         let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
         screen.show(ui, &mut model, &images);
     });
@@ -458,7 +458,7 @@ fn the_keyboard_tab_records_a_chord_into_the_user_keymap() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
         let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
         screen.show(ui, &mut model, &images);
     });
@@ -524,7 +524,7 @@ fn a_card_with_two_rolls_asks_which_shoot_to_open() {
         let mut model = state.borrow_mut();
         let mut screen = screen.borrow_mut();
         let current_id = model.current_photo_id();
-        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels.as_ref())));
+        let current = current_id.and_then(|id| bank.get(&id.0).map(|pixels| (id, pixels)));
         let images = FrameImages { current, thumbs: &bank, histogram: None, display: &bank };
         screen.show(ui, &mut model, &images);
     });

@@ -44,8 +44,10 @@ pub fn install_fonts(ctx: &egui::Context) {
 /// photo id. The app builds this per frame from its own decode cache; a photo it has not paid
 /// for yet is simply absent until the decode lands.
 pub struct FrameImages<'a> {
-    /// The photo under the cursor — the loupe's subject.
-    pub current: Option<(PhotoId, &'a egui::ColorImage)>,
+    /// The photo under the cursor — the loupe's subject. The `Arc` is what lets the texture
+    /// upload borrow the decoded pixels when no size reduction is needed, instead of copying
+    /// the whole frame once more (§5.1).
+    pub current: Option<(PhotoId, &'a Arc<egui::ColorImage>)>,
     /// The filmstrip's photos, as far as decided to decode. Absent ids render as a placeholder.
     pub thumbs: &'a HashMap<u64, Arc<egui::ColorImage>>,
     /// The current photo's histogram (already orientation-safe). M3's Info panel paints it.

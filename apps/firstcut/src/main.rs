@@ -179,9 +179,12 @@ impl Shell {
         // default uses.
         let total_budget = (4.0 * 1024.0 * 1024.0 * 1024.0 * fraction / 0.4) as usize;
         let threads = if performance.decode_threads == 0 {
-            std::thread::available_parallelism().map_or(4, |count| count.get()).min(4)
+            // One worker per available core, capped at eight: the measured 20 Hz ceiling is
+            // decode-bound, and six/eight workers beat four by 30–45% at every fitted target
+            // (§5.1). The cap leaves a machine with more cores free for the exact tier and UI.
+            std::thread::available_parallelism().map_or(4, |count| count.get()).min(8)
         } else {
-            performance.decode_threads.clamp(1, 8) as usize
+            performance.decode_threads.clamp(1, 16) as usize
         };
         let raw: Option<Arc<dyn RawDecode>> = firstcut_decode_libraw::backend();
         let mut shell = Self {
@@ -369,7 +372,7 @@ impl eframe::App for Shell {
         let current_id = self.model.current_photo_id();
         let current_frame = current_id.and_then(|id| self.bank.frame(id));
         let images = firstcut_ui::FrameImages {
-            current: current_id.zip(current_frame.as_ref()).map(|(id, frame)| (id, frame.image().as_ref())),
+            current: current_id.zip(current_frame.as_ref()).map(|(id, frame)| (id, frame.image())),
             thumbs: &self.bank.thumbnails,
             histogram: current_frame.as_ref().and_then(BestFrame::histogram),
             display: &self.bank.displays,
@@ -440,7 +443,7 @@ impl Shell {
             let current_id = model.current_photo_id();
             let current_frame = current_id.and_then(|id| bank.frame(id));
             let images = firstcut_ui::FrameImages {
-                current: current_id.zip(current_frame.as_ref()).map(|(id, frame)| (id, frame.image().as_ref())),
+                current: current_id.zip(current_frame.as_ref()).map(|(id, frame)| (id, frame.image())),
                 thumbs: &bank.thumbnails,
                 histogram: current_frame.as_ref().and_then(BestFrame::histogram),
                 display: &bank.displays,
@@ -483,7 +486,7 @@ impl Shell {
             let current_id = model.current_photo_id();
             let current_frame = current_id.and_then(|id| bank.frame(id));
             let images = firstcut_ui::FrameImages {
-                current: current_id.zip(current_frame.as_ref()).map(|(id, frame)| (id, frame.image().as_ref())),
+                current: current_id.zip(current_frame.as_ref()).map(|(id, frame)| (id, frame.image())),
                 thumbs: &bank.thumbnails,
                 histogram: current_frame.as_ref().and_then(BestFrame::histogram),
                 display: &bank.displays,
@@ -546,8 +549,31 @@ fn frame_bytes(frame: &Arc<Frame>) -> usize {
 }
 
 enum DecodeResult {
-    Done(Job, DecodedImage, Box<Histogram>),
+    /// The worker has already converted the decoded RGBA bytes into egui's colour buffer, so the
+    /// window thread only receives pixels it can upload. Doing this in the worker keeps a
+    /// 3240×2160 frame's per-pixel conversion off the paint thread (§5.1).
+    Done(Job, Arc<egui::ColorImage>, Box<Histogram>),
     Failed(Job, String),
+}
+
+/// Takes ownership of the decoded RGBA buffer and reinterprets it as `Color32` without a copy.
+/// `DecodedImage` guarantees `width × height × 4` bytes; the empty image is the never-crash
+/// fallback if a caller ever hands over a mismatched buffer.
+fn color_image_from_decoded(decoded: DecodedImage) -> egui::ColorImage {
+    let width = usize::try_from(decoded.width).unwrap_or(0);
+    let height = usize::try_from(decoded.height).unwrap_or(0);
+    let bytes = decoded.rgba.len();
+    if !bytes.is_multiple_of(4) || width.checked_mul(height) != Some(bytes / 4) {
+        return egui::ColorImage::default();
+    }
+    let words = decoded.rgba.into_words();
+    if words.len().checked_mul(4) != Some(bytes) {
+        return egui::ColorImage::default();
+    }
+    let Ok(pixels) = bytemuck::try_cast_vec::<u32, egui::Color32>(words) else {
+        return egui::ColorImage::default();
+    };
+    egui::ColorImage { size: [width, height], source_size: egui::vec2(width as f32, height as f32), pixels }
 }
 
 /// The app-side half of the decode pipeline: threads and channels around the engine's policy
@@ -590,7 +616,7 @@ impl DecodeBank {
             if let Err(err) = std::thread::Builder::new().name(name).spawn(move || {
                 while let Ok(job) = jobs.recv() {
                     let result = match decode_job(&job, raw.as_deref()) {
-                        Ok((image, histogram)) => DecodeResult::Done(job, image, Box::new(histogram)),
+                        Ok((image, histogram)) => DecodeResult::Done(job, Arc::new(color_image_from_decoded(image)), Box::new(histogram)),
                         Err(message) => DecodeResult::Failed(job, message),
                     };
                     if results.send(result).is_err() {
@@ -624,17 +650,24 @@ impl DecodeBank {
         let mut changed = false;
         loop {
             match self.results.try_recv() {
-                Ok(DecodeResult::Done(job, decoded, histogram)) => {
-                    let edge = decoded.longest_edge();
-                    let image = Arc::new(egui::ColorImage::from_rgba_unmultiplied([decoded.width as usize, decoded.height as usize], &decoded.rgba));
+                Ok(DecodeResult::Done(job, image, histogram)) => {
+                    let edge = u32::try_from(image.width().max(image.height())).unwrap_or(u32::MAX);
                     let frame = Arc::new(Frame { image, histogram: *histogram });
                     if self.pipeline.complete(&job, Arc::clone(&frame), edge) {
                         if job.tier == Tier::Thumbnail {
                             self.thumbnails.insert(job.id.0, Arc::clone(&frame.image));
                             // One decode, two consumers: the filmstrip gets the pixels and the
-                            // batcher gets the signature of those exact pixels.
+                            // batcher gets the signature of those exact pixels. A `Color32` is
+                            // four bytes with the sRGB channels in RGBA order (alpha is 255 on
+                            // this path), so the signature reads the colour buffer directly.
                             if self.signatures_sent.insert(job.id.0) {
-                                model.submit_thumbnail_pixels(job.id, &decoded.rgba, decoded.width, decoded.height);
+                                let rgba = bytemuck::cast_slice::<egui::Color32, u8>(&frame.image.pixels);
+                                model.submit_thumbnail_pixels(
+                                    job.id,
+                                    rgba,
+                                    u32::try_from(frame.image.width()).unwrap_or(u32::MAX),
+                                    u32::try_from(frame.image.height()).unwrap_or(u32::MAX),
+                                );
                             }
                         }
                         if job.tier == Tier::Preview {
@@ -817,5 +850,20 @@ mod tests {
     fn a_folder_without_photos_falls_through_to_the_normal_open_error() {
         let folder = tempfile::tempdir().expect("folder");
         assert!(card_shoots(folder.path()).is_empty());
+    }
+
+    #[test]
+    fn a_decoded_frame_becomes_egui_pixels_without_losing_a_channel() {
+        let decoded = DecodedImage { width: 2, height: 1, rgba: vec![1, 2, 3, 255, 4, 5, 6, 255].into() };
+        let image = color_image_from_decoded(decoded);
+        assert_eq!(image.size, [2, 1]);
+        assert_eq!((image.pixels[0].r(), image.pixels[0].g(), image.pixels[0].b(), image.pixels[0].a()), (1, 2, 3, 255));
+        assert_eq!((image.pixels[1].r(), image.pixels[1].g(), image.pixels[1].b(), image.pixels[1].a()), (4, 5, 6, 255));
+    }
+
+    #[test]
+    fn a_buffer_that_disagrees_with_its_dimensions_is_empty_not_a_crash() {
+        let decoded = DecodedImage { width: 2, height: 2, rgba: vec![0; 8].into() };
+        assert_eq!(color_image_from_decoded(decoded).size, [0, 0]);
     }
 }

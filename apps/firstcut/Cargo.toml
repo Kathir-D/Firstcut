@@ -19,6 +19,10 @@ firstcut-catalog = { workspace = true }
 firstcut-ui = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+# Pixels arrive as RGBA bytes; `try_cast_vec` makes the egui colour buffer without a conversion
+# pass. `ecolor` is the direct dependency that enables `Color32: Pod`.
+bytemuck = { workspace = true }
+ecolor = { workspace = true }
 egui_kittest = { workspace = true, features = ["snapshot", "wgpu"] }
 image = { workspace = true }
 rfd = { workspace = true }

@@ -629,11 +629,13 @@ fn verdict(inside: bool) -> &'static str {
 const BENCH_VIEWPORT_EDGE: u32 = 2048;
 /// How many photographs the arrow row steps through (the first is the "first photo" row).
 const ARROW_SAMPLES: usize = 8;
-/// The sustained-throughput row: how many display decodes four workers finish per second. At a
-/// 20 Hz held arrow the budget is 20 frames/s; four ~57–68 ms decodes in parallel measured
-/// 53–61/s, which is what makes the display prefetch window able to stay ahead.
-const THROUGHPUT_SAMPLES: usize = 24;
-const THROUGHPUT_WORKERS: usize = 4;
+/// The sustained-throughput row: how many display decodes the app's eight-worker bank finishes
+/// per second. At a 20 Hz held arrow the budget is 20 frames/s; eight ~57–68 ms decodes in
+/// parallel measured 76–85/s at the 4K/2048 fits, which is what keeps the prefetch window ahead.
+const THROUGHPUT_SAMPLES: usize = 48;
+/// The app's automatic worker count caps at eight (`apps/firstcut`), so the throughput row uses
+/// the same number. Four workers measured 57.6/53.3 fps at 2048/3240; eight measure 85/76.
+const THROUGHPUT_WORKERS: usize = 8;
 
 /// Times the §5 decode rows on real files: first photo after open, arrow → next, Exact RAW develop,
 /// and a 1:1 re-decode. The rows alternate the preview and RAW develop across rounds, which is v1's
@@ -727,15 +729,19 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     }
     let zoom_best = zoom_times.iter().copied().filter(|t| t.is_finite()).fold(f64::MAX, f64::min);
 
-    // §5 row 5: sustained display throughput with the app's four-worker bank. The same decode
-    // is spread over different photographs so workers do not contend on one file. Three targets
-    // show the system-level effect of the fitted viewport: a small laptop pane uses the camera's
-    // PRVW, while 4K/5K must pay for the full-preview entropy decode.
+    // §5 row 5: sustained display throughput with the app's automatic worker bank. The same
+    // decode is spread over different photographs so workers do not contend on one file. The
+    // targets show the system-level effect of the fitted viewport: a small laptop pane uses the
+    // camera's PRVW, while 4K/5K/6K must pay for the full-preview entropy decode.
     let laptop_edge = fit_edge(6000, 4000, 1, Viewport::new(1440, 900));
     let monitor_edge = fit_edge(6000, 4000, 1, Viewport::new(3840, 2160));
+    let monitor_5k_edge = fit_edge(6000, 4000, 1, Viewport::new(5120, 2880));
+    let monitor_6k_edge = fit_edge(6000, 4000, 1, Viewport::new(6016, 3384));
     let throughput_full = display_throughput(dir, &sources, BENCH_VIEWPORT_EDGE)?;
     let throughput_laptop = display_throughput(dir, &sources, laptop_edge)?;
     let throughput_monitor = display_throughput(dir, &sources, monitor_edge)?;
+    let throughput_5k = display_throughput(dir, &sources, monitor_5k_edge)?;
+    let throughput_6k = display_throughput(dir, &sources, monitor_6k_edge)?;
 
     println!("folder: {}", dir.display());
     println!("photos: {} ({} with a full preview), {repeat} round(s)", scan.photos.len(), sources.len());
@@ -792,6 +798,16 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
         throughput_monitor,
         verdict(throughput_monitor >= 20.0)
     );
+    println!(
+        "  display throughput      {:>7.1} fps @ {monitor_5k_edge} px (5K 3:2 fit, full preview)   target ≥ 20  {}",
+        throughput_5k,
+        verdict(throughput_5k >= 20.0)
+    );
+    println!(
+        "  display throughput      {:>7.1} fps @ {monitor_6k_edge} px (6K 3:2 fit, full preview)   target ≥ 20  {}",
+        throughput_6k,
+        verdict(throughput_6k >= 20.0)
+    );
     println!();
     println!("fitted display targets (6000×4000 / 3:2 sensor, camera PRVW is 1620 px):");
     for (name, width, height) in [
@@ -811,7 +827,7 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     Ok(())
 }
 
-/// Four workers decoding `THROUGHPUT_SAMPLES` display frames at `target_edge`, spread over the
+/// Eight workers decoding `THROUGHPUT_SAMPLES` display frames at `target_edge`, spread over the
 /// scan so no two workers read the same file at once. Returns frames per second.
 fn display_throughput(dir: &std::path::Path, sources: &[&firstcut_meta::meta::PhotoMeta], target_edge: u32) -> Result<f64, String> {
     let samples: Vec<&firstcut_meta::meta::PhotoMeta> = sources.iter().copied().cycle().take(THROUGHPUT_SAMPLES).collect();

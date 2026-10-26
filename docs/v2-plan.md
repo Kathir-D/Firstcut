@@ -48,7 +48,7 @@ receives partial v2 state.
 | D10 | Presentation | **No Liquid Glass** | Dark translucent panels, one bundled font family (Inter), open icon set (Lucide). SF Symbols is Apple-licensed and cannot be bundled cross-platform |
 | D11 | Exact RAW developer | **rawler 0.8 first, LibRaw fallback** | rawler is pure Rust, builds on all three OSes (closing the Windows gap), and develops the M1 Pro benchmark CR3 in ~0.36 s warm versus LibRaw's ~1.03 s. LibRaw stays the macOS/Linux fallback for formats rawler refuses; the unsafe carve-out does not widen |
 | D12 | Exact RAW presentation | **Progressive, never a blank loupe** | The display-sized embedded preview paints first; the sensor develop replaces it in place when it lands. Exact RAW is still a tier of its own and the timing row below measures the develop itself, not the first frame |
-| D13 | Held-arrow navigation (owner directive, 2026-10-22, revised 2026-10-24) | **Fast `PRVW` tier + long display prefetch + deferred exact develop** | A held arrow key moves every 33–50 ms, faster than the ~57–68 ms full embedded-preview decode and much faster than the ~0.34 s sensor develop. The loupe paints the camera's 1620×1080 `PRVW` JPEG in ~6–8 ms (prefetched four behind/eight ahead), then the sharp display replaces it. The display tier is now prefetched 32 ahead/12 behind inside the current batch, plus eight-frame heads of the neighbouring batches, because four display workers measure 52–61 frames/s (2.6–3× the 20 Hz budget). The exact develop is queued only after the cursor rests for 250 ms. Display requests are fitted to the pane's physical width×height, and the decoder picks the smallest embedded JPEG that covers that target: a 3:2 photo on a 16:9 4K pane is 3240 px (not the screen's 3840), while a 1440×900 1x laptop pane asks for 1350 px, which the 1620 px `PRVW` already covers, so the 6000×4000 entropy decode is skipped (376–462 frames/s with four workers). A 2× zoom asks for 2700 px, not the whole sensor. Progress is never cancelled by navigation and exact is never allowed to starve it |
+| D13 | Held-arrow navigation (owner directive, 2026-10-22, revised 2026-10-26) | **Fast `PRVW` tier + long display prefetch + deferred exact develop + zero-copy handoff** | A held arrow key moves every 33–50 ms, faster than the ~57–68 ms full embedded-preview decode and much faster than the ~0.34 s sensor develop. The loupe paints the camera's 1620×1080 `PRVW` JPEG in ~6–8 ms (prefetched four behind/eight ahead), then the sharp display replaces it. The display tier is prefetched 32 ahead/12 behind inside the current batch, plus eight-frame heads of the neighbouring batches, because eight display workers (the automatic cap on this 8-core M1 Pro) measure 85.2 frames/s at 2048 px and 76.1 at the 3240 px 4K fit (3.3–4.3× the 20 Hz budget; the 5076 px 6K fit still measures 52.9 frames/s). The exact develop is queued only after the cursor rests for 250 ms. Display requests are fitted to the pane's physical width×height, and the decoder picks the smallest embedded JPEG that covers that target: a 3:2 photo on a 16:9 4K pane is 3240 px (not the screen's 3840), while a 1440×900 1x laptop pane asks for 1350 px, which the 1620 px `PRVW` already covers, so the 6000×4000 entropy decode is skipped (548 frames/s on Game1JENKS and 441 on Game3KC with eight workers). A 2× zoom asks for 2700 px, not the whole sensor. The decoded RGBA buffer is allocated 4-byte aligned and the decode worker adopts it as egui's `Color32` without a per-pixel conversion; a texture that fits the device limit shares the decoder's `Arc` instead of cloning it, keeping a 4.1 ms conversion and a 0.6 ms copy off the paint thread per 3240×2160 frame. Progress is never cancelled by navigation and exact is never allowed to starve it |
 
 ## 3. What survives, what dies
 
@@ -152,8 +152,8 @@ tier exists for a held arrow key: one decode is ~6–8 ms, so it lands inside a 
 repeat even when the ~57–68 ms display decode has not; it is prefetched four behind and
 eight ahead inside the current batch. The display tier carries the sharp frames: 32 ahead
 and 12 behind (bounded by its memory budget), plus eight-frame heads of the next and
-previous batches, because one display decode is slower than a 50 ms 20 Hz frame but four
-workers have 52–61 frames/s of throughput. Each display request is **fitted to the viewer's
+previous batches, because one display decode is slower than a 50 ms 20 Hz frame but eight
+workers have 85.2 frames/s at 2048 px and 76.1 at the 3240 px fit. Each display request is **fitted to the viewer's
 actual backing width×height**, not to one long edge: a 3:2 photograph on a 16:9 4K pane is
 3240 px, not 3840, and a portrait frame is 2160 px. `firstcut-decode` then reads the smallest
 embedded JPEG that covers the target, so a 1440×900 1x laptop pane (1350 px) is answered by
@@ -285,16 +285,19 @@ dedicated tests (v1's biggest gap).
 
 `firstcut-cli bench --decode --folder <game> --repeat 5`, release build, Apple M1 Pro,
 idle machine, real CR3s. These are decode-only timings (no GPU upload), which is why the
-zoom row is labelled as a lower bound.
+zoom row is labelled as a lower bound. The five throughput rows are the median of three
+runs of 48 decodes each.
 
 | Row | Game1JENKS (708) | Game3KC (920) | Gate | Verdict |
 | --- | --- | --- | --- | --- |
 | First photo after open (cold first-touch) | 0.240 s (scan 0.179 + display 0.061) | 0.294 s (scan 0.233 + display 0.061) | ≤ 0.5 s | **OK** |
 | Arrow → next photo (7 files, median) | 0.057 s | 0.068 s | ≤ 0.09 s | **OK** |
 | Arrow → navigation preview (7 files, median) | **0.006 s** | **0.008 s** | ≤ 0.033 s (a 30 Hz held key) | **OK** |
-| Display throughput, 2048 px (4 workers, 24 decodes) | **60.7 frames/s** | **51.7 frames/s** | ≥ 20 frames/s (a 20 Hz held key) | **OK** |
-| Display throughput, 1350 px laptop fit (PRVW path) | **462 frames/s** | **376 frames/s** | ≥ 20 frames/s | **OK** |
-| Display throughput, 3240 px 4K 3:2 fit (full preview) | **54.6 frames/s** | **48.3 frames/s** | ≥ 20 frames/s | **OK** |
+| Display throughput, 2048 px (8 workers, 48 decodes) | **85.2 frames/s** | **79.1 frames/s** | ≥ 20 frames/s (a 20 Hz held key) | **OK** |
+| Display throughput, 1350 px laptop fit (PRVW path) | **548 frames/s** | **441 frames/s** | ≥ 20 frames/s | **OK** |
+| Display throughput, 3240 px 4K 3:2 fit (full preview) | **76.1 frames/s** | **65.1 frames/s** | ≥ 20 frames/s | **OK** |
+| Display throughput, 4320 px 5K 3:2 fit (full preview) | **65.3 frames/s** | **55.1 frames/s** | ≥ 20 frames/s | **OK** |
+| Display throughput, 5076 px 6K 3:2 fit (full preview) | **52.9 frames/s** | **35.9 frames/s** | ≥ 20 frames/s | **OK** |
 | 1:1 zoom re-decode (embedded full preview) | 0.085 s | 0.085 s | v1 parity on GPU | decode half only |
 | Exact RAW develop (rawler, warm) | **0.343 s** (decode 0.12 + develop 0.18 + pack/orientation 0.04) | **0.343 s** | ≤ 0.119 s (1.5× v1) | **OVER TARGET, owner decision** |
 | Exact RAW first pixels (progressive display) | 0.057 s (the display decode the loupe already paints) | 0.068 s | ≤ 0.119 s | **OK for first frame** |
@@ -302,23 +305,36 @@ zoom row is labelled as a lower bound.
 Held-arrow navigation now has two bounds. The 6–8 ms preview is prefetched four
 behind/eight ahead, so every 33–50 ms repeat paints real pixels even before the sharp
 frame is ready. The 57–68 ms display decode is still slower than a 50 ms 20 Hz frame, but
-four workers measure 52–61 frames/s at the 2048 px baseline, so the display tier is prefetched 32 ahead/12 behind
-inside the current batch and eight-frame heads of the neighbouring batches; after roughly
-half a second of lead-in the sharp frame is cached before the cursor reaches it. The exact
-develop still waits for a 250 ms settle. That is the D13 behavior; the arrow row above
-remains the single display-tier number the §5 gate names.
+eight workers measure 85.2 frames/s at the 2048 px baseline and 76.1 at the 3240 px 4K
+fit, so the display tier is prefetched 32 ahead/12 behind inside the current batch and
+eight-frame heads of the neighbouring batches; after roughly half a second of lead-in the
+sharp frame is cached before the cursor reaches it. The exact develop still waits for a
+250 ms settle. That is the D13 behavior; the arrow row above remains the single
+display-tier number the §5 gate names.
+
+The window's pixel handoff is now zero-copy. `firstcut-decode` allocates its RGBA buffer
+4-byte aligned (`RgbaBuffer`, backed by `Vec<u32>`) and, on the JPEG path, decodes straight
+into it instead of accepting the decoder's own `Vec<u8>`. The decode worker reinterprets
+that buffer as egui's `Color32` with `bytemuck::try_cast_vec` (no per-pixel conversion; a
+mismatched buffer falls back to an empty image rather than panicking), and
+`load_texture` passes the decoder's `Arc` through when the frame already fits the device
+limit instead of cloning it. On a 3240×2160 frame that removes a measured 4.1 ms
+conversion plus a 0.6 ms copy from the paint thread; an end-to-end 32-decode worker probe
+measured 83.1 fps at 2048 and 74.9 at 3240 (77.7/68.8 with the old convert-and-clone path),
+and the texture cache now holds the same `Arc` the decode cache holds rather than a second
+full copy.
 
 The display target is now a fit, not a fixed long edge. A 3:2 photograph on a 16:9 4K pane
 occupies 3240×2160; asking for 3840 was 15.6% wider than the pane and, under the old
 integer-stride reduction, actually produced 3000×2000, which the loupe then upscaled by 8%.
 The exact 3240 target removes that softness and makes the budget estimate honest. A
 1440×900 1x laptop pane asks for 1350 px, which the camera's 1620 px `PRVW` already covers,
-so the display tier never pays the 6000×4000 entropy decode. That path measures 376–462
-frames/s with four workers versus 48–55 frames/s at the 4K fit, and both are above the 20/s
-held-key budget. The 5K/6K pane sizes (4320/5076 px) are computed but not separately
-benchmarked. The GPU texture cache is capped at 768 MB and trims least-recently painted
-frames, because 28 MB per 4K texture would otherwise grow without bound on a long hold even
-while the CPU pipeline stays inside its budget.
+so the display tier never pays the 6000×4000 entropy decode. That path measures 548
+frames/s with eight workers versus 76.1 frames/s at the 4K fit, and the 5K/6K fits
+(4320/5076 px) still measure 65.3/52.9 frames/s on Game1JENKS (55.1/35.9 on Game3KC). All
+are above the 20/s held-key budget. The GPU texture cache is capped at 768 MB and trims
+least-recently painted frames, because 28 MB per 4K texture would otherwise grow without
+bound on a long hold even while the CPU pipeline stays inside its budget.
 
 **The Exact RAW row cannot meet 0.119 s on this machine, and that is a hardware floor,
 not a tuning knob.** rawler's CRX decode alone is ~0.12 s warm for a 24 MP frame; the

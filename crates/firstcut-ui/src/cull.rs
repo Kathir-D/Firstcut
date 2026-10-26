@@ -12,6 +12,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use egui::{Color32, FontId, Image, Key, RichText, Sense, Stroke, TextureHandle, Vec2, pos2, vec2};
 use firstcut_engine::keymap::{KeyBinding, KeyChord, KeyName, Modifier};
@@ -784,9 +785,8 @@ impl CullScreen {
                 let pixels = images
                     .display
                     .get(&pane.id)
-                    .map(|pixels| pixels.as_ref())
                     .or_else(|| images.current.filter(|(id, _)| id.0 == pane.id).map(|(_, pixels)| pixels))
-                    .or_else(|| images.thumbs.get(&pane.id).map(|pixels| pixels.as_ref()));
+                    .or_else(|| images.thumbs.get(&pane.id));
                 if let Some(pixels) = pixels {
                     touch_texture(&mut self.texture_order, pane.id);
                     let texture = load_texture(&mut self.textures, panel.ctx(), pane.id, pixels);
@@ -1609,7 +1609,7 @@ fn load_texture<'a>(
     textures: &'a mut HashMap<u64, (usize, usize, TextureHandle)>,
     ctx: &egui::Context,
     id: u64,
-    pixels: &egui::ColorImage,
+    pixels: &Arc<egui::ColorImage>,
 ) -> &'a TextureHandle {
     let size = (pixels.size[0], pixels.size[1]);
     // A zoomed re-decode changes the pixel dimensions under the same photo id; egui textures are
@@ -1621,9 +1621,16 @@ fn load_texture<'a>(
     let entry = textures.entry(id).or_insert_with(|| {
         let name = format!("photo-{id}");
         let max_side = ctx.input(|input| input.max_texture_side);
-        (size.0, size.1, ctx.load_texture(name, fit_to_max_side(pixels, max_side), egui::TextureOptions::LINEAR))
+        (size.0, size.1, ctx.load_texture(name, texture_pixels(pixels, max_side), egui::TextureOptions::LINEAR))
     });
     &entry.2
+}
+
+/// The pixels egui uploads. A frame that already fits the device limit shares the decoder's
+/// `Arc` — no pixel copy at all — while an oversized one is reduced by [`fit_to_max_side`] (the
+/// safety net for a file whose embedded JPEG exceeds `max_texture_side`).
+fn texture_pixels(pixels: &Arc<egui::ColorImage>, max_side: usize) -> Arc<egui::ColorImage> {
+    if pixels.size[0] <= max_side && pixels.size[1] <= max_side { Arc::clone(pixels) } else { Arc::new(fit_to_max_side(pixels, max_side)) }
 }
 
 /// The largest copy of `pixels` whose sides respect `max_side`: ONE stride chosen from the
@@ -1883,6 +1890,18 @@ mod tests {
         let before = (offset - pan) / 1.0;
         let after = (offset - anchored) / 2.0;
         assert!((before - after).length() < 1e-4, "{before:?} vs {after:?}");
+    }
+
+    #[test]
+    fn a_frame_that_fits_the_texture_limit_is_shared_not_copied() {
+        let pixels = Arc::new(egui::ColorImage::new([100, 60], vec![egui::Color32::BLACK; 100 * 60]));
+        let uploaded = texture_pixels(&pixels, 2048);
+        assert!(Arc::ptr_eq(&pixels, &uploaded), "the decoder's Arc is the texture's pixels");
+
+        let oversized = Arc::new(egui::ColorImage::new([4096, 64], vec![egui::Color32::BLACK; 4096 * 64]));
+        let reduced = texture_pixels(&oversized, 2048);
+        assert!(!Arc::ptr_eq(&oversized, &reduced), "an oversized frame is reduced");
+        assert!(reduced.size[0] <= 2048 && reduced.size[1] <= 2048, "{:?}", reduced.size);
     }
 
     #[test]

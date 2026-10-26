@@ -516,7 +516,7 @@ fn performance_tab(body: &mut egui::Ui, model: &mut Model) {
     section(body, "DECODE");
     changed |= body.add(egui::Slider::new(&mut performance.look_ahead_batches, 0..=6).text("Batches decoded ahead")).changed();
     changed |= body.add(egui::Slider::new(&mut performance.thumbnail_pixels, 128..=1024).step_by(64.0).text("Filmstrip thumbnail pixels")).changed();
-    changed |= body.add(egui::Slider::new(&mut performance.decode_threads, 0..=16).text("Decode threads (0 = measure the machine)")).changed();
+    changed |= body.add(egui::Slider::new(&mut performance.decode_threads, 0..=16).text("Decode threads (0 = auto, up to 8)")).changed();
     changed |= body.checkbox(&mut performance.debug_hud, "Debug HUD (frame timings and memory)").changed();
     body.label(RichText::new("The decode bank takes a new budget the next time a shoot opens.").small().weak());
 

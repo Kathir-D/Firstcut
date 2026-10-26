@@ -15,6 +15,9 @@ firstcut-meta = { workspace = true }
 zune-jpeg = { workspace = true }
 # The decoder's own options/colorspace types ride in with it (zune-jpeg re-exports `zune_core`).
 zune-core = { version = "0.5", default-features = false, features = ["std"] }
+# The pixel buffer is 4-byte aligned so the window can reinterpret it as egui's `Color32`
+# without a per-pixel conversion or a copy (§5.1).
+bytemuck = { workspace = true }
 thiserror = { workspace = true }
 # Orientation is a 24 MP copy; destination rows are independent, so it runs in parallel.
 rayon = "1"

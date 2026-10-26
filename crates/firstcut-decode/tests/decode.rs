@@ -95,6 +95,14 @@ fn the_committed_fixture_decodes_to_rgba() {
 }
 
 #[test]
+fn decoded_pixels_are_four_byte_aligned_for_a_zero_copy_handoff() {
+    let image = decode_jpeg(&fixture_jpeg()).unwrap();
+    assert_eq!(image.rgba.as_slice().as_ptr() as usize % 4, 0, "the buffer can be adopted as Color32");
+    assert_eq!(image.rgba.len(), 8 * 8 * 4);
+    assert_eq!(image.rgba.into_words().len(), 8 * 8, "one aligned word per pixel");
+}
+
+#[test]
 fn read_range_reads_only_the_named_bytes() {
     let container = Container::with_two_jpegs();
     // The two ranges decode equally well: the bytes at the offset are what matters.
@@ -176,7 +184,7 @@ fn framed(width: u32, height: u32, pixels: &[(u32, u32, [u8; 3])]) -> DecodedIma
             slot.copy_from_slice(&[*r, *g, *b, 255]);
         }
     }
-    DecodedImage { width, height, rgba }
+    DecodedImage { width, height, rgba: rgba.into() }
 }
 
 fn pixel(image: &DecodedImage, x: u32, y: u32) -> [u8; 4] {
@@ -230,7 +238,7 @@ fn orientation_one_and_invalid_values_leave_the_frame_alone() {
 #[test]
 fn a_corrupt_dimension_at_a_rotated_orientation_errors_instead_of_panicking() {
     // width×height×4 does not match the buffer: the checked path reports it.
-    let broken = DecodedImage { width: 3, height: 2, rgba: vec![0; 3] };
+    let broken = DecodedImage { width: 3, height: 2, rgba: vec![0; 3].into() };
     let error = apply_orientation(broken, 6).unwrap_err();
     assert!(matches!(error, DecodeError::SizeMismatch { .. }), "got: {error:?}");
 }
@@ -299,7 +307,7 @@ fn the_histogram_is_computed_from_the_oriented_frame() {
 
 #[test]
 fn a_histogram_of_nothing_is_empty_not_a_panic() {
-    let empty = DecodedImage { width: 0, height: 0, rgba: Vec::new() };
+    let empty = DecodedImage { width: 0, height: 0, rgba: Vec::new().into() };
     let bins = histogram(&empty);
     assert_eq!(bins.sampled_pixels, 0);
     assert!(bins.luma.iter().all(|bin| *bin == 0.0));

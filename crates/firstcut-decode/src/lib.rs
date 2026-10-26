@@ -21,6 +21,80 @@ use zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::errors::DecodeErrors;
 
+/// An RGBA8 buffer whose allocation is 4-byte aligned. `Color32` is four bytes with an align of
+/// four, so the window can take the buffer over as egui's colour type with `bytemuck::try_cast_vec`
+/// — no per-pixel conversion and no second 28 MB copy for a 4K display frame (§5.1).
+///
+/// The backing store is `Vec<u32>` (one word per pixel) purely for its alignment; the public
+/// view is bytes, so callers keep reading RGBA channels in the order the decoder wrote them.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RgbaBuffer {
+    words: Vec<u32>,
+    /// The logical byte length, which can be shorter than `words.len() * 4` only for a buffer
+    /// built from deliberately malformed input in a test. Decoded frames are always exact.
+    len: usize,
+}
+
+impl RgbaBuffer {
+    /// A zeroed buffer of `bytes` bytes, rounded up to whole pixels in the backing store.
+    pub fn zeroed(bytes: usize) -> Self {
+        let words = bytes / 4 + usize::from(!bytes.is_multiple_of(4));
+        Self { words: vec![0; words], len: bytes }
+    }
+
+    /// Copies `bytes` into an aligned buffer. Used by the RAW backends, whose pixels arrive in
+    /// their own vectors; the JPEG path allocates the aligned buffer first and decodes into it.
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let mut buffer = Self::zeroed(bytes.len());
+        buffer.as_mut_slice().copy_from_slice(bytes);
+        buffer
+    }
+
+    /// The byte view, always exactly the logical length.
+    pub fn as_slice(&self) -> &[u8] {
+        let bytes = bytemuck::cast_slice::<u32, u8>(&self.words);
+        bytes.get(..self.len).unwrap_or(&[])
+    }
+
+    /// The mutable byte view, always exactly the logical length.
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        let bytes = bytemuck::cast_slice_mut::<u32, u8>(&mut self.words);
+        let len = self.len;
+        bytes.get_mut(..len).unwrap_or(&mut [])
+    }
+
+    /// The backing words, moved out for a zero-copy handoff to a 4-byte-aligned colour type.
+    /// Only valid callers should use this: the length is `words.len() * 4`.
+    pub fn into_words(self) -> Vec<u32> {
+        self.words
+    }
+}
+
+impl std::ops::Deref for RgbaBuffer {
+    type Target = [u8];
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl std::ops::DerefMut for RgbaBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut_slice()
+    }
+}
+
+impl std::fmt::Debug for RgbaBuffer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("RgbaBuffer").field("len", &self.len).finish()
+    }
+}
+
+impl From<Vec<u8>> for RgbaBuffer {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::from_bytes(&bytes)
+    }
+}
+
 /// A decoded frame: RGBA8, ready for a GPU texture or an egui `ColorImage`. The pixels are
 /// already in display orientation (EXIF orientation applied exactly once, in this crate); a
 /// caller must never rotate them again.
@@ -28,8 +102,8 @@ use zune_jpeg::errors::DecodeErrors;
 pub struct DecodedImage {
     pub width: u32,
     pub height: u32,
-    /// `width * height * 4` bytes, row-major, alpha 255.
-    pub rgba: Vec<u8>,
+    /// `width * height * 4` bytes, row-major, alpha 255, in an aligned buffer.
+    pub rgba: RgbaBuffer,
 }
 
 impl DecodedImage {
@@ -118,31 +192,32 @@ pub fn downsample_to(image: DecodedImage, target_edge: u32) -> DecodedImage {
     let new_width = proportional_edge(width, target_edge, long);
     let new_height = proportional_edge(height, target_edge, long);
     let Some(new_width_usize) = usize::try_from(new_width).ok() else {
-        return DecodedImage { width: 0, height: 0, rgba: Vec::new() };
+        return DecodedImage { width: 0, height: 0, rgba: RgbaBuffer::zeroed(0) };
     };
     let Some(new_height_usize) = usize::try_from(new_height).ok() else {
-        return DecodedImage { width: 0, height: 0, rgba: Vec::new() };
+        return DecodedImage { width: 0, height: 0, rgba: RgbaBuffer::zeroed(0) };
     };
     let Some(capacity) = new_width_usize.checked_mul(new_height_usize).and_then(|n| n.checked_mul(4)) else {
-        return DecodedImage { width: 0, height: 0, rgba: Vec::new() };
+        return DecodedImage { width: 0, height: 0, rgba: RgbaBuffer::zeroed(0) };
     };
     let Some(row_bytes) = new_width_usize.checked_mul(4) else {
-        return DecodedImage { width: 0, height: 0, rgba: Vec::new() };
+        return DecodedImage { width: 0, height: 0, rgba: RgbaBuffer::zeroed(0) };
     };
     let width_usize = usize::try_from(width).unwrap_or(usize::MAX);
     let height_usize = usize::try_from(height).unwrap_or(usize::MAX);
-    let mut reduced = vec![0u8; capacity];
+    let mut reduced = RgbaBuffer::zeroed(capacity);
     // A 2048-edge display frame is ~11 MB after reduction; reducing it on one core costs
     // several milliseconds that a held arrow cannot spare. Rows are independent, so a large
     // output is parallel while the 256 px filmstrip stays sequential (rayon's fan-out would
     // cost more than the copy).
+    let source = rgba.as_slice();
     if capacity > 1_000_000 && new_height_usize > 1 {
-        reduced.par_chunks_mut(row_bytes).enumerate().for_each(|(y, row)| {
-            downsample_row(row, &rgba, width_usize, height_usize, new_width_usize, new_height_usize, y);
+        reduced.as_mut_slice().par_chunks_mut(row_bytes).enumerate().for_each(|(y, row)| {
+            downsample_row(row, source, width_usize, height_usize, new_width_usize, new_height_usize, y);
         });
     } else {
-        for (y, row) in reduced.chunks_mut(row_bytes).enumerate() {
-            downsample_row(row, &rgba, width_usize, height_usize, new_width_usize, new_height_usize, y);
+        for (y, row) in reduced.as_mut_slice().chunks_mut(row_bytes).enumerate() {
+            downsample_row(row, source, width_usize, height_usize, new_width_usize, new_height_usize, y);
         }
     }
     DecodedImage { width: new_width, height: new_height, rgba: reduced }
@@ -214,18 +289,21 @@ pub fn read_range(path: &Path, range: ByteRange) -> Result<DecodedImage, DecodeE
 pub fn decode_jpeg(bytes: &[u8]) -> Result<DecodedImage, DecodeError> {
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA);
     let mut decoder = JpegDecoder::new_with_options(ZCursor::new(bytes), options);
-    let pixels = decoder.decode()?;
+    // Decode into a buffer we allocate: it is 4-byte aligned (so the window can adopt it as
+    // `Color32` with no copy) and it replaces the decoder's own output allocation rather than
+    // adding one. The headers give the exact RGBA byte count before any entropy decode.
+    decoder.decode_headers()?;
     let Some(info) = decoder.info() else {
-        // decode() answered, so the headers decoded; the None arm is for the paranoid path.
-        return Err(DecodeError::SizeMismatch { width: 0, height: 0, expected: pixels.len() });
+        return Err(DecodeError::SizeMismatch { width: 0, height: 0, expected: 0 });
     };
     let width = u32::from(info.width);
     let height = u32::from(info.height);
-    let expected = usize::from(info.width).checked_mul(usize::from(info.height)).and_then(|area| area.checked_mul(4)).unwrap_or(0);
-    if pixels.len() != expected {
-        return Err(DecodeError::SizeMismatch { width, height, expected: pixels.len() });
-    }
-    Ok(DecodedImage { width, height, rgba: pixels })
+    let Some(expected) = usize::from(info.width).checked_mul(usize::from(info.height)).and_then(|area| area.checked_mul(4)) else {
+        return Err(DecodeError::SizeMismatch { width, height, expected: usize::MAX });
+    };
+    let mut rgba = RgbaBuffer::zeroed(expected);
+    decoder.decode_into(rgba.as_mut_slice())?;
+    Ok(DecodedImage { width, height, rgba })
 }
 
 /// Whether the EXIF orientation swaps the frame's axes. Values 5..=8 are the rotated/transposed
@@ -262,14 +340,19 @@ pub fn apply_orientation(image: DecodedImage, orientation: u8) -> Result<Decoded
         });
     }
     if out_width == 0 || out_height == 0 {
-        return Ok(DecodedImage { width: u32::try_from(out_width).unwrap_or(0), height: u32::try_from(out_height).unwrap_or(0), rgba: Vec::new() });
+        return Ok(DecodedImage {
+            width: u32::try_from(out_width).unwrap_or(0),
+            height: u32::try_from(out_height).unwrap_or(0),
+            rgba: RgbaBuffer::zeroed(0),
+        });
     }
     let row_bytes = out_width.checked_mul(4).ok_or(DecodeError::OrientationOverflow { width: u32::MAX, height: u32::MAX, orientation })?;
-    let mut out = vec![0u8; expected];
+    let source = rgba.as_slice();
+    let mut out = RgbaBuffer::zeroed(expected);
     // Destination-oriented and row-parallel: each output row writes a contiguous slice, so a
     // portrait 24 MP rotate is memory-bandwidth bound instead of a scalar pointer chase. The
     // inverse of the EXIF transform names the source pixel for each destination pixel.
-    out.par_chunks_mut(row_bytes).enumerate().for_each(|(dy, row)| {
+    out.as_mut_slice().par_chunks_mut(row_bytes).enumerate().for_each(|(dy, row)| {
         for dx in 0..out_width {
             let (sx, sy) = match orientation {
                 2 => (width - 1 - dx, dy),
@@ -281,9 +364,13 @@ pub fn apply_orientation(image: DecodedImage, orientation: u8) -> Result<Decoded
                 8 => (width - 1 - dy, dx),
                 _ => (dx, dy),
             };
-            let Some(source) = sy.checked_mul(width).and_then(|row| row.checked_add(sx)).and_then(|pixel| pixel.checked_mul(4)) else { continue };
+            let Some(source_index) = sy.checked_mul(width).and_then(|row| row.checked_add(sx)).and_then(|pixel| pixel.checked_mul(4)) else {
+                continue;
+            };
             let destination = dx * 4;
-            if let (Some(from), Some(to)) = (rgba.get(source..source.saturating_add(4)), row.get_mut(destination..destination.saturating_add(4))) {
+            if let (Some(from), Some(to)) =
+                (source.get(source_index..source_index.saturating_add(4)), row.get_mut(destination..destination.saturating_add(4)))
+            {
                 to.copy_from_slice(from);
             }
         }

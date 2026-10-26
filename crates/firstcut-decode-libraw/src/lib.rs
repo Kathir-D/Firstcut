@@ -32,7 +32,7 @@ use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::Arc;
 
-use firstcut_decode::{DecodeError, DecodedImage, RawDecode, apply_orientation};
+use firstcut_decode::{DecodeError, DecodedImage, RawDecode, RgbaBuffer, apply_orientation};
 use firstcut_meta::meta::PhotoMeta;
 use rayon::prelude::*;
 
@@ -117,8 +117,8 @@ fn rgba_from_rgb(pixels: &[[f32; 3]], width: usize, height: usize, path: &str) -
     // A 24 MP pack is ~43 ms single-threaded (measured on the M1 Pro); rayon brings it under
     // 10 ms. `chunks_exact_mut` keeps the destination stride checked and the pixel order is
     // the source order, so orientation and colour never see a shuffled frame.
-    let mut rgba = vec![0u8; capacity];
-    rgba.par_chunks_exact_mut(4).zip(pixels.par_iter()).for_each(|(dst, pixel)| {
+    let mut rgba = RgbaBuffer::zeroed(capacity);
+    rgba.as_mut_slice().par_chunks_exact_mut(4).zip(pixels.par_iter()).for_each(|(dst, pixel)| {
         dst.copy_from_slice(&[channel(pixel[0]), channel(pixel[1]), channel(pixel[2]), 255]);
     });
     if rgba.len() != capacity {
@@ -172,15 +172,15 @@ fn develop(bytes: &[u8], path: &str) -> Result<DecodedImage, DecodeError> {
     }
     let capacity =
         pixels.and_then(|count| count.checked_mul(4)).ok_or_else(|| DecodeError::RawLayout { path: path.to_owned(), width, height, colors })?;
-    let mut rgba = Vec::with_capacity(capacity);
+    let mut rgba = RgbaBuffer::zeroed(capacity);
     if colors == 4 {
-        rgba.extend_from_slice(rgb);
+        rgba.as_mut_slice().copy_from_slice(rgb);
     } else {
         // `chunks_exact(3)` cannot yield a short tail; the length check above already proved the
         // buffer is exactly `pixels * 3`.
-        for [r, g, b] in rgb.as_chunks::<3>().0 {
-            rgba.extend_from_slice(&[*r, *g, *b, 255]);
-        }
+        rgba.as_mut_slice().par_chunks_exact_mut(4).zip(rgb.as_chunks::<3>().0.par_iter()).for_each(|(destination, [r, g, b])| {
+            destination.copy_from_slice(&[*r, *g, *b, 255]);
+        });
     }
     if rgba.len() != capacity {
         return Err(DecodeError::RawLayout { path: path.to_owned(), width, height, colors });
