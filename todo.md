@@ -226,7 +226,8 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > **65.1**, **55.1**, **35.9**. The `PRVW` path is **548/441 fps**. Every row is above the
 > 20 fps gate. Exact RAW is unchanged at **0.343–0.346 s warm**. The change is `b90d8b1`.
 > Local `cargo xtask ci --summary-md` and `cargo xtask smoke` are green, and both opt-in
-> real-photo decode tests pass.
+> real-photo decode tests pass. The 3-OS push run `40281056568` is green on `d997ee6`
+> (macOS, Ubuntu and Windows, window smoke included).
 >
 > **Next:** no code is pending for the 20 Hz objective. The remaining display headroom is the
 > ~55 ms full-preview entropy decode: scaled decoders were measured and lose on this machine
