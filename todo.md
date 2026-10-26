@@ -215,9 +215,25 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > texture cache trims at 768 MB. Local `cargo xtask ci --summary-md` and both opt-in real-photo
 > tests are green; the 3-OS push run `40105296572` is green on `10e93bc`.
 >
-> **Next:** no code is pending for this objective. Still open: the owner's Exact RAW decision
-> (accept 0.343 s with progressive display vs fund a native decoder), the optional
-> half-resolution exact prototype, and the existing owner-only merge-gate items in §0.2.
+> **2026-10-26 update — zero-copy display handoff and eight workers.** The decoder now
+> allocates RGBA pixels 4-byte aligned (`RgbaBuffer`, backed by `Vec<u32>`) and decodes
+> straight into that buffer; the app adopts it as egui's `Color32` with
+> `bytemuck::try_cast_vec`, and `load_texture` shares the decoder's `Arc` when the frame fits the
+> device limit. The paint thread no longer pays a measured **4.1 ms conversion + 0.6 ms
+> copy** per 3240×2160 frame. The automatic decode bank is now one worker per available core
+> up to eight (was four). Eight-worker throughput on Game1JENKS: **85.2 fps @2048**,
+> **76.1 @3240 (4K)**, **65.3 @4320 (5K)**, **52.9 @5076 (6K)**; Game3KC: **79.1**,
+> **65.1**, **55.1**, **35.9**. The `PRVW` path is **548/441 fps**. Every row is above the
+> 20 fps gate. Exact RAW is unchanged at **0.343–0.346 s warm**. The change is `b90d8b1`.
+> Local `cargo xtask ci --summary-md` and `cargo xtask smoke` are green, and both opt-in
+> real-photo decode tests pass.
+>
+> **Next:** no code is pending for the 20 Hz objective. The remaining display headroom is the
+> ~55 ms full-preview entropy decode: scaled decoders were measured and lose on this machine
+> (zune has no scale option; `jpeg-decoder` at 1/2 is 54 ms and full is 97 ms; an ImageIO
+> 3240 px thumbnail is 142 ms). The Exact RAW floor is still the ~0.12 s CRX decode; the
+> owner decision (accept 0.343 s with progressive display, fund a native decoder, or redefine
+> the gate) is unchanged, as are the owner-only merge-gate items in §0.2.
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`
 > and the 3-OS matrix green. This session landed M5 and M6 on top of it:
