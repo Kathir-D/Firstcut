@@ -31,3 +31,7 @@ rsraw = "0.1.1"
 # ladder calls.
 [lints.rust]
 unsafe_code = "allow"
+
+[dev-dependencies]
+# The opt-in real-photo test compares the fused develop against rawler's stock pipeline.
+rawler = "0.8"

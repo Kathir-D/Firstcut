@@ -20,7 +20,7 @@ sweep (§4.5) is enforced across the workspace.
   recorder/import/export, recent shoots, live folder watching and sidecar import.
 - Exact RAW sensor develop through rawler on every OS, with LibRaw as the macOS/Linux fallback
   (D11). Progressive display keeps the loupe on the embedded preview until the develop lands
-  (D12); the warm 24 MP develop is 0.343 s on the M1 Pro, first pixels 0.057–0.068 s. A held
+  (D12); the warm 24 MP develop is 0.286 s on the M1 Pro, first pixels 0.057–0.068 s. A held
   arrow key paints the camera's 6–8 ms `PRVW` navigation preview, the sharp display is
   prefetched 32 ahead/12 behind (eight workers measure 85 frames/s at 2048 px and 76
   at the 4K fit, so a 20 Hz hold has 3.8–4.3× headroom), and the exact develop waits for a

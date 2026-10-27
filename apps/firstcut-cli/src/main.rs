@@ -109,10 +109,12 @@ COMMANDS
         Time order() + batch() and compare against the 2 s / 1,500-file target.
 
   bench --folder <dir> [--repeat <n>]
-  bench --decode --folder <dir> [--repeat <n>]
+  bench --decode --folder <dir> [--repeat <n>] [--stages]
         Time the phases that need real files: the header scan, then order() + batch(), then
         the whole thing end to end. Cold and warm are reported separately and scaled to 1,500
-        files against the todo.md §7.3 targets. No metadata fixture is needed.
+        files against the todo.md §7.3 targets. No metadata fixture is needed. `--stages`
+        breaks the Exact RAW develop into rawler's passes (decode, rescale, demosaic, colour,
+        crop, gamma, pack, orientation) so the next optimisation targets the biggest one.
 
   verify <folder> [--quiet] [--previews]
         Scan the folder as the app does and compare every photo's capture time, camera and
@@ -375,6 +377,9 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
     // `--decode` is the §5 pixel rows; `--folder` alone is the scan/db rows.
     if args.iter().any(|a| a == "--decode") {
         let (dir, repeat) = bench_folder_args(args).ok_or("bench --decode needs --folder <dir>")?;
+        if args.iter().any(|a| a == "--stages") {
+            return bench_stages(&dir, repeat);
+        }
         return bench_decode(&dir, repeat);
     }
     // `--folder` times the phases that need real files: the header scan, then order + batch on what
@@ -826,6 +831,71 @@ fn bench_decode(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     println!("whichever decode runs first pays for the read, so the warm row is the comparable one.");
     Ok(())
 }
+
+/// `bench --decode --stages`: the Exact RAW develop broken into rawler's passes.
+///
+/// The §5 row only has three numbers (decode, develop, pack/orientation), and "develop" is four
+/// passes over 24 MP. This prints all eight stages, best of `repeat` rounds, plus each stage's
+/// share of the total, so the next optimisation can be aimed instead of guessed.
+fn bench_stages(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Err(format!("{} is not a folder", dir.display()));
+    }
+    let scan = firstcut_meta::meta::scan_folder(dir).map_err(|e| format!("scan failed: {e}"))?;
+    let raws: Vec<&firstcut_meta::meta::PhotoMeta> =
+        scan.photos.iter().filter(|photo| matches!(photo.kind, firstcut_meta::meta::FileKind::Raw(_))).take(STAGE_SAMPLES).collect();
+    if raws.is_empty() {
+        return Err("no RAW photograph in this folder; --stages needs sensor data".to_string());
+    }
+
+    let mut best: Option<(String, firstcut_decode_libraw::profile::StageTimings)> = None;
+    for photo in &raws {
+        let path = dir.join(&photo.rel_path);
+        // One untimed pass, so the first-touch page faults are not billed to the first stage.
+        let _ = firstcut_decode_libraw::profile::stage_timings(&path, photo).map_err(|err| format!("{}: {err}", photo.rel_path))?;
+        let mut timings: Option<firstcut_decode_libraw::profile::StageTimings> = None;
+        for _ in 0..repeat {
+            let round = firstcut_decode_libraw::profile::stage_timings(&path, photo).map_err(|err| format!("{}: {err}", photo.rel_path))?;
+            timings = Some(match timings {
+                None => round,
+                Some(previous) => previous.min_each(&round),
+            });
+        }
+        if let Some(timings) = timings {
+            // The fastest photograph is the representative one: the rows are a warm best-of, and a
+            // slow outlier (a bigger crop, an unusual layout) would misattribute its cost.
+            let replace = best.as_ref().is_none_or(|(_, incumbent)| timings.measured < incumbent.measured);
+            if replace {
+                best = Some((photo.rel_path.clone(), timings));
+            }
+        }
+    }
+    let Some((photo, timings)) = best else {
+        return Err("--stages measured nothing".to_string());
+    };
+
+    println!("folder: {}", dir.display());
+    println!(
+        "photo:  {photo}   {}×{} ({:.1} MP), {} threads, best of {repeat} round(s)",
+        timings.width, timings.height, timings.megapixels, timings.threads
+    );
+    println!();
+    println!("Exact RAW stages (seconds, share of the sum):");
+    for (name, seconds) in timings.rows() {
+        let share = if timings.sum > 0.0 { seconds / timings.sum * 100.0 } else { 0.0 };
+        println!("  {name:<12} {seconds:>7.4} s  {share:>5.1} %");
+    }
+    println!("  {:<12} {:>7.4} s", "sum", timings.sum);
+    println!("  {:<12} {:>7.4} s  (the real decode_raw call; target ≤ 0.119 s)", "measured", timings.measured);
+    println!("  {:<12} {:>7.4} s  (rawler's CropDefault copy — no longer run; its rectangle is read in place)", "removed", timings.crop);
+    println!();
+    println!("Rows are differences between cumulative `develop_intermediate` runs, so they include the");
+    println!("work the earlier passes must do anyway. `measured` is the number §5 publishes.");
+    Ok(())
+}
+
+/// How many RAW files `--stages` walks; each costs five full develops per round.
+const STAGE_SAMPLES: usize = 2;
 
 /// Eight workers decoding `THROUGHPUT_SAMPLES` display frames at `target_edge`, spread over the
 /// scan so no two workers read the same file at once. Returns frames per second.

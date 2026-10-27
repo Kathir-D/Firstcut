@@ -229,12 +229,27 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > real-photo decode tests pass. The 3-OS push run `40281056568` is green on `d997ee6`
 > (macOS, Ubuntu and Windows, window smoke included).
 >
-> **Next:** no code is pending for the 20 Hz objective. The remaining display headroom is the
-> ~55 ms full-preview entropy decode: scaled decoders were measured and lose on this machine
-> (zune has no scale option; `jpeg-decoder` at 1/2 is 54 ms and full is 97 ms; an ImageIO
-> 3240 px thumbnail is 142 ms). The Exact RAW floor is still the ~0.12 s CRX decode; the
-> owner decision (accept 0.343 s with progressive display, fund a native decoder, or redefine
-> the gate) is unchanged, as are the owner-only merge-gate items in §0.2.
+> **2026-10-27 update — the exact develop tail is one pass, and the stages are measured.**
+> `bench --decode --stages` now breaks the develop into rawler's own passes on one file in one
+> process (`crates/firstcut-decode-libraw/src/profile.rs`). Warm 24 MP CR3, 8 threads, best of
+> three: decode **0.119 s (42 %)**, demosaic **0.099 (35 %)**, rescale 0.007, colour 0.003, and a
+> **fused tail 0.055 (19 %)**. Four passes are gone from the backend: rawler's `CropDefault`
+> 96 MB copy (the rectangle is read in place through `LinearFrame`), its `SRgb` step (44 ms of
+> `powf` per channel, replaced by a 16-bit-indexed table built from rawler's own
+> `srgb_apply_gamma`), the f32→RGBA pack, and the orientation rotate — the last three are now one
+> destination-row-parallel pass, tiled 64×64 for the transposing orientations (a full-height
+> column walk measured 54 ms). Warm Exact RAW is **0.343 s → 0.286 s** on both games, and the
+> opt-in real-photo test asserts the result is within one 8-bit level of rawler's stock pipeline
+> (measured: max 1, 1 % of pixels). Every other §5 row is unchanged (2048 px 84.0 fps, 4K fit
+> 75.2, 6K fit 50.2, arrow → next 0.057 s, navigation preview 0.006 s).
+>
+> **Next:** the 0.119 s gate is now bounded by two passes that are each a multi-day project: the
+> ~0.12 s CRX decode and rawler's ~0.10 s PPG demosaic (its interleaved 288 MB RGB buffer is
+> walked four times). A custom fused demosaic bounded at ~0.05 s and a custom CRX decoder are
+> priced in plan §5; even a demosaic of zero leaves a ~0.19 s floor. The owner decision (accept
+> 0.286 s with progressive display, fund one or both custom passes, or redefine the gate) is
+> unchanged, as are the owner-only merge-gate items in §0.2.
+
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`
 > and the 3-OS matrix green. This session landed M5 and M6 on top of it:

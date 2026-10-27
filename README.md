@@ -52,10 +52,10 @@ you ask for it.
 | Display throughput, 5076 px 6K fit (full preview) | 52.9 frames/s |
 | 1:1 zoom re-decode (embedded full preview) | 0.085 s |
 | Exact RAW, first pixels (display preview) | 0.057–0.068 s |
-| Exact RAW, full sensor develop | 0.343 s (decode 0.12 + develop 0.18 + pack/orientation 0.04) |
+| Exact RAW, full sensor develop | 0.286 s (decode 0.12 + demosaic 0.10 + rescale 0.01 + fused tail 0.06) |
 
-The exact develop is 0.343 s because a 24 MP CRX decode alone is ~0.12 s on this CPU;
-the 0.119 s target is below that floor. A held arrow key is not decode-latency bound: the
+The exact develop is 0.286 s because a 24 MP CRX decode alone is ~0.12 s on this CPU and
+rawler's PPG demosaic another ~0.10 s; the 0.119 s target is below both. A held arrow key is not decode-latency bound: the
 loupe paints the 6–8 ms navigation preview every repeat, the display tier is prefetched
 32 ahead/12 behind (plus batch heads), and eight workers sustain 85.2 frames/s at the
 2048 px baseline (76.1 at the 3240 px 4K fit) against a 20 Hz frame budget, so after a
