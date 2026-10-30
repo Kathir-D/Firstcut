@@ -35,7 +35,9 @@ sweep (§4.5) is enforced across the workspace.
 - Native folder picker via `rfd`, including camera-card roots with multiple rolls asking
   “Choose a Shoot”.
 - `cargo xtask package`: macOS `.app` + zip + cask stamp, Windows zip, Linux AppImage + `.deb`,
-  SHA-256 sidecars, and a tag-driven 3-OS release workflow. Signing is optional.
+  SHA-256 sidecars, and a tag-driven 3-OS release workflow. Signing is optional. The packaged
+  icon is v1's mark, unchanged: `assets/branding/` holds v1's own appiconset exports
+  (including the simplified 16/32 px art) and the `.icns`/`.ico` built from them.
 - `firstcut --control <port>` JSON-lines control channel and `firstcut-cli mcp` over stdio;
   both documented in `docs/control-protocol.md` and `docs/mcp.md`.
 - The Rust core is covered by workspace tests plus opt-in real-photo tests; the 3-OS CI matrix

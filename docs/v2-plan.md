@@ -64,7 +64,9 @@ receives partial v2 state.
 - Ground truth batching data rules (§0.2 of todo.md): the owner's boundary ground truth task
   moves to the v2 checklist (§7) — agents still never synthesise it.
 - App icon: `logo/firstcut-icon.svg` PNG pipeline keeps working; icon paths per-platform in
-  packaging.
+  packaging. The mark is v1's, unchanged: `assets/branding/firstcut-128/256/512/1024.png` are
+  v1's own appiconset exports copied byte-for-byte (so the 16/32 px simplified art is kept), and
+  `firstcut.icns`/`firstcut.ico` are built from those exports.
 
 **Port reality notes, M1 (written with the port commit, not after):**
 - v1's `store/identity.rs` used `libc` `statfs`/`getuid`. The workspace's `unsafe_code = "forbid"` (§4.5)
