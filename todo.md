@@ -269,6 +269,18 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > priced in plan §5. The owner decision (accept 0.257 s with progressive display, fund the custom
 > decoder, or redefine the gate as first-frame latency) is unchanged, as are the owner-only
 > merge-gate items in §0.2.
+>
+> **2026-10-30 update — the cross-OS audit.** The tree at `2ead7d7` is feature-complete against
+> the v1 mirror (rows 1–18 and 20 green with named tests, 21 built, 22 X11 green; PR #6 is a
+> clean draft and the 3-OS matrix is green). Reading the platform seams found one real parity
+> hole and three Windows limits, now recorded in `docs/parity-checklist.md` §Known gaps and plan
+> §4.2: **HEIF/TIFF/PNG are scanned as photographs but have no display decoder** (v1 used
+> ImageIO; todo.md:978 says JPEG/HEIF-only folders must cull like RAW folders), **Finish → Move
+> to Trash fails on Windows** (unix-only `trash_for`; the default `_Not kept` subfolder and
+> permanent delete work), and Windows skips the free-space/cross-volume warnings and volume
+> identity. TIFF/PNG can close with the `image` crate already in the workspace; HEIF needs an
+> owner decision (libheif, per-OS native decoders, or out of scope). Everything else left is
+> §0.2's owner sign-off list, unchanged.
 
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`

@@ -35,6 +35,28 @@ Rows, in §7's order:
 | 21 | Packaging: macOS `.app`/zip/cask, Windows zip, Linux AppImage + `.deb`, SHA-256 | ✔ built / native launch pending | `cargo xtask package` on the 3-OS `v2-release` run 39889169123 wrote `firstcut-0.2.0-dev-macos-arm64.zip` (+ cask), `…-windows-x64.zip`, `…-linux-x64.AppImage`, `…-linux-x64.deb` and their checksums. The macOS artifact was unpacked and smoke-run on this Mac (`--smoke`, exit 0); the Windows/Linux artifacts were built and inspected but not launched from the artifact on their native machines — the CI matrix launches `cargo xtask smoke`, not the packaged binary. Merge-gate item 2 still wants that owner check |
 | 22 | Window opens on macOS, Windows and Linux; Wayland + GL fallback documented | ✔ X11 / Wayland owner check | `cargo xtask smoke` paints five frames and exits 0 on all three matrix OSes; the Linux job wraps it in `xvfb-run` for X11. Wayland is selected by `winit` when `WAYLAND_DISPLAY` is set, and `FIRSTCUT_WGPU_BACKEND=gl` is the old-driver escape hatch, but the headless runner has no DRM device, so a Wayland surface cannot be created there (attempted run 39894441419; plan §6 M5 records why). A real Wayland desktop is an owner check |
 
+## Known gaps (found 2026-10-30, not part of the v1 mirror above)
+
+These are honest limits of the current tree. None of them is a row 1–18 claim, and none is
+silently worked around; each says what would close it.
+
+- **Non-RAW display (HEIF/TIFF/PNG).** The scanner accepts `.heic/.hif/.tif/.png` as
+  photographs (metadata, sidecars, a session row), but `decode_display` only has a source for a
+  RAW's embedded JPEG and for a plain JPEG. A HEIC-only folder opens and paints nothing, while
+  v1 read those files through ImageIO (todo.md:978 requires JPEG/HEIF-only folders to cull like
+  RAW folders). TIFF/PNG can be closed with the `image` crate already in the workspace; HEIF
+  needs an owner decision (libheif, per-OS native decoders, or out of scope). Plan §4.2.
+- **Windows Trash.** `Finish → Move to Trash` fails per file on Windows: `trash_for` is
+  unix-only and returns `Unsupported`, so the report records a failed op and the files stay.
+  The default `_Not kept` subfolder and permanent delete work. Closing it needs a Windows
+  Recycle Bin hand-off (`windows-sys`) and an undo path for the bin's generated name.
+- **Windows free-space / cross-volume warnings.** `free_space` returns `None` and
+  `crosses_volume` returns `false` off unix, so Finish skips its free-space warning. Moves
+  still work: `move_file` handles `CrossesDevices` itself with a verified copy and remove.
+- **Windows volume identity.** `probe_volume` is unix-only, so a session is keyed on
+  `unknown` + path + fingerprint. Two cards with the same path and identical fingerprints
+  could share a session database; different file sets already get different databases.
+
 ## Surfaces (what M1 proved end-to-end)
 
 - **UI**: window opens a real folder, filmstrip, loupe, keys 0–5/arrows/⌘⇧Z; only via
