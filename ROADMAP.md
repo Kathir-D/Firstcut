@@ -15,23 +15,24 @@ Firstcut v2 is the native Rust rewrite. The binding plan is
   roadmap / control protocol / MCP docs, and a refreshed parity checklist.
 - **Held-arrow smoothness (D13)**: a 6–8 ms `PRVW` navigation tier is prefetched around
   the cursor; the sharp display is prefetched 32 ahead/12 behind and eight workers sustain
-  85 frames/s at 2048 px (76 at the 3240 px 4K fit), so a 20 Hz hold shows every
+  89 frames/s at 2048 px (82 at the 3240 px 4K fit), so a 20 Hz hold shows every
   photo immediately and turns sharp after a short lead-in. The display target is fitted to
   the pane, so a 1440×900 1x laptop pane uses the `PRVW` at 1350 px instead of decoding the
-  full preview (548 frames/s), a 4K 3:2 pane asks for 3240 px, and zoom scales the fit
+  full preview (638 frames/s), a 4K 3:2 pane asks for 3240 px, and zoom scales the fit
   rather than jumping to the sensor. The decoded pixels cross to the window without a copy
   (aligned RGBA → `Color32`), and fitted textures share the decode `Arc`. The exact develop
-  reads rawler's crop rectangle in place and fuses the sRGB encode, the pack and the rotate
-  into one pass (0.343 s → 0.286 s warm); it waits for a 250 ms settle.
+  reads rawler's crop rectangle in place, fuses the sRGB encode, the pack and the rotate into
+  one pass, and demosaics with rawler's PPG arithmetic over three planes instead of a 288 MB
+  interleaved buffer (0.343 s → 0.257 s warm); it waits for a 250 ms settle.
 - **Merge gate**: `cargo xtask ci` and the 3-OS matrix green; the owner checks the
   boundary ground truth, the preview-vs-RAW default and the visual pass. Only the owner
   fast-forwards `main`.
 
 ## Next — after the merge
 
-- A fused custom demosaic and a custom CRX decoder, if the exact-RAW floor (CRX decode alone
-  is ~0.12 s and rawler's PPG demosaic ~0.10 s of the current 0.286 s warm develop) is worth
-  multi-day work. Both are priced in the plan's §5.
+- A custom CRX decoder, if the exact-RAW floor (the CRX decode alone is ~0.12 s of the
+  current 0.257 s warm develop, and the fused PPG demosaic ~0.094 s) is worth multi-day work.
+  It is priced in the plan's §5.
 - Installer signing for Windows and notarisation for macOS, when certificates exist.
 - Manual batch split/merge and importable presets (`.xmp`, `.lrtemplate`, `.costyle`).
 - Sparkle-class desktop updates.

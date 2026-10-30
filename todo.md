@@ -4,7 +4,7 @@
 > work needed to ship it. Check items off as they land. When a decision changes, update the
 > **Decisions** table first, then the tasks that depend on it.
 
-**Status (2026-10-24): v2 is feature-complete for the merge gate and green on the 3-OS matrix.**
+**Status (2026-10-30): v2 is feature-complete for the merge gate and green on the 3-OS matrix.**
 The current handoff is [§0.5](#05-handoff-where-the-last-session-stopped); the contract is
 [docs/v2-plan.md](docs/v2-plan.md) and the merge-gate record is
 [docs/parity-checklist.md](docs/parity-checklist.md). Sections below §0.5 are the v1 history that
@@ -243,12 +243,32 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > (measured: max 1, 1 % of pixels). Every other §5 row is unchanged (2048 px 84.0 fps, 4K fit
 > 75.2, 6K fit 50.2, arrow → next 0.057 s, navigation preview 0.006 s).
 >
-> **Next:** the 0.119 s gate is now bounded by two passes that are each a multi-day project: the
-> ~0.12 s CRX decode and rawler's ~0.10 s PPG demosaic (its interleaved 288 MB RGB buffer is
-> walked four times). A custom fused demosaic bounded at ~0.05 s and a custom CRX decoder are
-> priced in plan §5; even a demosaic of zero leaves a ~0.19 s floor. The owner decision (accept
-> 0.286 s with progressive display, fund one or both custom passes, or redefine the gate) is
-> unchanged, as are the owner-only merge-gate items in §0.2.
+> **2026-10-30 update — the fused PPG demosaic, and a cheaper rotate.** The exact develop no
+> longer goes through rawler's 288 MB interleaved RGB buffer. `firstcut-decode-libraw/src/fused.rs`
+> demosaics with rawler's own PPG arithmetic into three planes (green; own colour plus red/blue at
+> the green pixels; the missing channel at red/blue pixels), each a row-parallel sweep that fetches
+> the five rows it reads once and walks its half of the row with a stride of two. `Plan::new`
+> accepts a file only when it has been proven on it and returns `None` otherwise, so a refusal
+> falls back to rawler's pipeline instead of erroring. `apply_orientation` now walks the source
+> affinely per destination row instead of matching per pixel.
+>
+> `bench --decode --stages`, warm 24 MP CR3, 8 threads, best of five: decode **0.120 s (47 %)**,
+> demosaic **0.094 (37 %)**, sRGB+pack **0.024 (9 %)**, orientation **0.015 (6 %)**, rescale
+> 0.004 — sum **0.2566 s**, and the real `decode_raw` call measures **0.2562 s**. Warm Exact RAW
+> is **0.286 s → 0.257 s** on both games (`b18a8a2`, plus `3210758` for the rotate). The fused
+> demosaic is rawler's PPG pixel for pixel (unit tests over all four Bayer orders and an offset
+> active area) and the opt-in real-photo gate still holds at one 8-bit level (max 1, 238 463 of
+> 24 M pixels). Every §5 row was re-measured: 2048 px **89.4 fps**, 1350 PRVW **638**, 4K fit
+> **82.4**, 5K **74.9**, 6K **62.4** on Game1JENKS (Game3KC 87.7/581/82.3/73.6/53.2), arrow →
+> next 0.057/0.068 s, navigation preview 0.006/0.008 s.
+>
+> **Next:** the gate is now bounded by rawler's scalar CRX decode alone — **0.120 s**, the largest
+> single stage — plus a demosaic that is at parity with rawler's algorithm and division-bound
+> (PPG's hue transit does a real division per interpolated pixel, ~36 M of them per 24 MP frame).
+> With the current algorithm the floor is **~0.24 s**; 0.119 s needs a custom CRX decoder, which is
+> priced in plan §5. The owner decision (accept 0.257 s with progressive display, fund the custom
+> decoder, or redefine the gate as first-frame latency) is unchanged, as are the owner-only
+> merge-gate items in §0.2.
 
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`

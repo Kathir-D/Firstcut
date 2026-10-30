@@ -20,14 +20,14 @@ sweep (§4.5) is enforced across the workspace.
   recorder/import/export, recent shoots, live folder watching and sidecar import.
 - Exact RAW sensor develop through rawler on every OS, with LibRaw as the macOS/Linux fallback
   (D11). Progressive display keeps the loupe on the embedded preview until the develop lands
-  (D12); the warm 24 MP develop is 0.286 s on the M1 Pro, first pixels 0.057–0.068 s. A held
+  (D12); the warm 24 MP develop is 0.257 s on the M1 Pro, first pixels 0.057–0.068 s. A held
   arrow key paints the camera's 6–8 ms `PRVW` navigation preview, the sharp display is
-  prefetched 32 ahead/12 behind (eight workers measure 85 frames/s at 2048 px and 76
-  at the 4K fit, so a 20 Hz hold has 3.8–4.3× headroom), and the exact develop waits for a
+  prefetched 32 ahead/12 behind (eight workers measure 89 frames/s at 2048 px and 82
+  at the 4K fit, so a 20 Hz hold has 4.1–4.5× headroom), and the exact develop waits for a
   250 ms settle (D13). Scrolling neither blanks nor starves the visible frame. Display
   decodes are fitted to the pane's physical width×height and read the smallest embedded JPEG
   that covers the target: a 3:2 photo on a 16:9 4K pane is 3240 px (not 3840), a 1440×900 1x
-  laptop pane uses the 1620 px `PRVW` instead of the full entropy decode (548 frames/s
+  laptop pane uses the 1620 px `PRVW` instead of the full entropy decode (638 frames/s
   with eight workers), and a 2× zoom asks for 2700 px rather than the sensor. The decoded
   RGBA buffer is 4-byte aligned and becomes egui's `Color32` without a conversion pass, and
   fitted textures share the decoder's `Arc`; at 3240×2160 that keeps a 4.1 ms conversion

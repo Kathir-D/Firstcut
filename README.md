@@ -45,20 +45,20 @@ you ask for it.
 | First photo after opening a 708-file shoot | 0.24–0.29 s |
 | Held arrow, navigation preview (`PRVW`) | 0.006–0.008 s |
 | Next photo, embedded display preview | 0.057–0.068 s |
-| Display throughput, 2048 px (eight workers) | 85.2 frames/s |
-| Display throughput, 1350 px laptop fit (PRVW path) | 548 frames/s |
-| Display throughput, 3240 px 4K fit (full preview) | 76.1 frames/s |
-| Display throughput, 4320 px 5K fit (full preview) | 65.3 frames/s |
-| Display throughput, 5076 px 6K fit (full preview) | 52.9 frames/s |
-| 1:1 zoom re-decode (embedded full preview) | 0.085 s |
+| Display throughput, 2048 px (eight workers) | 89.4 frames/s |
+| Display throughput, 1350 px laptop fit (PRVW path) | 638 frames/s |
+| Display throughput, 3240 px 4K fit (full preview) | 82.4 frames/s |
+| Display throughput, 4320 px 5K fit (full preview) | 74.9 frames/s |
+| Display throughput, 5076 px 6K fit (full preview) | 62.4 frames/s |
+| 1:1 zoom re-decode (embedded full preview) | 0.068 s |
 | Exact RAW, first pixels (display preview) | 0.057–0.068 s |
-| Exact RAW, full sensor develop | 0.286 s (decode 0.12 + demosaic 0.10 + rescale 0.01 + fused tail 0.06) |
+| Exact RAW, full sensor develop | 0.257 s (decode 0.12 + demosaic 0.094 + pack 0.024 + orientation 0.015) |
 
-The exact develop is 0.286 s because a 24 MP CRX decode alone is ~0.12 s on this CPU and
-rawler's PPG demosaic another ~0.10 s; the 0.119 s target is below both. A held arrow key is not decode-latency bound: the
+The exact develop is 0.257 s because a 24 MP CRX decode alone is ~0.12 s on this CPU and
+PPG demosaic another ~0.094 s; the 0.119 s target is below both. A held arrow key is not decode-latency bound: the
 loupe paints the 6–8 ms navigation preview every repeat, the display tier is prefetched
-32 ahead/12 behind (plus batch heads), and eight workers sustain 85.2 frames/s at the
-2048 px baseline (76.1 at the 3240 px 4K fit) against a 20 Hz frame budget, so after a
+32 ahead/12 behind (plus batch heads), and eight workers sustain 89.4 frames/s at the
+2048 px baseline (82.4 at the 3240 px 4K fit) against a 20 Hz frame budget, so after a
 short lead-in the sharp frame is already waiting. The sensor frame swaps in when the cursor
 rests. The handoff is zero-copy: the decoder allocates its RGBA pixels 4-byte aligned, the
 decode worker adopts them as egui's `Color32` without a per-pixel conversion, and a fitted texture
@@ -68,7 +68,7 @@ of copy off the paint thread per 3240×2160 frame.
 Display work is sized by what the pane can actually show, not by a fixed long edge. A 3:2
 frame on a 16:9 4K pane is 3240 px wide, not 3840, and a 1440×900 1x laptop pane asks for
 1350 px — small enough that the camera's 1620 px `PRVW` already covers it, so the full
-6000×4000 entropy decode is skipped and eight workers measure 548 frames/s. A 2× zoom
+6000×4000 entropy decode is skipped and eight workers measure 638 frames/s. A 2× zoom
 asks for 2700 px, not the whole sensor. The GPU texture cache is capped at 768 MB so a long
 4K hold cannot keep every frame ever shown resident. Details and the owner options are in
 [docs/v2-plan.md](docs/v2-plan.md) §5.1 (decision D13).
