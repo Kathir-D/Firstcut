@@ -349,30 +349,45 @@ pub fn apply_orientation(image: DecodedImage, orientation: u8) -> Result<Decoded
     let row_bytes = out_width.checked_mul(4).ok_or(DecodeError::OrientationOverflow { width: u32::MAX, height: u32::MAX, orientation })?;
     let source = rgba.as_slice();
     let mut out = RgbaBuffer::zeroed(expected);
-    // Destination-oriented and row-parallel: each output row writes a contiguous slice, so a
-    // portrait 24 MP rotate is memory-bandwidth bound instead of a scalar pointer chase. The
-    // inverse of the EXIF transform names the source pixel for each destination pixel.
+    // Every EXIF transform walks the source in a straight line for one destination row:
+    // `source = base + dx * step`. Hoisting that origin and step out of the pixel loop is what
+    // keeps a transposing rotate cheap — the inner loop is one add, one checked 4-byte load and
+    // one 4-byte store, instead of a match plus two checked multiplications per pixel. The
+    // destination is still written a whole contiguous row at a time.
+    let column = width.checked_mul(4).and_then(|bytes| isize::try_from(bytes).ok()).ok_or(DecodeError::OrientationOverflow {
+        width: u32::MAX,
+        height: u32::MAX,
+        orientation,
+    })?;
+    // The step is in bytes: one destination pixel is four of them.
+    let step: isize = match orientation {
+        2 | 3 => -4,
+        5 | 8 => column,
+        6 | 7 => -column,
+        _ => 4,
+    };
+    let last_row = height.saturating_sub(1);
+    let last_col = width.saturating_sub(1);
     out.as_mut_slice().par_chunks_mut(row_bytes).enumerate().for_each(|(dy, row)| {
-        for dx in 0..out_width {
-            let (sx, sy) = match orientation {
-                2 => (width - 1 - dx, dy),
-                3 => (width - 1 - dx, height - 1 - dy),
-                4 => (dx, height - 1 - dy),
-                5 => (dy, dx),
-                6 => (dy, height - 1 - dx),
-                7 => (width - 1 - dy, height - 1 - dx),
-                8 => (width - 1 - dy, dx),
-                _ => (dx, dy),
-            };
-            let Some(source_index) = sy.checked_mul(width).and_then(|row| row.checked_add(sx)).and_then(|pixel| pixel.checked_mul(4)) else {
-                continue;
-            };
-            let destination = dx * 4;
-            if let (Some(from), Some(to)) =
-                (source.get(source_index..source_index.saturating_add(4)), row.get_mut(destination..destination.saturating_add(4)))
-            {
-                to.copy_from_slice(from);
+        // The source pixel under the destination row's first column.
+        let mut index = match orientation {
+            2 => dy.saturating_mul(width).saturating_add(last_col),
+            3 => last_row.saturating_sub(dy).saturating_mul(width).saturating_add(last_col),
+            4 => last_row.saturating_sub(dy).saturating_mul(width),
+            5 => dy,
+            6 => last_row.saturating_mul(width).saturating_add(dy),
+            7 => last_row.saturating_mul(width).saturating_add(last_col.saturating_sub(dy)),
+            8 => last_col.saturating_sub(dy),
+            _ => dy.saturating_mul(width),
+        }
+        .saturating_mul(4);
+        for pixel in row.as_chunks_mut::<4>().0 {
+            // A geometry that walks off the source leaves the pixel zeroed instead of panicking;
+            // the checked dimensions above make that unreachable for a real frame.
+            if let Some(from) = source.get(index..index.saturating_add(4)) {
+                pixel.copy_from_slice(from);
             }
+            index = index.wrapping_add_signed(step);
         }
     });
     Ok(DecodedImage { width: u32::try_from(out_width).unwrap_or(u32::MAX), height: u32::try_from(out_height).unwrap_or(u32::MAX), rgba: out })
