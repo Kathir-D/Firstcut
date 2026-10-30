@@ -28,6 +28,7 @@
 //! orientation. Rotating inside a developer as well would rotate orientations 5–8
 //! twice.
 
+pub mod fused;
 pub mod profile;
 
 use std::panic::AssertUnwindSafe;
@@ -46,6 +47,13 @@ pub fn backend() -> Option<Arc<dyn RawDecode>> {
 }
 
 struct ExactRaw;
+
+/// What the fast developer produced: a finished frame (the fused path), or rawler's intermediate
+/// and the crop rectangle the pack still has to read it through.
+enum Fused {
+    Image(DecodedImage),
+    Rawler(rawler::imgop::develop::Intermediate, Option<rawler::imgop::Rect>),
+}
 
 impl RawDecode for ExactRaw {
     fn decode_raw(&self, path: &Path, meta: &PhotoMeta) -> Result<DecodedImage, DecodeError> {
@@ -70,33 +78,47 @@ impl RawDecode for ExactRaw {
     }
 }
 
-/// rawler's develop pipeline up to (not including) the crop copy, plus the fused encode/pack/rotate.
+/// The exact develop: [`fused::Plan`] when it accepts the file, rawler's own pipeline otherwise.
 ///
-/// Two of rawler's last three passes are deliberately not run:
-///
-/// * `CropDefault` copies the camera's output rectangle out of the demosaiced active area — a
-///   96 MB copy, 22 ms on the M1 Pro. [`LinearFrame`] reads that rectangle in place instead.
-/// * `SRgb` is a `powf` per channel (44 ms). Its curve is baked into the [`srgb_lut`] table the
-///   fused pack uses, so the encode happens during the only pass that writes the frame.
+/// The fused path runs the whole pixel pipeline — PPG demosaic, white balance, camera matrix,
+/// sRGB encode, pack and orientation — as three plane passes and one output pass, instead of
+/// rawler's six passes over a 288 MB interleaved RGB buffer. It declines anything it has not been
+/// proven on (`fused::Plan::new` returns `None`), and then this function runs rawler's pipeline
+/// exactly as before: demosaic, white balance and calibrate, with the crop read in place
+/// ([`LinearFrame`]) and the sRGB encode fused into the pack and the rotate ([`pack_frame`]).
 ///
 /// The returned pixels are display-ready RGBA in **display** orientation: this is the whole
 /// develop, and the trait impl above adds nothing.
 fn develop_fast(path: &Path, orientation: u8) -> Result<DecodedImage, DecodeError> {
     use rawler::imgop::develop::{Intermediate, ProcessingStep::*, RawDevelop};
     let display = path.display().to_string();
-    // Everything through `Calibrate`: linear-light RGB at active-area size, still unrotated.
-    let steps = [Rescale, Demosaic, FujiRotate, CropActiveArea, WhiteBalance, Calibrate];
     // rawler has a `panic!`/`todo!` on malformed layouts. A dependency may not take
     // the process down; the catch turns it into the same typed error as a refusal.
     let developed = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let raw = rawler::decode_file(path).map_err(|error| error.to_string())?;
+        let mut raw = rawler::decode_file(path).map_err(|error| error.to_string())?;
+        // The fused path wants the corrected CFA plane and nothing else, so it scales the decoded
+        // frame in place instead of letting `develop_intermediate` clone it first. Scaling twice
+        // is a no-op (it resets the levels it consumed), so a fused refusal can still fall through
+        // to rawler below with the same buffer.
+        if let Some(plan) = fused::Plan::new(&raw, orientation) {
+            raw.apply_scaling().map_err(|error| error.to_string())?;
+            let plane = raw.data.as_f32();
+            if let Some(image) = plan.develop(&plane) {
+                return Ok::<_, String>(Fused::Image(image));
+            }
+        }
+        let steps = [Rescale, Demosaic, FujiRotate, CropActiveArea, WhiteBalance, Calibrate];
         let intermediate = RawDevelop::new_with(&steps).develop_intermediate(&raw).map_err(|error| error.to_string())?;
-        Ok::<_, String>((intermediate, output_crop(&raw)))
+        Ok::<_, String>(Fused::Rawler(intermediate, output_crop(&raw)))
     }));
-    let (intermediate, crop) = match developed {
+    let developed = match developed {
         Ok(Ok(developed)) => developed,
         Ok(Err(message)) => return Err(DecodeError::Raw { path: display, message }),
         Err(_) => return Err(DecodeError::Raw { path: display, message: "the fast RAW developer panicked".to_string() }),
+    };
+    let (intermediate, crop) = match developed {
+        Fused::Image(image) => return Ok(image),
+        Fused::Rawler(intermediate, crop) => (intermediate, crop),
     };
 
     match intermediate {
@@ -292,7 +314,7 @@ fn pack_frame(frame: LinearFrame<'_>, orientation: u8, path: &str) -> Result<Dec
 }
 
 /// Linear light → 8-bit sRGB, through a table built from rawler's gamma curve.
-fn lut_value(lut: &[u8], value: f32) -> u8 {
+pub(crate) fn lut_value(lut: &[u8], value: f32) -> u8 {
     if !value.is_finite() {
         return 0;
     }
@@ -302,7 +324,7 @@ fn lut_value(lut: &[u8], value: f32) -> u8 {
 }
 
 /// The sRGB encode table, built once per process.
-fn srgb_lut() -> &'static [u8] {
+pub(crate) fn srgb_lut() -> &'static [u8] {
     static LUT: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
     LUT.get_or_init(|| {
         (0..SRGB_LUT_STEPS).map(|step| channel(rawler::imgop::srgb::srgb_apply_gamma(step as f32 / (SRGB_LUT_STEPS - 1) as f32))).collect()

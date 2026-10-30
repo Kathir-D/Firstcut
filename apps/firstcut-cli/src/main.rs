@@ -887,10 +887,10 @@ fn bench_stages(dir: &std::path::Path, repeat: usize) -> Result<(), String> {
     }
     println!("  {:<12} {:>7.4} s", "sum", timings.sum);
     println!("  {:<12} {:>7.4} s  (the real decode_raw call; target ≤ 0.119 s)", "measured", timings.measured);
-    println!("  {:<12} {:>7.4} s  (rawler's CropDefault copy — no longer run; its rectangle is read in place)", "removed", timings.crop);
     println!();
-    println!("Rows are differences between cumulative `develop_intermediate` runs, so they include the");
-    println!("work the earlier passes must do anyway. `measured` is the number §5 publishes.");
+    println!("Pipeline: {} (production's own path; a file it declines reports rawler's passes)", timings.pipeline);
+    println!("Each row is one stage of that pipeline, timed in order on one decoded frame.");
+    println!("`measured` is the number §5 publishes.");
     Ok(())
 }
 
