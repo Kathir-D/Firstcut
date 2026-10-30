@@ -35,7 +35,7 @@ use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::Arc;
 
-use firstcut_decode::{DecodeError, DecodedImage, RawDecode, RgbaBuffer, apply_orientation};
+use firstcut_decode::{DecodeError, DecodedImage, RawDecode, RgbaBuffer};
 use firstcut_meta::meta::PhotoMeta;
 use rayon::prelude::*;
 
@@ -336,7 +336,9 @@ pub(crate) fn srgb_lut() -> &'static [u8] {
 fn develop_libraw(path: &Path, meta: &PhotoMeta) -> Result<DecodedImage, DecodeError> {
     let bytes = std::fs::read(path).map_err(|source| DecodeError::Read { path: path.display().to_string(), source })?;
     let image = develop(&bytes, &path.display().to_string())?;
-    apply_orientation(image, meta.orientation)
+    // Qualified, because this is the only caller on macOS/Linux and Windows compiles this file
+    // without it — an imported name would be unused there and clippy denies warnings.
+    firstcut_decode::apply_orientation(image, meta.orientation)
 }
 
 /// Develops sensor data at full resolution into RGBA8, in the sensor's own orientation.
