@@ -1,0 +1,88 @@
+# v2 parity checklist — the merge gate, mirrored (docs/v2-plan.md §7)
+
+> Status, honest as of 2026-10-22: M4 closed, M5 (cross-platform hardening) and M6 (packaging +
+> docs) landed and green on the 3-OS matrix at `70b3881` (the last code tip). Rows that moved carry their test names. Each row says where
+> its work happens (or landed), and — once a row is true — the named test that proves it.
+> **Struck-through = proven by a named test** (§7's rule); a row without ✔ still needs the
+> work or the owner's eyes. A status number (Mn) is the milestone whose work owns the row:
+> M1 = vertical slice, M2 = pipeline, M3 = screens, M4 = finish flow, M5 = hardening,
+> M6 = packaging + docs, then the merge gate.
+
+Rows, in §7's order:
+
+| # | Row | Status | Evidence / where |
+| --- | --- | --- | --- |
+| 1 | Welcome: recents, resume (auto-recognizes a shoot's folder, restores cursor) | ✔ | `CullScreen::show_welcome` lists up to 8 shoots read from the session databases (`firstcut-catalog/src/recents.rs`: newest first, vanished folders omitted, unreadable databases skipped, no separate recents file — plan §4.4). A row leaves `take_open_request`; the app's async `Session::open_in` restores the cursor (`an_opened_shoot_is_a_recent_and_reopening_it_resumes_the_cursor`). `welcome-recents.png` clicks the row and checks the request |
+| 2 | Open folder: scan + first-photo fast path | ✔ | `engine` session tests (scan/batch/open errors), `firstcut-cli run` chain test (`a_chain_opens_rates_and_reports_state`). The priority window/cancellation shipped in `firstcut-engine::pipeline` (`a_discarded_decode_releases_its_slot`, `a_request_is_not_a_cache_hit_until_pixels_land`, `eviction_never_crosses_tiers_or_the_focus_window`). The fast path is `Model::begin_open` (placeholder header + preview, `Phase::Loading`) with the full scan on the app's thread (`finish_open`); `the_fast_path_shows_one_photo_before_the_scan_installs_the_catalog` proves the handoff |
+| 3 | Loupe: pinch/scroll zoom, click zoom, pan, zoom lock, double-click batch jump | ✔ | `firstcut-ui/src/cull.rs`: scroll zoom 0.2..=12, drag pan, click-to-1:1 anchored on the clicked point (`native_zoom`, `zoom_anchor` tests), double-click jumps a batch in the half clicked (forward/back via `batch.jump`), and a move resets zoom/pan unless zoom lock is on |
+| 4 | AF point overlay; clipping overlay (250/255, 5/255 settings wired) | ✔ | A toggles the AF overlay (starting from the Viewer setting): in-focus points are mapped from sensor space through the same EXIF transform as the decoder (`map_orientation`, `af_points_follow_the_exif_orientation`). J toggles clipping; thresholds come from `Model::viewer_settings`, highlights win over shadows (`clip_marks`), and `culling-clipping.png` paints a white frame entirely marked |
+| 5 | Filmstrip; grid | ✔ | Strip: `culling.png` + `culling-after-rating.png`. Grid: G / Escape between screens, wrapping contact sheet of the **current batch** with name and stars, accent on the cursor, click selects (batch-walk through `registry`), double-click opens the loupe — `culling-grid.png` |
+| 6 | 2/3/4-up compare with synced zoom | ✔ | `CullScreen::compare`: C = 2-up, Option-C = 3-up, Option-Shift-C = 4-up; the window slides with the cursor inside the current batch, one zoom/pan shared by every pane, click selects, double-click returns to the loupe. `culling-compare.png` |
+| 7 | Info panel with histogram (orientation-safe) | ✔ | `firstcut-decode` computes it from the **oriented** frame: `the_histogram_is_computed_from_the_oriented_frame`; the app carries it on `Frame` and `FrameImages.histogram`. The panel (`CullScreen::info_panel`, toggled with I) shows the file name, exposure/camera/lens/dimensions and paints the 64-bin luma area plus RGB traces — `culling-info-panel.png` |
+| 8 | Progress HUD with current rating | ✔ | `firstcut-ui`'s floating HUD (`CullScreen::hud`): batch and photo position, shoot-wide keep/good/maybe/unrated (and rejected when non-zero), and the current photo's rating in the active mode plus flag and label. Toggled with H (view state, like v1's `hudVisible`). `the_hud_counts_from_one_and_words_the_active_mode`, `the_tier_line_shows_rejected_only_when_something_was_rejected`, and both kittest snapshots |
+| 9 | Both rating modes (stars / keep), undo/redo | ✔ | The toolbar's Stars / Keep control dispatches `settings.ratingMode`; P is mode-aware (keep toggle in Keep mode, pick flag in Stars mode), X rejects; `keep.set`/`rate.stars`/undo/redo already went through `registry::dispatch` with engine tests. `culling-keep-mode.png` drives the real toolbar click and P key |
+| 10 | Finish Cull flow: summary → options → dry run → typed DELETE → report → undo | ✔ | `firstcut-engine/src/finish.rs` owns the stage machine and `Model::start_finish`/`confirm_finish`/`show_finish_options`/`run_finish_dry_run`/`execute_finish`/`undo_finish`/`cancel_finish` drive it; the dry run is `Session::plan_finish` (nothing touches the disk), execution is the logged `firstcut_fileops` walk, and the report's Undo reads the session DB. The typed `DELETE` is enforced in the model, not just the button: `a_permanent_delete_needs_the_typed_word_even_through_the_registry`. The sheet (`crates/firstcut-ui/src/finish_sheet.rs`) draws confirm/summary/options/dry run/report/failed and dispatches only `finish.*`; File → Finish Cull… and the toolbar button start it, and `the_finish_sheet_moves_the_shoot_and_undoes_it` walks the real buttons + real files through move → report → undo. `finish-options.png`, `finish-dry-run.png`; `the_finish_sheet_shows_the_typed_gate_for_a_permanent_delete` covers the gate. Finish defaults (not-kept/kept actions + both confirm switches) are Settings → General |
+| 11 | Settings: General, Keyboard (recorder/import/export), Viewer, Metadata, Performance | ✔ | The ⌘, window has all five tabs and applies immediately through the model, persisting one half at a time (`settings.json`, temp file + rename). General covers rating mode, keep threshold, auto-advance, arrow/entering behaviour, Reject Whole Batch and the Finish defaults (not-kept/kept actions, confirm-before-Finish, typed permanent delete); Viewer covers background gray (live), zoom lock, HUD-on-open, AF overlay, both clipping thresholds and the 20 info fields; Metadata persists the sidecar/keep/DNG switches (the two sidecar switches also reach the live session); Performance persists budgets and threads. Keyboard is the recorder: click a chord, press the new one (Escape cancels), and the layered map + `keymap.json` update immediately; Import…/Export…/Reset All round it out. `settings-general.png` / `settings-viewer.png` / `settings-keyboard.png` drive real widgets, and `the_keyboard_tab_records_a_chord_into_the_user_keymap` re-reads the file and proves the new chord routes while the old one no longer does |
+| 12 | Menus + shortcut cheat-sheet generated from the registry | ✔ | `CullScreen::menu_bar` has File / Edit / View / Photo / Help; engine actions go through `registry::dispatch` and view toggles are screen state (plan §4.3). Every menu label asks the keymap for its chord, so a rebinding shows in the menu, the cheat sheet and Settings → Keyboard at once. `shortcut_screen` (?) lists every `REGISTRY` row plus the UI's `VIEW_COMMANDS` with the chords actually bound (`culling-shortcuts.png`), and File → Open Folder… leaves a `take_open_request` for the app's async open (`open-folder-dialog.png`) |
+| 13 | Live folder watching + reconcile; flush on quit | ✔ | `firstcut-engine/src/watch.rs::a_file_landing_in_the_folder_reports_a_change`; `model::a_rescan_keeps_the_cursor_and_bumps_the_catalog_revision`; app `on_exit` calls `Model::close_session` (flush + checkpoint), and `session.rs`'s debounce/flush tests cover the queue |
+| 14 | Rename reconciliation; sidecar import rules | ✔ | The session, not a screen, owns these: `Session::reconcile` + `match_renames` keep a rating when a file is renamed (`a_file_renamed_while_the_app_was_closed_keeps_its_rating`, `a_renamed_file_keeps_its_rating`), and the session DB + sidecar move together (catalog `a_failed_sidecar_move_leaves_the_database_at_its_old_name`). Sidecars are imported on a first open and on every rescan (`import_new_ratings_from_sidecars`), but only fill silence: `a_first_open_imports_the_ratings_already_in_sidecars`, `a_first_open_also_reads_a_darktable_named_sidecar`, `a_sidecar_rated_card_copied_into_an_open_shoot_is_imported`; Firstcut's own rating wins (`a_rating_firstcut_made_is_not_overwritten_by_a_sidecar`), a non-XMP sidecar is never overwritten (`a_sidecar_that_is_not_xmp_is_left_alone`), and a different capture under a known name does not inherit the old rating (`a_different_capture_under_a_known_name_does_not_inherit_its_rating`) |
+| 15 | Reject Whole Batch (opt-in, off by default) | ✔ | Off by default (`GeneralSettings::reject_whole_batch`); the Photo menu item is disabled until it is on and ⇧X is ignored. ⇧X opens a confirmation sheet with the **unrated** count, then dispatches `batch.reject`; v1's T24 rule is ported: only photos whose rating is still neutral get the flag, so a half-culled batch keeps its stars and Good calls (`a_whole_batch_reject_leaves_photos_that_were_already_rated_alone`). `a_whole_batch_reject_is_off_by_default_and_undoes_as_one_step` proves the flag and that one undo takes every frame back, and `reject-batch-dialog.png` drives the key, checks nothing changed before confirming, then confirms through the real button |
+| 16 | Embedded-JPEG fallback for RAW the backend cannot decode | ✔ | `firstcut-decode`'s `decode_display`; a JPEG photo displays from the file itself (`a_jpeg_photo_displays_from_the_file_itself`, `firstcut-meta`) |
+| 17 | Every format raw.pixls.us lists opens (metadata side unchanged; decode per §4.2) | ✔ CR3 corpus sweep / other brands metadata-only | **The M1 showcase defect — sideways loupe — is fixed in the decode seam**: `every_exif_orientation_maps_the_corners_the_way_the_spec_says`, `decode_display_applies_the_exif_orientation_exactly_once`, and both developers (rawler and the LibRaw fallback) produce sensor orientation then call the same seam. The real corpus passes `every_sampled_photo_displays_in_display_orientation` (12 sampled photos) and `a_real_raw_develops_in_sensor_orientation_and_is_rotated_once` (orientation 8 → 4000×6000 portrait). Windows now has a pure-Rust exact path (rawler), closing the M2 LibRaw gap; other brands still have metadata readers but no decode samples in the corpus |
+| 18 | §5 rows measured | ✔ measured / exact-RAW gate over | `firstcut-cli bench --decode --folder <game>`; numbers in `docs/v2-plan.md` §5.1. First photo 0.24–0.29 s ✔, arrow 0.057–0.068 s ✔, **nav preview 0.006–0.008 s** ✔ (inside a 30 Hz key repeat), **display throughput 89.4/87.7 frames/s at 2048 px, 638/581 frames/s at the 1350 px laptop fit (the `PRVW` path), 82.4/82.3 frames/s at the 3240 px 4K 3:2 fit, and 74.9/73.6 and 62.4/53.2 at the 5K/6K fits** with eight workers ✔ (vs 20/s for a 20 Hz hold), zoom decode 0.068 s, **Exact RAW 0.257 s warm vs the 0.119 s gate** (fused plan: decode 0.120 + demosaic 0.094 + pack 0.024 + orientation 0.015 + rescale 0.004; the fused tail took 0.343 → 0.286 and the fused PPG demosaic 0.286 → 0.257). The display target is now fitted to the pane's two axes (`fit_edge`, `the_display_target_fits_the_photo_aspect_into_the_physical_viewport`), the decoder reads the smallest embedded JPEG that covers it (`the_display_target_picks_the_smallest_embedded_jpeg_that_covers_it`), zoom scales the fit rather than jumping to the sensor (`a_zoom_decodes_the_pixels_the_zoom_shows_not_the_whole_sensor`), and the GPU texture cache trims at 768 MB. The display handoff is zero-copy: the RGBA buffer is 4-byte aligned, the decode worker adopts it as `Color32` without a conversion pass, and fitted textures share the decoder's `Arc` (4.1 ms conversion + 0.6 ms copy removed from the paint thread at 3240×2160). The gate is below the ~0.12 s CRX decode floor for 24 MP on this CPU, which is now the largest single stage; progressive display puts first pixels on screen at 0.057–0.068 s and D13 keeps a held arrow key on the 6–8 ms preview while the 32-ahead display prefetch stays ahead. Owner decision recorded in §5.1 |
+| 19 | Owner items (carried from todo §0.2): boundary ground truth, Exact RAW default, Game1JENKS pause decision, sidecar round-trip check, visual sign-off, Homebrew secret, tag v2.0.0 | **owner** | unchanged, do not synthesise; see todo.md |
+| 20 | Error alerts | ✔ | `Model::last_error` renders as a centered alert window in every phase; Dismiss dispatches `error.dismiss` (`the_culling_screen` harness's `an_error_shows_a_dismissible_alert`, snapshot `error-alert.png`). Success clears it in the engine, and the old inline message paths were removed |
+| 21 | Packaging: macOS `.app`/zip/cask, Windows zip, Linux AppImage + `.deb`, SHA-256 | ✔ built / native launch pending | `cargo xtask package` on the 3-OS `v2-release` run 39889169123 wrote `firstcut-0.2.0-dev-macos-arm64.zip` (+ cask), `…-windows-x64.zip`, `…-linux-x64.AppImage`, `…-linux-x64.deb` and their checksums. The macOS artifact was unpacked and smoke-run on this Mac (`--smoke`, exit 0); the Windows/Linux artifacts were built and inspected but not launched from the artifact on their native machines — the CI matrix launches `cargo xtask smoke`, not the packaged binary. Merge-gate item 2 still wants that owner check |
+| 22 | Window opens on macOS, Windows and Linux; Wayland + GL fallback documented | ✔ X11 / Wayland owner check | `cargo xtask smoke` paints five frames and exits 0 on all three matrix OSes; the Linux job wraps it in `xvfb-run` for X11. Wayland is selected by `winit` when `WAYLAND_DISPLAY` is set, and `FIRSTCUT_WGPU_BACKEND=gl` is the old-driver escape hatch, but the headless runner has no DRM device, so a Wayland surface cannot be created there (attempted run 39894441419; plan §6 M5 records why). A real Wayland desktop is an owner check |
+
+## Gaps closed on 2026-10-31 (found 2026-10-30 by the cross-OS audit)
+
+Each was a real limit of the tree, recorded rather than worked around. All four now have code and
+tests; the one remaining dependency is named.
+
+- **Non-RAW display (HEIF/TIFF/PNG)** — `firstcut-decode/src/still.rs`. PNG and TIFF decode
+  in-process with the `image` crate (pure Rust, no new `unsafe`). HEIF is converted by the
+  platform's own tool — `sips` on macOS, WIC through PowerShell on Windows,
+  `heif-convert`/`ffmpeg`/ImageMagick on Linux — and the PNG that comes back is decoded
+  in-process. Orientation is applied exactly once; a converter that bakes it in is detected by
+  the frame's aspect against the stored sensor dimensions. Tests:
+  `png_displays_at_its_own_size_with_the_tag_applied_once`,
+  `tiff_displays_at_its_own_size_with_the_tag_applied_once`,
+  `the_display_path_reaches_stills_that_have_no_embedded_jpeg`,
+  `a_heif_that_no_converter_can_read_names_the_file`.
+  **Remaining limit:** HEIF needs a converter on the machine (built into macOS and Windows
+  10/11; Linux needs one of the three packages above). A HEVC decoder in the binary is the
+  libheif/`unsafe` route the plan's D3 does not allow without the owner.
+- **Windows Trash** — `Finish → Move to Trash` hands the file to the Recycle Bin through the
+  `trash` crate (a safe wrapper over the shell API, so §4.5's no-`unsafe` rule holds). The bin
+  returns no path, so undo reports the file as "in the Recycle Bin: restore it from there"
+  instead of skipping it silently (`a_trash_with_no_destination_undoes_as_a_named_failure`).
+  macOS/Linux keep the named Trash folder, which undo moves back
+  (`trashing_a_file_moves_it_and_undo_brings_it_back`).
+- **Windows free-space / cross-volume warnings** — `free_space` is `fs4::available_space` on
+  every platform (`statvfs` on unix, `GetDiskFreeSpaceExW` on Windows), and `crosses_volume`
+  compares volume serial numbers through `file-id`, so Finish warns before it copies.
+- **Windows volume identity** — `probe_volume` keys on the volume serial number
+  (`volume:…`) plus the canonical volume root, and the scanner records Windows'
+  (volume serial, file index) pair as the (device, inode) identity, so a rename is recognised
+  there as it is on unix.
+
+**Owner check still open:** the Windows paths above compile and pass their portable tests, but a
+native Windows run of Move to Trash and of a HEIF folder has not been done on this Mac — same
+status as the packaged Windows/Linux launches in row 21.
+
+## Surfaces (what M1 proved end-to-end)
+
+- **UI**: window opens a real folder, filmstrip, loupe, keys 0–5/arrows/⌘⇧Z; only via
+  `registry::dispatch` — `apps/firstcut/tests/snapshots/*.png`, `culling_ui.rs`.
+- **CLI**: `firstcut-cli run` chains — `d638cd6`, `run.rs` tests.
+- **Control channel**: `firstcut --control <port>` — `engine.execute`/`engine.state`/
+  `engine.commands`/`ui.widgets`/`ui.clickWidget`/`ui.screenshot`, JSON lines on localhost —
+  live session proved (`27e520b`); protocol documented in `docs/control-protocol.md`.
+- **MCP**: `firstcut-cli mcp` — `tools/list` generated from the registry, `tools/call`
+  dispatches, `isError` on bad params — `34ff0ad`; documented in `docs/mcp.md`.
+- **Headless snapshot**: the kittest PNGs double as the first screenshots; the
+  README image leg (agent-driven showcase scripts) remains an owner-approved shoot.
+
+> Merge gate statement (docs/v2-plan.md §7): the owner strikes through rows 1–18 before
+> fast-forwarding `main`; no row may move to done without a test name or the owner's word.

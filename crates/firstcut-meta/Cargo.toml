@@ -1,0 +1,29 @@
+[package]
+name = "firstcut-meta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[features]
+# Byte-level test builders (`meta::exif::fixtures`) compiled for sibling crates' tests. Off by
+# default, so product builds carry none of it (§9: test scaffolding never rides product code).
+test-fixtures = []
+
+[lints]
+workspace = true
+
+[dependencies]
+firstcut-types = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# The volume serial number + file index, which `std` does not expose. Together they are the
+# Windows equivalent of unix's (device, inode), so a re-scan can still recognise a rename.
+file-id = { workspace = true }

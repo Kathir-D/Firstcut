@@ -1,266 +1,132 @@
 <div align="center">
 
-<img src="logo/icon-512.png" alt="Firstcut app icon" width="128" height="128">
+<img src="assets/branding/firstcut-512.png" alt="Firstcut app icon" width="128" height="128">
 
 # Firstcut
 
-**A hyper-fast, burst-aware photo culler for macOS.**
+**A fast, burst-aware photo culler, native on macOS, Windows and Linux.**
 
-Open a folder of RAW files from a shoot, let Firstcut split it into bursts, and pick your keepers with
-the keyboard — without ever waiting for a photo to load.
+Open one folder, let Firstcut order it into bursts, and cull with the keyboard. The
+pixels you need are already on screen; a full-resolution sensor render follows when
+you ask for it.
 
-![Platform](https://img.shields.io/badge/platform-macOS%2015%2B-black?logo=apple)
-![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-black)
-![Swift](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
-![Rust](https://img.shields.io/badge/Rust-core-000000?logo=rust)
-[![Release](https://img.shields.io/github/v/release/Kathir-D/Firstcut?include_prereleases)](https://github.com/Kathir-D/Firstcut/releases)
+![Platform](https://img.shields.io/badge/platform-macOS%2012%2B%20%7C%20Windows%2010%2B%20%7C%20Linux-black)
+![Rust](https://img.shields.io/badge/Rust-1.99-000000?logo=rust)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
 </div>
 
-> [!NOTE]
-> Firstcut is a first release (v0.1). It is tested on macOS 26 with Canon EOS R8 files; see
-> [Supported formats](#supported-formats) and [Known limitations](#known-limitations) before you
-> trust it with your time that you can never get back :)
-
-## Table of contents
-
-- [Why Firstcut](#why-firstcut)
-- [Features](#features)
-- [How it works](#how-it-works)
-- [Keyboard shortcuts](#keyboard-shortcuts)
-- [Supported formats](#supported-formats)
-- [Installation](#installation)
-- [Known limitations](#known-limitations)
-- [Architecture](#architecture)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
-
-## Why Firstcut
-
-A single football game can produce 1,500 RAW files, most of them bursts of 10–40 frames of the same
-play. Culling that in a general-purpose photo manager means waiting: after a few dozen photos the
-preview stops keeping up, and every frame shows up blurry until it finishes loading.
-
-Firstcut does one job — deciding what to keep — and is built around two ideas:
-
-1. **Never wait.** Every photo you can reach is already decoded and on the GPU before you get there.
-2. **Cull by burst, not by file.** The shoot is split into batches (one burst or moment each), so you
-   compare frames of the same play side by side and pick the sharpest ones.
-
-Firstcut does **not** use AI to rate or reject photos. You make every call; it just gets out of the way.
-
-## Features
-
-- ⚡ **Built not to make you wait** — the photos around the one you're on are decoded ahead of
-  time, in the background, in priority order (the current frame first). The cache grows to a memory
-  budget you set, and shrinks under memory pressure. No lazy loading, no progressive blur.
-- 🎞️ **Automatic burst batching** — built from capture time (to the hundredth of a second), shutter
-  count, lens and exposure data, and a lightweight visual comparison. Works from slow continuous
-  shooting to 40 fps bursts, and ignores file-name rollover (`IMG_9999` → `IMG_0001`).
-- ⭐ **Two rating modes**
-  - **Stars** — 5–4 keep, 3 good, 1–2 maybe; anything unrated is treated as not kept.
-  - **Keep / Not keep** — everything starts as not kept; tap one key to keep a frame. Green and red
-    rings in the filmstrip show your picks at a glance.
-- 🖥️ **Feels like Finder** — large photo with a filmstrip underneath, Liquid Glass toolbar, native
-  macOS look. Always dark, so it doesn't affect how you judge a photo.
-- 🔍 **Focus checking** — pinch to zoom, or click any spot to jump to 100% right there (click again to
-  go back). Zoom lock keeps that spot as you arrow through a burst, and an overlay shows the camera's
-  autofocus point.
-- ℹ️ **Lightroom-style info panel**, histogram, clipping warnings, grid, and 2–4-up compare views.
-- ⌨️ **Lightroom keyboard shortcuts** out of the box, every one remappable.
-- 🔁 **Undo everything and resume anytime** — your progress is saved as you go.
-- 🗑️ **Optional: reject a whole batch at once** — off by default. Turn on *Settings → General →
-  Offer Reject Whole Batch* and `⇧X` flags every frame of a burst that is all bad takes, like
-  erasing a burst group on a Canon camera. It only flags (nothing is deleted before Finish), and one
-  `⌘Z` puts the whole batch back.
-- 🤝 **Plays well with Lightroom and Capture One** — ratings are written to standard `.xmp` sidecars.
-- 🧹 **Finish step** — once every batch is done, choose what happens to the photos you didn't keep:
-  move them to Trash or a subfolder, mark them rejected, copy your keepers somewhere else, and more.
-  Originals are never modified.
-
-## How it works
-
-1. **Open a folder** containing the whole shoot (`⌘O` or drag it onto the window).
-2. Firstcut reads the metadata of every file in parallel and **groups the shoot into batches**.
-3. **Cull batch by batch**: use `←` `→` to move through the frames of a burst, rate with `1`–`5` (or
-   `P` in Keep mode), and move to the next batch with `⌘→` or the toolbar buttons.
-4. When you're done, **Finish Cull** (`⌘↩`) shows a summary and asks what to do with the photos you
-   didn't keep.
-
-## Keyboard shortcuts
-
-Defaults match Lightroom Classic. All of them can be changed in **Settings → Keyboard**. Zooming
-uses the mouse or trackpad instead of a key: pinch, or click a spot to view it at 100%.
-
-| Action | Shortcut |
-| --- | --- |
-| Previous / next photo | `←` / `→` |
-| Previous / next batch | `⌘←` / `⌘→` |
-| Rate 1–5 stars / clear | `1`–`5` / `0` |
-| Keep (Keep mode) · Pick flag | `P` |
-| Reject / unflag | `X` / `U` |
-| Reject whole batch (opt-in, off by default) | `⇧X` |
-| Color labels | `6` `7` `8` `9` |
-| Info panel | `I` |
-| Grid / Loupe / Compare | `G` / `E` / `C` |
-| Auto-advance | `Caps Lock` |
-| Undo / redo | `⌘Z` / `⇧⌘Z` |
-| Finish Cull | `⌘↩` |
-
-## Supported formats
-
-Canon is the first priority. Firstcut reads the capture time, camera, lens, exposure settings and
-orientation of every format below, opens JPEG/HEIC/PNG/TIFF folders exactly like RAW folders, and
-**never skips a photo macOS can open**: a file whose metadata cannot be read still appears in the
-filmstrip, ordered by its file date, with a warning.
-
-| Brand | Formats | Metadata reader |
-| --- | --- | --- |
-| Canon | `.CR3` (including C-RAW) | Full: EXIF, MakerNote, shutter count, autofocus points. Verified against `exiftool` on 2,880 files |
-| Canon | `.CR2` | EXIF, plus the MakerNote (drive mode, autofocus points) |
-| Canon | `.CRW` | Capture time, camera, size and focal length from the CIFF directory; embedded JPEG |
-| Nikon | `.NEF`, `.NRW` | EXIF, plus shutter count where the camera stores it in the clear |
-| Sony · Panasonic · Olympus · Pentax · Leica · Hasselblad · Phase One · Samsung · Kodak and others | `.ARW` `.SR2` `.SRF` · `.RW2` · `.ORF` · `.PEF` `.DNG` · `.RWL` · `.3FR` `.FFF` · `.IIQ` · `.SRW` · `.DCR` `.KDC` `.ERF` `.MEF` `.MOS` `.GPR` | EXIF (TIFF-based files) |
-| Fujifilm | `.RAF` | EXIF from the embedded JPEG |
-| Minolta | `.MRW` | EXIF from the TIFF block |
-| Sigma | `.X3F` | File date only; embedded preview |
-| Older and rarer RAWs | `.ORI` `.ARQ` `.CAP` `.BAY` `.K25` `.KC2` `.DCS` `.MDC` `.ARI` `.CS1` `.STI` `.RAW` | EXIF where the file is TIFF-based, otherwise the file date |
-| Non-RAW | `.JPG`, `.HEIC`, `.HIF`, `.TIFF`, `.PNG` | EXIF |
-
-Displaying a photo goes through macOS itself (ImageIO), so anything Preview can open, Firstcut can
-show. When macOS can't decode a RAW (Phase One IIQ, Leaf MOS, Sigma X3F, Canon CRW, some older
-Olympus, Kodak and Samsung files), Firstcut shows the full JPEG the camera stored inside it instead.
-RAW + JPEG/HEIF pairs are treated as a single photo.
-
-Every format listed on [raw.pixls.us](https://raw.pixls.us) is opened. On one sample per camera
-family, `firstcut verify` (which compares the metadata reader with `exiftool`) agrees on 98 of 105
-files.
-
-> [!WARNING]
-> Firstcut has **only been tested with Canon cameras** (CR3, including C-RAW). Every other reader is
-> written from the published format specifications and checked against hand-built test files, but
-> not against real files from those cameras. If something doesn't look right with yours, please
-> [open an issue](https://github.com/Kathir-D/Firstcut/issues) with the camera model and format.
-
-## Installation
-
 > [!IMPORTANT]
-> Requires a Mac with Apple Silicon running macOS 15 Sequoia or later. Intel Macs are not supported.
-> Liquid Glass styling needs macOS 26 Tahoe or later; macOS 15 gets the closest native equivalent.
-> Firstcut is only tested on macOS 26 and later; macOS 15 support is best effort.
+> v2 is the pure-Rust rewrite. It lives on the `v2` branch and in
+> [draft PR #6](https://github.com/Kathir-D/Firstcut/pull/6); `main` still carries v1.
+> The merge gate is in [docs/v2-plan.md](docs/v2-plan.md) §7 and its status is tracked in
+> [docs/parity-checklist.md](docs/parity-checklist.md).
 
-### Homebrew (recommended)
+## What works
+
+| Area | Status |
+| --- | --- |
+| Open a shoot, scan it, split it into bursts | Works; boundary ground truth is still an owner check |
+| Loupe, grid, 2/3/4-up compare, synced zoom | Works |
+| AF points, clipping overlays, histogram, info panel | Works; thresholds come from Settings |
+| Stars and Keep modes, undo/redo, Reject Whole Batch (opt-in) | Works; Reject Whole Batch only flags unrated frames |
+| Finish Cull: summary → options → dry run → typed `DELETE` → report → undo | Works |
+| Settings, keymap recorder/import/export, recent shoots, live folder watching | Works |
+| Embedded-JPEG display path | Works on every OS |
+| Exact RAW sensor develop | rawler on all three OSes; LibRaw fallback on macOS/Linux |
+| CLI (`run`, `bench`, `verify`, `mcp`) and the control channel | Works; see [docs/control-protocol.md](docs/control-protocol.md) and [docs/mcp.md](docs/mcp.md) |
+| Packaging: macOS `.app`/zip + cask, Windows zip, Linux AppImage + `.deb` | `cargo xtask package`; signing is optional |
+| Owner sign-off: batching ground truth, preview-vs-RAW default, visual pass | Pending |
+
+## Performance (measured, Apple M1 Pro)
+
+| Path | Measured |
+| --- | --- |
+| First photo after opening a 708-file shoot | 0.24–0.29 s |
+| Held arrow, navigation preview (`PRVW`) | 0.006–0.008 s |
+| Next photo, embedded display preview | 0.057–0.068 s |
+| Display throughput, 2048 px (eight workers) | 89.4 frames/s |
+| Display throughput, 1350 px laptop fit (PRVW path) | 638 frames/s |
+| Display throughput, 3240 px 4K fit (full preview) | 82.4 frames/s |
+| Display throughput, 4320 px 5K fit (full preview) | 74.9 frames/s |
+| Display throughput, 5076 px 6K fit (full preview) | 62.4 frames/s |
+| 1:1 zoom re-decode (embedded full preview) | 0.068 s |
+| Exact RAW, first pixels (display preview) | 0.057–0.068 s |
+| Exact RAW, full sensor develop | 0.257 s (decode 0.12 + demosaic 0.094 + pack 0.024 + orientation 0.015) |
+
+The exact develop is 0.257 s because a 24 MP CRX decode alone is ~0.12 s on this CPU and
+PPG demosaic another ~0.094 s; the 0.119 s target is below both. A held arrow key is not decode-latency bound: the
+loupe paints the 6–8 ms navigation preview every repeat, the display tier is prefetched
+32 ahead/12 behind (plus batch heads), and eight workers sustain 89.4 frames/s at the
+2048 px baseline (82.4 at the 3240 px 4K fit) against a 20 Hz frame budget, so after a
+short lead-in the sharp frame is already waiting. The sensor frame swaps in when the cursor
+rests. The handoff is zero-copy: the decoder allocates its RGBA pixels 4-byte aligned, the
+decode worker adopts them as egui's `Color32` without a per-pixel conversion, and a fitted texture
+shares the decoder's `Arc` rather than cloning it — keeping 4.1 ms of conversion and 0.6 ms
+of copy off the paint thread per 3240×2160 frame.
+
+Display work is sized by what the pane can actually show, not by a fixed long edge. A 3:2
+frame on a 16:9 4K pane is 3240 px wide, not 3840, and a 1440×900 1x laptop pane asks for
+1350 px — small enough that the camera's 1620 px `PRVW` already covers it, so the full
+6000×4000 entropy decode is skipped and eight workers measure 638 frames/s. A 2× zoom
+asks for 2700 px, not the whole sensor. The GPU texture cache is capped at 768 MB so a long
+4K hold cannot keep every frame ever shown resident. Details and the owner options are in
+[docs/v2-plan.md](docs/v2-plan.md) §5.1 (decision D13).
+
+## Build and run
+
+The toolchain is pinned by `rust-toolchain.toml` (Rust 1.99.0).
 
 ```sh
-brew tap Kathir-D/tap
-brew trust Kathir-D/tap
-brew install --cask firstcut
+cargo run -p firstcut                 # the desktop app
+cargo run -p firstcut -- --smoke      # paint a few frames and exit
+cargo run -p firstcut-cli -- --help   # CLI
+cargo test --workspace                # tests (photos are opt-in, see below)
+cargo xtask ci                        # the full local gate
 ```
 
-Installs to `/Applications/Firstcut.app` and updates with `brew upgrade --cask firstcut`. **No
-Gatekeeper approval needed** — see the note below.
+Platform prerequisites:
 
-`brew trust` is required: Homebrew 7 refuses to load casks from an untrusted tap.
+- **macOS**: Xcode Command Line Tools. LibRaw is vendored and built by `rsraw`.
+- **Windows**: Rust's MSVC toolchain and the Visual Studio C++ build tools. The exact
+  RAW path is pure Rust (rawler), so a Windows build has no LibRaw dependency.
+- **Linux**: a Vulkan driver (or run with `FIRSTCUT_WGPU_BACKEND=gl`), plus
+  `libxkbcommon`, `libwayland-client`, `libgl` and `libvulkan` for a packaged build.
 
-> **Why a personal tap?** Homebrew's official cask repository only accepts apps that pass Gatekeeper.
-> Firstcut is ad-hoc signed and not notarized (the project has no paid Apple Developer account), so
-> it's distributed through its own tap instead. The cask clears the quarantine attribute after
-> Homebrew has verified the download's SHA-256, so the app opens without a prompt.
-
-### Direct download
+Real-photo tests are opt-in and never enter CI:
 
 ```sh
-curl -fLO https://github.com/Kathir-D/Firstcut/releases/download/v0.1.0/Firstcut-0.1.0.zip
-unzip Firstcut-0.1.0.zip
-sudo mv Firstcut.app /Applications/
-open /Applications/Firstcut.app
+FIRSTCUT_TEST_PHOTOS=$HOME/Documents/testing FIRSTCUT_ALLOW_PHOTO_TESTS=1 \
+  cargo test --workspace -- --include-ignored
 ```
 
-`curl` doesn't set the quarantine attribute, so this usually opens without a prompt. If macOS does
-ask, approve it once in **System Settings › Privacy & Security › Open Anyway**. A download through a
-browser always needs that step.
-
-### Build from source
-
-**Requirements:** Xcode 26 or later, Rust (stable, via [rustup](https://rustup.rs)),
-[XcodeGen](https://github.com/yonaskolb/XcodeGen).
+## Packaging
 
 ```sh
-git clone https://github.com/Kathir-D/Firstcut.git
-cd Firstcut
-scripts/build-app.sh
-open dist/Firstcut.app
+cargo xtask package
 ```
 
-`scripts/build-app.sh` builds the Rust core, generates the Xcode project, builds Release, ad-hoc signs
-the app, and leaves it at `dist/Firstcut.app`. To work in Xcode instead:
+This builds the release app for the host OS and writes the installer plus a `.sha256`
+sidecar to `target/package`. See [packaging/README.md](packaging/README.md) for the
+artifact names, the Linux glibc floor and the optional signing variables.
 
-```sh
-brew install xcodegen
-scripts/build-core.sh     # Rust core + Swift bindings
-xcodegen                  # generates Firstcut.xcodeproj
-open Firstcut.xcodeproj   # run the Firstcut scheme
-```
+## Keyboard
 
-Run the Rust tests with `cargo test --manifest-path core/Cargo.toml` (they also run on Linux) and the
-Swift tests with `scripts/generate-project.sh` followed by `xcodebuild -project Firstcut.xcodeproj
--scheme Firstcut -destination 'platform=macOS,arch=arm64' test`. Tests that need real photos
-look in `FIRSTCUT_TEST_PHOTOS` (default `~/Documents/testing`) and skip themselves if it's missing.
+The shipped map and every cheat-sheet row are generated from
+`crates/firstcut-engine/resources/DefaultKeymap.json`; Settings → Keyboard records a new
+chord and writes `keymap.json`. The common ones: arrows move, `0`–`5` rate, `P` picks,
+`X` rejects, `G` grid, `C` compare, `Z` toggles zoom, `H` HUD, `I` info, `J` clipping,
+`⌘,` Settings, `⌘↩` Finish.
 
-## Architecture
+## Documentation
 
-| Layer | Technology | Responsibility |
-| --- | --- | --- |
-| Interface | SwiftUI + AppKit | Window, toolbar, viewer, filmstrip, settings, Liquid Glass |
-| Image pipeline | ImageIO, Core Image, Metal | Preview and RAW decoding, tiered cache, GPU display |
-| Core | Rust (via UniFFI) | Metadata parsing, ordering, batching, SQLite session, XMP sidecars, file operations |
-
-Details, performance targets, and design decisions are in [`todo.md`](todo.md).
-
-## Known limitations
-
-Firstcut v0.1 is deliberately small, and honest about what it hasn't proven yet.
-
-- **Batching accuracy is not independently measured.** The burst-splitting rules were tuned on four
-  Canon R8 football shoots (2,880 photos) and are covered by tests on their metadata, but they have
-  not been scored against a hand-checked answer key, so no accuracy percentage is claimed. Batches
-  are automatic: there is no manual split or merge.
-- **Speed is not benchmarked on a range of machines.** The design keeps the photos you can reach
-  already decoded; the timings in [`todo.md`](todo.md) are targets, not measurements.
-- **macOS 26 (Tahoe) is the tested system.** macOS 15 gets the closest native styling and should
-  work, but hasn't been run.
-- **Apple Silicon only**, and the app is ad-hoc signed rather than notarized (there is no paid Apple
-  Developer account), so a browser download needs a one-time approval; Homebrew and `curl` don't.
-- **RAWs macOS can't decode and that have no JPEG inside** (very old Kodak, Leaf, Sinar, ARRI
-  files) show a placeholder. Canon CR3 burst "roll" files, which hold several frames in one file,
-  show as one photo.
-- **No "exact RAW" decode.** Photos are shown from the full-size JPEG the camera embeds in every RAW.
-  That is the same image the camera showed you, at full resolution, not a fresh RAW render.
-- **English only, one folder per session, no editing** — by design for v0.1 (see [`todo.md`](todo.md); manual batch split/merge and preset-based batch edits are planned for later, §16).
-
-## Roadmap
-
-- [x] Rust core: metadata reading, ordering, burst batching, session database, XMP sidecars
-- [x] Prefetching image pipeline (the photos around the current one decoded ahead of time)
-- [x] Finder-style interface with both rating modes
-- [x] Pinch and click zoom, zoom lock, autofocus overlay, clipping warnings, info panel, grid, compare
-- [x] Finish Cull with dry run and undo, and a Settings window with a shortcut editor
-- [x] Metadata for JPEG, HEIF, PNG, TIFF and the TIFF-based RAW formats
-- [x] v0.1.0 on GitHub Releases and Homebrew
-- [ ] Batching accuracy measured against a hand-checked answer key
-- [ ] Verification on real Sony, Nikon, Fujifilm and other cameras
-- [ ] Sparkle in-app updates
-
-## Contributing
-
-Issues and pull requests are welcome. Before starting on something big, please open an issue to
-discuss it. Keep changes focused, run `cargo fmt`, `cargo clippy`, and the test suites before
-submitting, and never commit photos — test images stay outside the repository.
+- [docs/v2-plan.md](docs/v2-plan.md) — the contract: architecture, decisions, milestones, gates
+- [docs/parity-checklist.md](docs/parity-checklist.md) — the merge gate, row by row
+- [docs/control-protocol.md](docs/control-protocol.md) — drive the real window over localhost
+- [docs/mcp.md](docs/mcp.md) — the command registry as MCP tools
+- [packaging/README.md](packaging/README.md) — artifacts, checksums, signing
+- [assets/ATTRIBUTION.md](assets/ATTRIBUTION.md) — fonts and icons
 
 ## License
 
-Firstcut is free software released under the [GNU General Public License v3.0](LICENSE). You can
-use, study, change, and share it. If you distribute a modified version, you must release its source
-code under the same license.
+GPL-3.0-only. Third-party notices live with the assets and in the packaged `LICENSE.txt`.

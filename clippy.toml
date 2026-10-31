@@ -1,0 +1,7 @@
+# Lint softening: tests are allowed the panic paths product code must never take
+# (§4.5 "never crash outranks feature work" is a product-code rule).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+msrv = "1.99"

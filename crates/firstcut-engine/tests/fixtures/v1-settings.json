@@ -1,0 +1,71 @@
+{
+  "general" : {
+    "arrowBehaviorAtBatchEnd" : "continueIntoNextBatch",
+    "autoAdvance" : true,
+    "confirmBeforeFinish" : true,
+    "confirmPermanentDelete" : true,
+    "enteringBatchBehavior" : "firstPhoto",
+    "finishKept" : {
+      "none" : {
+
+      }
+    },
+    "finishUnkept" : {
+      "moveToSubfolder" : {
+        "_0" : "_Not kept"
+      }
+    },
+    "keepThreshold" : 4,
+    "ratingMode" : "keep",
+    "rejectWholeBatch" : true
+  },
+  "metadata" : {
+    "keepMapping" : {
+      "stars" : 5,
+      "type" : "rating"
+    },
+    "writeRatingsIntoDng" : false,
+    "writeSidecarsForJpegs" : true,
+    "writeXmp" : true,
+    "xmpWriteMode" : "merge"
+  },
+  "performance" : {
+    "debugHUD" : false,
+    "decodeThreads" : 0,
+    "lookAheadBatches" : 2,
+    "memoryBudgetFraction" : 0.4,
+    "thumbnailPixels" : 256
+  },
+  "version" : 1,
+  "viewer" : {
+    "afOverlay" : false,
+    "backgroundGray" : 0.12,
+    "clippingHighlightThreshold" : 1,
+    "clippingShadowThreshold" : 0.0275,
+    "exactRaw" : true,
+    "hudVisible" : true,
+    "infoFields" : [
+      "iso",
+      "exposureCompensation",
+      "lens",
+      "shutterCount",
+      "dimensions",
+      "shutterMode",
+      "metering",
+      "fileSize",
+      "batch",
+      "shutter",
+      "folderPath",
+      "focalLength",
+      "aperture",
+      "fileName",
+      "captureTime",
+      "rating",
+      "driveMode",
+      "histogram",
+      "afMode",
+      "camera"
+    ],
+    "zoomLock" : false
+  }
+}
