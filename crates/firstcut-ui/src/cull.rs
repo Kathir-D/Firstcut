@@ -52,14 +52,19 @@ enum ScreenView {
     Compare(usize),
 }
 
+/// A GPU texture is identified by the photo **and its pixel size**. The strip's thumbnail and the
+/// loupe's display bitmap of one photo are different images; keying the cache on the photo alone
+/// let the second upload free the first, so the strip's cell for the current photo painted a
+/// texture that no longer existed (a blank cell). The size in the key also rebuilds the texture
+/// when a zoomed re-decode changes the pixels.
+type TextureKey = (u64, [usize; 2]);
+
 pub struct CullScreen {
-    /// Decoded pixels → GPU textures, keyed by photo id, so an unchanged frame reuses them all.
-    /// The pixel size is kept beside the handle: zooming asks the decode pipeline for a bigger
-    /// copy of the same photo, and a size change must rebuild the texture.
-    textures: HashMap<u64, (usize, usize, TextureHandle)>,
+    /// Decoded pixels → GPU textures, keyed by [`TextureKey`], so an unchanged frame reuses one.
+    textures: HashMap<TextureKey, TextureHandle>,
     /// Access order for `textures`; the front is the oldest. Kept in step with every paint so
     /// the budget trims photos the user has actually left, never the pane in front of them.
-    texture_order: VecDeque<u64>,
+    texture_order: VecDeque<TextureKey>,
     /// The loupe's zoom, relative to the fit-to-pane size (1.0 = the whole photo shown).
     zoom: f32,
     /// The loupe's pan while zoomed in; the pane centres the photo at rest.
@@ -204,7 +209,7 @@ impl CullScreen {
         }
         // Photos that left the shoot no longer need their GPU memory; a rescan can drop hundreds.
         let known: Vec<u64> = model.photos().iter().map(|photo| photo.meta.id.0).collect();
-        self.textures.retain(|id, _| known.contains(id));
+        self.textures.retain(|(id, _), _| known.contains(id));
         let live = &self.textures;
         self.texture_order.retain(|id| live.contains_key(id));
 
@@ -262,12 +267,12 @@ impl CullScreen {
     /// order and survive; a screen with more than the whole budget of visible pixels (four 6K
     /// panes) still paints because the cap is far above that case.
     fn trim_textures(&mut self) {
-        let bytes = |width: usize, height: usize| width.saturating_mul(height).saturating_mul(4);
-        let mut total: usize = self.textures.values().map(|(width, height, _)| bytes(*width, *height)).sum();
+        let bytes = |key: TextureKey| key.1[0].saturating_mul(key.1[1]).saturating_mul(4);
+        let mut total: usize = self.textures.keys().copied().map(bytes).sum();
         while total > TEXTURE_BUDGET {
-            let Some(id) = self.texture_order.pop_front() else { break };
-            if let Some((width, height, _)) = self.textures.remove(&id) {
-                total = total.saturating_sub(bytes(width, height));
+            let Some(key) = self.texture_order.pop_front() else { break };
+            if self.textures.remove(&key).is_some() {
+                total = total.saturating_sub(bytes(key));
             }
         }
     }
@@ -788,7 +793,7 @@ impl CullScreen {
                     .or_else(|| images.current.filter(|(id, _)| id.0 == pane.id).map(|(_, pixels)| pixels))
                     .or_else(|| images.thumbs.get(&pane.id));
                 if let Some(pixels) = pixels {
-                    touch_texture(&mut self.texture_order, pane.id);
+                    touch_texture(&mut self.texture_order, (pane.id, pixels.size));
                     let texture = load_texture(&mut self.textures, panel.ctx(), pane.id, pixels);
                     let image_size = vec2(pixels.width() as f32, pixels.height() as f32);
                     let fit = fit_into(rect.size() - vec2(0.0, 22.0), image_size);
@@ -858,7 +863,7 @@ impl CullScreen {
         let current_id = model.current_photo_id().map(|id| id.0);
         for cell in &cells {
             if let Some(pixels) = images.thumbs.get(&cell.id) {
-                touch_texture(&mut self.texture_order, cell.id);
+                touch_texture(&mut self.texture_order, (cell.id, pixels.size));
                 load_texture(&mut self.textures, ui.ctx(), cell.id, pixels);
             }
         }
@@ -1016,7 +1021,7 @@ impl CullScreen {
         // Textures staged first: the paint pass never mutates the screen.
         for thumb in &thumbs {
             if let Some(pixels) = images.thumbs.get(&thumb.id) {
-                touch_texture(&mut self.texture_order, thumb.id);
+                touch_texture(&mut self.texture_order, (thumb.id, pixels.size));
                 load_texture(&mut self.textures, ui.ctx(), thumb.id, pixels);
             }
         }
@@ -1075,7 +1080,7 @@ impl CullScreen {
                 self.last_photo = Some(id.0);
             }
 
-            touch_texture(&mut self.texture_order, id.0);
+            touch_texture(&mut self.texture_order, (id.0, pixels.size));
             let texture = load_texture(&mut self.textures, panel.ctx(), id.0, pixels);
             let image_size = vec2(pixels.width() as f32, pixels.height() as f32);
             let fit = fit_into(available.size(), image_size);
@@ -1532,11 +1537,12 @@ fn paint_grid_cell(
     sheet: &mut egui::Ui,
     cell: &Thumb,
     images: &FrameImages<'_>,
-    textures: &HashMap<u64, (usize, usize, TextureHandle)>,
+    textures: &HashMap<TextureKey, TextureHandle>,
     current_id: Option<u64>,
 ) -> egui::Response {
     let selected = current_id == Some(cell.id);
-    let button = match images.thumbs.get(&cell.id).and_then(|_| textures.get(&cell.id)).map(|(_, _, handle)| handle) {
+    let texture = images.thumbs.get(&cell.id).and_then(|pixels| textures.get(&(cell.id, pixels.size)));
+    let button = match texture {
         Some(texture) => {
             let image = Image::new(texture).fit_to_exact_size(vec2(GRID_WIDTH - 10.0, GRID_WIDTH * 2.0 / 3.0));
             let mut button = egui::Button::image(image);
@@ -1563,12 +1569,13 @@ fn paint_thumb(
     row: &mut egui::Ui,
     thumb: &Thumb,
     images: &FrameImages<'_>,
-    textures: &HashMap<u64, (usize, usize, TextureHandle)>,
+    textures: &HashMap<TextureKey, TextureHandle>,
     current_id: Option<u64>,
 ) -> bool {
     let selected = current_id == Some(thumb.id);
     row.vertical(|card| {
-        let button = match images.thumbs.get(&thumb.id).and_then(|_| textures.get(&thumb.id)).map(|(_, _, handle)| handle) {
+        let texture = images.thumbs.get(&thumb.id).and_then(|pixels| textures.get(&(thumb.id, pixels.size)));
+        let button = match texture {
             Some(texture) => {
                 let image = Image::new(texture).fit_to_exact_size(vec2(THUMB_WIDTH - 12.0, THUMB_IMAGE_HEIGHT));
                 let mut button = egui::Button::image(image);
@@ -1589,13 +1596,13 @@ fn paint_thumb(
     .inner
 }
 
-/// Moves `id` to the back of the paint order, creating no duplicate. The order is short (one
+/// Moves `key` to the back of the paint order, creating no duplicate. The order is short (one
 /// entry per texture) so the linear search is cheaper than a second map.
-fn touch_texture(order: &mut VecDeque<u64>, id: u64) {
-    if let Some(index) = order.iter().position(|candidate| *candidate == id) {
+fn touch_texture(order: &mut VecDeque<TextureKey>, key: TextureKey) {
+    if let Some(index) = order.iter().position(|candidate| *candidate == key) {
         order.remove(index);
     }
-    order.push_back(id);
+    order.push_back(key);
 }
 
 /// GPU texture for one photo's pixels, decoded once and cached until the photo is gone.
@@ -1606,24 +1613,17 @@ fn touch_texture(order: &mut VecDeque<u64>, id: u64) {
 /// every sampled pixel's colour and costs nothing next to the decode; M2's decode tiers
 /// deliver properly-sized previews and this becomes a safety net rather than the rule.
 fn load_texture<'a>(
-    textures: &'a mut HashMap<u64, (usize, usize, TextureHandle)>,
+    textures: &'a mut HashMap<TextureKey, TextureHandle>,
     ctx: &egui::Context,
     id: u64,
     pixels: &Arc<egui::ColorImage>,
 ) -> &'a TextureHandle {
-    let size = (pixels.size[0], pixels.size[1]);
-    // A zoomed re-decode changes the pixel dimensions under the same photo id; egui textures are
-    // fixed-size, so the old handle is dropped and a fresh upload replaces it.
-    let stale = textures.get(&id).is_some_and(|(width, height, _)| (*width, *height) != size);
-    if stale {
-        textures.remove(&id);
-    }
-    let entry = textures.entry(id).or_insert_with(|| {
-        let name = format!("photo-{id}");
+    let key = (id, pixels.size);
+    textures.entry(key).or_insert_with(|| {
+        let name = format!("photo-{id}-{}x{}", key.1[0], key.1[1]);
         let max_side = ctx.input(|input| input.max_texture_side);
-        (size.0, size.1, ctx.load_texture(name, texture_pixels(pixels, max_side), egui::TextureOptions::LINEAR))
-    });
-    &entry.2
+        ctx.load_texture(name, texture_pixels(pixels, max_side), egui::TextureOptions::LINEAR)
+    })
 }
 
 /// The pixels egui uploads. A frame that already fits the device limit shares the decoder's
@@ -1789,13 +1789,14 @@ mod tests {
 
     #[test]
     fn touching_a_texture_moves_it_to_the_back_without_duplicates() {
-        let mut order = VecDeque::from([1, 2, 3]);
-        touch_texture(&mut order, 2);
-        assert_eq!(order, VecDeque::from([1, 3, 2]));
-        touch_texture(&mut order, 4);
-        assert_eq!(order, VecDeque::from([1, 3, 2, 4]));
-        touch_texture(&mut order, 1);
-        assert_eq!(order, VecDeque::from([3, 2, 4, 1]));
+        let key = |id: u64| (id, [10, 10]);
+        let mut order = VecDeque::from([key(1), key(2), key(3)]);
+        touch_texture(&mut order, key(2));
+        assert_eq!(order, VecDeque::from([key(1), key(3), key(2)]));
+        touch_texture(&mut order, key(4));
+        assert_eq!(order, VecDeque::from([key(1), key(3), key(2), key(4)]));
+        touch_texture(&mut order, key(1));
+        assert_eq!(order, VecDeque::from([key(3), key(2), key(4), key(1)]));
     }
 
     /// The real-photo crash the M1 showcase run caught: a 6000×4000 preview went to
@@ -1910,5 +1911,25 @@ mod tests {
         let fitted = fit_to_max_side(&tall, 2048);
         assert!(fitted.size[0] <= 2048 && fitted.size[1] <= 2048);
         assert_eq!(fitted.size, [1, 2048]);
+    }
+
+    /// The regression behind the blank filmstrip cell: the strip uploads a photo's thumbnail and
+    /// the loupe uploads the same photo's display bitmap in the same frame. Keyed on the photo
+    /// alone, the second upload replaced the first and the cell painted a freed texture.
+    #[test]
+    fn one_photo_at_two_sizes_keeps_two_textures() {
+        let ctx = egui::Context::default();
+        let mut textures: HashMap<TextureKey, TextureHandle> = HashMap::new();
+        let thumb = Arc::new(egui::ColorImage::new([100, 60], vec![egui::Color32::BLACK; 100 * 60]));
+        let display = Arc::new(egui::ColorImage::new([1000, 600], vec![egui::Color32::WHITE; 1000 * 600]));
+
+        let thumb_id = load_texture(&mut textures, &ctx, 7, &thumb).id();
+        let display_id = load_texture(&mut textures, &ctx, 7, &display).id();
+        assert_eq!(textures.len(), 2, "one photo, two sizes, two textures");
+        assert_ne!(thumb_id, display_id, "the loupe's upload must not take the strip's texture away");
+
+        // The same size again is a cache hit, not a third upload.
+        assert_eq!(load_texture(&mut textures, &ctx, 7, &thumb).id(), thumb_id);
+        assert_eq!(textures.len(), 2);
     }
 }
