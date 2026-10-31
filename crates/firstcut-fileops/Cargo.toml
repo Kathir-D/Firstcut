@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 firstcut-types = { workspace = true }
 firstcut-xmp = { workspace = true }
+# Bytes available on the destination volume, the same question on every platform.
+fs4 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -19,3 +21,9 @@ tempfile = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 # unix-only volume facts; nix does not build for windows targets
 nix = { version = "0.30", default-features = false, features = ["fs", "user"] }
+
+[target.'cfg(windows)'.dependencies]
+# Move to Trash on Windows means the Recycle Bin, and its COM/shell hand-off needs `unsafe`.
+trash = { workspace = true }
+# The volume serial number, Windows' equivalent of a unix device id.
+file-id = { workspace = true }

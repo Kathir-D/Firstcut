@@ -753,16 +753,26 @@ fn collect(dir: &Path, dir_rel: &str, walk: &mut Walk) -> Result<(), ScanError> 
             continue;
         };
         // The stat identity (device + inode) is how a re-scan recognises that a file is the same
-        // physical file (photo-meta.md). Windows offers no equivalent in `std`, so there it
-        // records the honest "unknown" zeros and reconcile falls back to the fingerprint rules
-        // (the same degradation `firstcut-catalog::identity` already documents).
+        // physical file (photo-meta.md). Windows has the same pair behind
+        // `GetFileInformationByHandle`; `file-id` reads it safely, so both platforms record a real
+        // identity instead of Windows recording the "unknown" zeros.
         #[cfg(unix)]
         let (device, ino) = {
             use std::os::unix::fs::MetadataExt;
             (metadata.dev() as i64, metadata.ino() as i64)
         };
-        #[cfg(not(unix))]
-        let (device, ino) = (0, 0);
+        #[cfg(windows)]
+        let (device, ino) = match file_id::get_file_id(&path) {
+            Ok(file_id::FileId::LowRes { volume_serial_number, file_index }) => {
+                (i64::from(volume_serial_number), i64::try_from(file_index).unwrap_or(0))
+            }
+            Ok(file_id::FileId::HighRes { volume_serial_number, file_id }) => {
+                (i64::try_from(volume_serial_number).unwrap_or(0), i64::try_from(file_id).unwrap_or(0))
+            }
+            // A file that vanished between `read_dir` and the handle open, or a file system
+            // without ids: the zeros the session already treats as "unknown".
+            _ => (0, 0),
+        };
         walk.candidates.push(Candidate { rel_path: rel, path, kind, size: metadata.len(), mtime_ms: mtime_ms_of(&metadata), device, ino });
     }
     Ok(())

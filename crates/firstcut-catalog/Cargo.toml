@@ -20,3 +20,7 @@ tempfile = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 # unix-only volume facts; nix does not build for windows targets
 nix = { version = "0.30", default-features = false, features = ["fs", "user"] }
+
+[target.'cfg(windows)'.dependencies]
+# The volume serial number is the identity a session can be keyed on when there is no UUID.
+file-id = { workspace = true }

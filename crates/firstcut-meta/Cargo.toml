@@ -22,3 +22,8 @@ serde = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# The volume serial number + file index, which `std` does not expose. Together they are the
+# Windows equivalent of unix's (device, inode), so a re-scan can still recognise a rename.
+file-id = { workspace = true }

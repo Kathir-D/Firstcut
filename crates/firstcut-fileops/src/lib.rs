@@ -650,24 +650,11 @@ fn check_free_space(sampled: &[PathBuf], bytes: u64, warnings: &mut Vec<String>)
 }
 
 /// Bytes available to this user on the volume holding `path`, or `None` if it cannot be read.
-#[cfg(unix)]
+///
+/// `fs4` asks the OS the same question on every platform (`statvfs` on unix,
+/// `GetDiskFreeSpaceExW` on Windows), so the Finish space warning is not a unix-only feature.
 pub fn free_space(path: &Path) -> Option<u64> {
-    let stats = nix::sys::statvfs::statvfs(path).ok()?;
-    // `f_bavail` × `f_frsize`: blocks an unprivileged user may still write, bytes per block.
-    // nix hands `f_bavail` back as u64 only on some platforms (a narrower word on macOS), so
-    // the conversion is useless there and required here — allow, narrowed to this line.
-    #[allow(clippy::useless_conversion)]
-    let blocks = u64::from(stats.blocks_available());
-    let block_size = stats.fragment_size();
-    Some(blocks.saturating_mul(block_size))
-}
-
-/// `None` here reads as "cannot be checked", and the plan then skips the space warning rather than
-/// failing; until M5 brings a real implementation this is the honest answer on Windows too.
-#[cfg(not(unix))]
-pub fn free_space(path: &Path) -> Option<u64> {
-    let _ = path;
-    None
+    fs4::available_space(path).ok()
 }
 
 /// `1.4 GB`, for warnings the user has to read at a glance.
@@ -817,7 +804,7 @@ fn execute_op(op: &FileOp, kept_names: &[String]) -> ExecutedOp {
         FileOpKind::MarkRejected | FileOpKind::WriteList => unreachable!("handled above"),
         FileOpKind::Move => transfer(op, &source, Move::Rename),
         FileOpKind::Copy => transfer(op, &source, Move::Copy),
-        FileOpKind::Trash => trash(op, &source, trash_for(&source)),
+        FileOpKind::Trash => trash(op, &source, trash_target(&source)),
         FileOpKind::Delete => match std::fs::remove_file(&source) {
             Ok(()) => ExecutedOp { kind: op.kind.clone(), src: op.from.clone(), dst: None, size_bytes: size, status: "done", error: None },
             Err(error) => ExecutedOp::failure(op, error.to_string()),
@@ -872,17 +859,23 @@ fn transfer(op: &FileOp, source: &Path, how: Move) -> ExecutedOp {
 }
 
 /// Moves a file into the Trash so Finder can recover it (todo.md §9.7: "Trash is recoverable via
-/// Finder").
+/// Finder"), or hands it to the Recycle Bin on Windows.
 ///
 /// The plan carries no destination for a trash op: which Trash, and which free name in it, can only
-/// be decided now. The name actually used is what the log records, so undo finds the file.
-fn trash(op: &FileOp, source: &Path, trash: std::io::Result<PathBuf>) -> ExecutedOp {
+/// be decided now. The name actually used is what the log records, so undo finds the file. A
+/// Recycle Bin move has no such name; the op is `done` with no destination, and undo says the file
+/// is in the bin rather than pretending to restore it.
+fn trash(op: &FileOp, source: &Path, target: std::io::Result<TrashTarget>) -> ExecutedOp {
     let size = std::fs::metadata(source).map(|meta| meta.len()).unwrap_or(0);
-    match trash.and_then(|trash| trash_into(source, &trash)) {
-        Ok(target) => ExecutedOp {
+    let result = target.and_then(|target| match target {
+        TrashTarget::Folder(folder) => trash_into(source, &folder).map(Some),
+        TrashTarget::RecycleBin => recycle(source).map(|()| None),
+    });
+    match result {
+        Ok(dst) => ExecutedOp {
             kind: op.kind.clone(),
             src: op.from.clone(),
-            dst: Some(target.to_string_lossy().into_owned()),
+            dst: dst.map(|path| path.to_string_lossy().into_owned()),
             size_bytes: size,
             status: "done",
             error: None,
@@ -998,32 +991,68 @@ fn trash_for(source: &Path) -> std::io::Result<PathBuf> {
     Ok(if created.is_ok() { mine } else { home_trash })
 }
 
-/// No Trash hand-off off unix yet (M5): the op fails through its normal error channel instead of
-/// crashing or pretending to move the file.
-#[cfg(not(unix))]
-fn trash_for(source: &Path) -> std::io::Result<PathBuf> {
+/// Where a trash op will put the file. A Trash folder we can name is preferred: the log records
+/// the destination, so undo can move the file back. Windows has no Trash folder — it has the
+/// Recycle Bin, which hands back no path — and there the file is recoverable from the bin itself.
+enum TrashTarget {
+    /// A Trash folder Firstcut named; the log records where the file went.
+    // Windows always uses the Recycle Bin; the tests use this on every platform.
+    #[cfg_attr(windows, allow(dead_code))]
+    Folder(PathBuf),
+    /// The OS's own bin, which hands back no path.
+    #[cfg_attr(unix, allow(dead_code))]
+    RecycleBin,
+}
+
+#[cfg(unix)]
+fn trash_target(source: &Path) -> std::io::Result<TrashTarget> {
+    trash_for(source).map(TrashTarget::Folder)
+}
+
+#[cfg(windows)]
+fn trash_target(_source: &Path) -> std::io::Result<TrashTarget> {
+    Ok(TrashTarget::RecycleBin)
+}
+
+/// Hands `source` to the OS's own bin. Only Windows reaches here.
+#[cfg(windows)]
+fn recycle(source: &Path) -> std::io::Result<()> {
+    trash::delete(source).map_err(|error| std::io::Error::other(error.to_string()))
+}
+
+#[cfg(unix)]
+fn recycle(source: &Path) -> std::io::Result<()> {
     let _ = source;
-    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "the Trash is not implemented for this OS yet (M5)"))
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "this platform trashes through a Trash folder"))
 }
 
 /// True when `destination` (which may not exist yet) is on a different volume from `folder`, so
 /// moving there copies the bytes.
-#[cfg(unix)]
 fn crosses_volume(folder: &Path, destination: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    let device = |path: &Path| path.ancestors().find_map(|ancestor| std::fs::metadata(ancestor).ok()).map(|meta| meta.dev());
-    match (device(folder), device(destination)) {
+    match (volume_id(folder), volume_id(destination)) {
         (Some(a), Some(b)) => a != b,
         _ => false,
     }
 }
 
-/// Answering "unknown" (`false`) on Windows means `move_file` may fall back to the EXDEV copy path
-/// itself; the real check is M5 work with the Windows storage APIs.
-#[cfg(not(unix))]
-fn crosses_volume(folder: &Path, destination: &Path) -> bool {
-    let _ = (folder, destination);
-    false
+/// The identity of the volume holding `path`, from the nearest ancestor that exists (a
+/// destination folder is usually created after the plan is made).
+#[cfg(unix)]
+fn volume_id(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    path.ancestors().find_map(|ancestor| std::fs::metadata(ancestor).ok()).map(|meta| meta.dev())
+}
+
+/// Windows' volume serial number is the equivalent of a unix device id; `file-id` reads it through
+/// a safe wrapper around `GetFileInformationByHandle`.
+#[cfg(windows)]
+fn volume_id(path: &Path) -> Option<u64> {
+    let probe = path.ancestors().find(|ancestor| ancestor.exists())?;
+    match file_id::get_file_id(probe) {
+        Ok(file_id::FileId::LowRes { volume_serial_number, .. }) => Some(u64::from(volume_serial_number)),
+        Ok(file_id::FileId::HighRes { volume_serial_number, .. }) => Some(volume_serial_number),
+        _ => None,
+    }
 }
 
 /// The mount point of the file system `path` is on: the highest ancestor on the same device.
@@ -1113,17 +1142,30 @@ fn write_list(op: &FileOp, kept_names: &[String]) -> ExecutedOp {
 
 /// Walks a run backwards, putting every file back where it came from.
 ///
-/// Only the operations that actually happened are reversed, and only those with somewhere to go:
-/// a copy is undone by deleting the copy, a move by moving the file back. A permanent delete cannot
-/// be reversed, and the caller is told so by `summary.undoable` *before* asking, which is why
-/// [`FinishPlan::is_undoable`] and the UI both check it first.
+/// Only the operations that actually happened are reversed. A copy is undone by deleting the copy,
+/// a move by moving the file back. A permanent delete cannot be reversed, and the caller is told so
+/// by `summary.undoable` *before* asking, which is why [`FinishPlan::is_undoable`] and the UI both
+/// check it first. A file handed to the Windows Recycle Bin has no path to move back, so its undo
+/// comes back failed with the bin named, never as a silent success.
 pub fn undo_ops(executed: &[ExecutedOp]) -> Vec<ExecutedOp> {
     executed
         .iter()
         .rev()
-        .filter(|op| op.is_done() && op.kind.is_undoable() && op.dst.is_some())
+        .filter(|op| op.is_done() && op.kind.is_undoable())
         .map(|op| {
-            let target = PathBuf::from(op.dst.as_deref().unwrap_or_default());
+            let Some(dst) = op.dst.as_deref() else {
+                // A Windows trash leaves the file in the Recycle Bin, which hands back no path:
+                // Firstcut cannot move it back, and says so instead of skipping it silently.
+                return ExecutedOp {
+                    kind: op.kind.clone(),
+                    src: op.src.clone(),
+                    dst: None,
+                    size_bytes: op.size_bytes,
+                    status: "failed",
+                    error: Some("it is in the Recycle Bin: restore it from there".to_string()),
+                };
+            };
+            let target = PathBuf::from(dst);
             let source = PathBuf::from(&op.src);
             let undone = match op.kind {
                 // Something new at the original path (a re-import, a file the user made) is never
@@ -1935,7 +1977,7 @@ mod tests {
         fs::write(trash_folder.path().join("IMG_0001.CR3"), b"older").unwrap();
         let op = FileOp::new(FileOpKind::Trash, source.to_string_lossy(), None);
 
-        let done = trash(&op, &source, Ok(trash_folder.path().to_path_buf()));
+        let done = trash(&op, &source, Ok(TrashTarget::Folder(trash_folder.path().to_path_buf())));
         assert!(done.is_done(), "{:?}", done.error);
         assert!(!source.exists());
         let landed = trash_folder.path().join("IMG_0001-2.CR3");
@@ -1946,6 +1988,16 @@ mod tests {
         let undone = undo_ops(&[done]);
         assert_eq!(undone[0].status, "done", "{:?}", undone[0].error);
         assert_eq!(fs::read(&source).unwrap(), b"raw");
+    }
+
+    #[test]
+    fn a_trash_with_no_destination_undoes_as_a_named_failure() {
+        // What Windows produces: the Recycle Bin keeps the file but hands back no path.
+        let done = ExecutedOp { kind: FileOpKind::Trash, src: "IMG_0001.CR3".to_string(), dst: None, size_bytes: 12, status: "done", error: None };
+        let undone = undo_ops(&[done]);
+        assert_eq!(undone.len(), 1, "the file is reported, not silently skipped");
+        assert_eq!(undone[0].status, "failed");
+        assert!(undone[0].error.as_deref().unwrap_or_default().contains("Recycle Bin"), "{:?}", undone[0].error);
     }
 
     #[test]

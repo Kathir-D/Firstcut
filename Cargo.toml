@@ -38,6 +38,13 @@ rfd = "0.17"
 rusqlite = { version = "0.38", features = ["bundled"] }
 notify = "8"
 log = "0.4"
+# Cross-platform file-system facts (free space) and file identity (device+inode on unix, volume
+# serial + file index on Windows). Both are safe APIs over the OS calls `std` does not expose.
+fs4 = "1"
+file-id = "0.2"
+# The Windows Recycle Bin. The shell hand-off needs `unsafe` FFI, which §4.5 forbids in our
+# crates; this crate wraps it behind a safe API and is used on Windows only.
+trash = { version = "5", default-features = false, features = ["coinit_apartmentthreaded"] }
 
 # decode fast path (§4.2): embedded JPEG
 zune-jpeg = { version = "0.5", default-features = false, features = ["std", "x86", "neon"] }

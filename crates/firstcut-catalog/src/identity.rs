@@ -89,8 +89,24 @@ pub fn volume_identity(path: &Path) -> VolumeIdentity {
     identity
 }
 
+#[cfg(unix)]
 fn probe_volume(path: &Path) -> VolumeIdentity {
     probe_volume_unix(path)
+}
+
+/// Windows has no `statfs` and no UUID from `diskutil`, but every file handle carries the volume
+/// serial number — the same fact `statfs`'s fsid gives on unix. It is read through `file-id`
+/// (safe wrapper around `GetFileInformationByHandle`), so a session is still keyed on the volume
+/// rather than on the string "unknown".
+#[cfg(windows)]
+fn probe_volume(path: &Path) -> VolumeIdentity {
+    let mount_point = mount_point_of(path);
+    let fsid = match file_id::get_file_id(path) {
+        Ok(file_id::FileId::LowRes { volume_serial_number, .. }) => Some(format!("volume:{volume_serial_number:08x}")),
+        Ok(file_id::FileId::HighRes { volume_serial_number, .. }) => Some(format!("volume:{volume_serial_number:016x}")),
+        _ => None,
+    };
+    VolumeIdentity { uuid: None, fsid, mount_point }
 }
 
 #[cfg(unix)]
@@ -106,14 +122,6 @@ fn probe_volume_unix(path: &Path) -> VolumeIdentity {
     let fsid = statvfs(path).ok().map(|stats| format!("{:016x}", u64::from(stats.filesystem_id())));
 
     VolumeIdentity { uuid: mount_point.as_deref().and_then(volume_uuid), fsid, mount_point }
-}
-
-/// No `statfs` off unix; until M5 fills this in, the identity claims nothing and a moved folder
-/// on Windows re-matches by path + fingerprint hashes the way the NoHomeDir path already does.
-#[cfg(not(unix))]
-fn probe_volume_unix(path: &Path) -> VolumeIdentity {
-    let _ = path;
-    VolumeIdentity::default()
 }
 
 /// The mount point of the file system `path` is on: the highest ancestor on the same device.
@@ -132,6 +140,22 @@ fn mount_point_of(path: &Path) -> Option<PathBuf> {
         }
     }
     Some(root)
+}
+
+/// Windows spells the mount point as the path prefix plus its root: `\\?\C:\` for a drive,
+/// `\\?\UNC\server\share\` for a network share. It is what `canonicalize` already produced, so
+/// no extra call is needed.
+#[cfg(windows)]
+fn mount_point_of(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let path = std::fs::canonicalize(path).ok()?;
+    let mut components = path.components();
+    let prefix = components.next()?;
+    let root = components.next()?;
+    if !matches!(prefix, Component::Prefix(_)) || !matches!(root, Component::RootDir) {
+        return None;
+    }
+    Some(PathBuf::from(prefix.as_os_str()).join(root.as_os_str()))
 }
 
 /// `diskutil info -plist <mount point>` → `VolumeUUID`.
