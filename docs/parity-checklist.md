@@ -35,27 +35,41 @@ Rows, in §7's order:
 | 21 | Packaging: macOS `.app`/zip/cask, Windows zip, Linux AppImage + `.deb`, SHA-256 | ✔ built / native launch pending | `cargo xtask package` on the 3-OS `v2-release` run 39889169123 wrote `firstcut-0.2.0-dev-macos-arm64.zip` (+ cask), `…-windows-x64.zip`, `…-linux-x64.AppImage`, `…-linux-x64.deb` and their checksums. The macOS artifact was unpacked and smoke-run on this Mac (`--smoke`, exit 0); the Windows/Linux artifacts were built and inspected but not launched from the artifact on their native machines — the CI matrix launches `cargo xtask smoke`, not the packaged binary. Merge-gate item 2 still wants that owner check |
 | 22 | Window opens on macOS, Windows and Linux; Wayland + GL fallback documented | ✔ X11 / Wayland owner check | `cargo xtask smoke` paints five frames and exits 0 on all three matrix OSes; the Linux job wraps it in `xvfb-run` for X11. Wayland is selected by `winit` when `WAYLAND_DISPLAY` is set, and `FIRSTCUT_WGPU_BACKEND=gl` is the old-driver escape hatch, but the headless runner has no DRM device, so a Wayland surface cannot be created there (attempted run 39894441419; plan §6 M5 records why). A real Wayland desktop is an owner check |
 
-## Known gaps (found 2026-10-30, not part of the v1 mirror above)
+## Gaps closed on 2026-10-31 (found 2026-10-30 by the cross-OS audit)
 
-These are honest limits of the current tree. None of them is a row 1–18 claim, and none is
-silently worked around; each says what would close it.
+Each was a real limit of the tree, recorded rather than worked around. All four now have code and
+tests; the one remaining dependency is named.
 
-- **Non-RAW display (HEIF/TIFF/PNG).** The scanner accepts `.heic/.hif/.tif/.png` as
-  photographs (metadata, sidecars, a session row), but `decode_display` only has a source for a
-  RAW's embedded JPEG and for a plain JPEG. A HEIC-only folder opens and paints nothing, while
-  v1 read those files through ImageIO (todo.md:978 requires JPEG/HEIF-only folders to cull like
-  RAW folders). TIFF/PNG can be closed with the `image` crate already in the workspace; HEIF
-  needs an owner decision (libheif, per-OS native decoders, or out of scope). Plan §4.2.
-- **Windows Trash.** `Finish → Move to Trash` fails per file on Windows: `trash_for` is
-  unix-only and returns `Unsupported`, so the report records a failed op and the files stay.
-  The default `_Not kept` subfolder and permanent delete work. Closing it needs a Windows
-  Recycle Bin hand-off (`windows-sys`) and an undo path for the bin's generated name.
-- **Windows free-space / cross-volume warnings.** `free_space` returns `None` and
-  `crosses_volume` returns `false` off unix, so Finish skips its free-space warning. Moves
-  still work: `move_file` handles `CrossesDevices` itself with a verified copy and remove.
-- **Windows volume identity.** `probe_volume` is unix-only, so a session is keyed on
-  `unknown` + path + fingerprint. Two cards with the same path and identical fingerprints
-  could share a session database; different file sets already get different databases.
+- **Non-RAW display (HEIF/TIFF/PNG)** — `firstcut-decode/src/still.rs`. PNG and TIFF decode
+  in-process with the `image` crate (pure Rust, no new `unsafe`). HEIF is converted by the
+  platform's own tool — `sips` on macOS, WIC through PowerShell on Windows,
+  `heif-convert`/`ffmpeg`/ImageMagick on Linux — and the PNG that comes back is decoded
+  in-process. Orientation is applied exactly once; a converter that bakes it in is detected by
+  the frame's aspect against the stored sensor dimensions. Tests:
+  `png_displays_at_its_own_size_with_the_tag_applied_once`,
+  `tiff_displays_at_its_own_size_with_the_tag_applied_once`,
+  `the_display_path_reaches_stills_that_have_no_embedded_jpeg`,
+  `a_heif_that_no_converter_can_read_names_the_file`.
+  **Remaining limit:** HEIF needs a converter on the machine (built into macOS and Windows
+  10/11; Linux needs one of the three packages above). A HEVC decoder in the binary is the
+  libheif/`unsafe` route the plan's D3 does not allow without the owner.
+- **Windows Trash** — `Finish → Move to Trash` hands the file to the Recycle Bin through the
+  `trash` crate (a safe wrapper over the shell API, so §4.5's no-`unsafe` rule holds). The bin
+  returns no path, so undo reports the file as "in the Recycle Bin: restore it from there"
+  instead of skipping it silently (`a_trash_with_no_destination_undoes_as_a_named_failure`).
+  macOS/Linux keep the named Trash folder, which undo moves back
+  (`trashing_a_file_moves_it_and_undo_brings_it_back`).
+- **Windows free-space / cross-volume warnings** — `free_space` is `fs4::available_space` on
+  every platform (`statvfs` on unix, `GetDiskFreeSpaceExW` on Windows), and `crosses_volume`
+  compares volume serial numbers through `file-id`, so Finish warns before it copies.
+- **Windows volume identity** — `probe_volume` keys on the volume serial number
+  (`volume:…`) plus the canonical volume root, and the scanner records Windows'
+  (volume serial, file index) pair as the (device, inode) identity, so a rename is recognised
+  there as it is on unix.
+
+**Owner check still open:** the Windows paths above compile and pass their portable tests, but a
+native Windows run of Move to Trash and of a HEIF folder has not been done on this Mac — same
+status as the packaged Windows/Linux launches in row 21.
 
 ## Surfaces (what M1 proved end-to-end)
 

@@ -281,6 +281,37 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > identity. TIFF/PNG can close with the `image` crate already in the workspace; HEIF needs an
 > owner decision (libheif, per-OS native decoders, or out of scope). Everything else left is
 > §0.2's owner sign-off list, unchanged.
+>
+> **2026-10-31 update — the four audit gaps are closed, and a filmstrip bug with them.**
+> `crates/firstcut-decode/src/still.rs` displays the files that have no embedded JPEG: PNG and
+> TIFF decode in-process with the `image` crate (pure Rust, no `unsafe`), HEIF through the
+> platform's own converter — `sips` on macOS, WIC through a static PowerShell script on Windows,
+> `heif-convert`/`ffmpeg`/ImageMagick on Linux — with the returned PNG decoded in-process.
+> Orientation is applied exactly once; a converter that bakes the rotation in is detected by the
+> frame's aspect against the stored sensor dimensions. A machine with no HEIF converter gets a
+> typed error naming what to install, never a blank loupe. `decode_display_at` and
+> `decode_thumbnail` route a file with no `preview`/`full_preview` to that path, and the exact
+> tier treats a non-RAW's own pixels as exact instead of asking the RAW backend.
+>
+> The Windows limits are closed too: `Finish → Move to Trash` hands the file to the Recycle Bin
+> through the `trash` crate (a safe wrapper, so §4.5 holds) and undo reports it as "in the
+> Recycle Bin" rather than skipping it; `free_space` is `fs4::available_space` on every
+> platform; `crosses_volume` and the session's volume identity use the Windows volume serial
+> number through `file-id`; and the scanner records Windows' (volume serial, file index) pair
+> as the (device, inode) identity, so a rename is recognised there as on unix.
+>
+> Verified on this Mac: a folder of PNG + HEIC + TIFF paints all three in the loupe and the
+> strip, a real 3-OS `cargo xtask ci` is green, `cargo xtask smoke` passes, and the opt-in
+> real-photo tests pass (fused develop within one 8-bit level). The Windows paths compile
+> (`cargo check --target x86_64-pc-windows-msvc`) and their portable tests pass; a native
+> Windows run of Move to Trash and of a HEIF folder is still an owner check, like the packaged
+> launches.
+>
+> **Also fixed:** the GPU texture cache was keyed on the photo id alone, so the strip's
+> thumbnail upload and the loupe's display upload of the *same* photo replaced each other and
+> the current photo's filmstrip cell painted a freed texture (blank cell, visible on any RAW
+> shoot). The key is now `(photo id, pixel size)`; `one_photo_at_two_sizes_keeps_two_textures`
+> is the regression test. This was a real v2 bug, not a parity gap.
 
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`

@@ -183,18 +183,18 @@ gate stays honest. The develop is queued only after the cursor has been still fo
 because it temporarily takes every core and would otherwise starve the previews that keep
 a held arrow key smooth.
 
-**Non-RAW display is a known gap (recorded 2026-10-30, not claimed as done).**
-`decode_display` has a byte range to read only for a RAW's embedded JPEG and for a plain
-JPEG, which is its own image. The scanner still accepts HEIF/TIFF/PNG as photographs — they
-get metadata, sidecars and a session row — so a folder of only `.heic` files opens and then
-every frame reports a decode error instead of painting. v1 got those files from ImageIO, and
-its parity list says a JPEG/HEIF-only folder must cull like a RAW folder (todo.md:978).
-TIFF/PNG can be closed with the `image` crate already in the workspace (pure Rust, no new
-`unsafe`). HEIF needs a decoder, and that is an owner decision: libheif (a C dependency and a
-second `unsafe` carve-out, plus a dylib to ship on Windows and Linux), the three OS-native
-decoders (ImageIO / WIC / libheif, three unsafe FFI backends), or declaring HEIF out of scope
-and dropping it from the scanner so it never appears as an undecodable photo. Until one is
-chosen the hole is listed in `docs/parity-checklist.md`, not worked around.
+**Non-RAW display (closed 2026-10-31).** A RAW carries JPEGs and a plain JPEG is its own
+image, so `read_range` answers both. PNG, TIFF and HEIF are the photograph's own pixels with no
+preview inside, and they now display through `firstcut-decode/src/still.rs`: PNG/TIFF decode
+in-process with the `image` crate (pure Rust, no `unsafe`); HEIF is converted by the platform's
+own tool — `sips` on macOS, WIC through PowerShell on Windows, `heif-convert`/`ffmpeg`/
+ImageMagick on Linux — and the resulting PNG is decoded in-process. EXIF orientation is still
+applied exactly once: the still path detects a converter that already baked the rotation by
+comparing the frame's aspect with the stored sensor dimensions. A machine without a HEIF
+converter gets a typed error naming what to install, never a blank loupe; that requirement is
+the remaining limit, recorded in `docs/parity-checklist.md`. A decoder inside the binary would
+mean HEVC (libheif + a second `unsafe` carve-out, or three FFI backends), which D3 does not
+allow without the owner, so it is not done here.
 
 EXIF orientation is applied exactly once, in the decode backend; a develop must not
 re-apply it. This rule is a named test.
