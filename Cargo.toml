@@ -51,7 +51,9 @@ eframe = { version = "0.37", default-features = false, features = [
   "x11",
 ] }
 egui_kittest = "0.37"
-image = "0.25"
+# PNG/TIFF display for stills and the PNG a HEIF converter returns; the default feature set
+# drags in encoders (AVIF, EXR) that no surface uses.
+image = { version = "0.25", default-features = false, features = ["png", "tiff", "jpeg"] }
 # The display path hands `Vec<u8>` RGBA to egui as `Vec<Color32>` with no copy. `Color32` is
 # `Pod` only when ecolor's `bytemuck` feature is enabled; the direct dep is how that feature is
 # turned on (feature unification is workspace-wide).

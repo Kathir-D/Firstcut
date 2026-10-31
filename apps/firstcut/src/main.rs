@@ -771,11 +771,14 @@ fn decode_job(job: &Job, raw: Option<&dyn RawDecode>) -> Result<(DecodedImage, H
         // The camera's small PRVW JPEG: ~9 ms, and the frame that keeps a held arrow key painted.
         Tier::Preview => decode_thumbnail(&job.path, &job.meta, PREVIEW_EDGE),
         Tier::Display => decode_display_at(&job.path, &job.meta, if job.target_edge == 0 { FALLBACK_DISPLAY_EDGE } else { job.target_edge }),
-        Tier::ExactRaw => match raw {
-            Some(backend) => backend.decode_raw(&job.path, &job.meta),
+        // Only a RAW has sensor data to develop. For a JPEG/PNG/TIFF/HEIF the photograph's own
+        // pixels already *are* the exact image, so the exact tier is its display decode; asking
+        // the RAW backend about a HEIF would burn a worker on a guaranteed refusal.
+        Tier::ExactRaw => match (job.meta.kind, raw) {
+            (firstcut_meta::meta::FileKind::Raw(_), Some(backend)) => backend.decode_raw(&job.path, &job.meta),
             // No backend on this platform: fall back to the camera's own rendering rather than
             // blanking the loupe. The exact tier still stays a tier of its own.
-            None => decode_display(&job.path, &job.meta),
+            _ => decode_display(&job.path, &job.meta),
         },
     }
     .map_err(|err| format!("{} ({:?}): {err}", job.path.display(), job.tier))?;

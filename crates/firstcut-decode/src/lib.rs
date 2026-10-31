@@ -21,6 +21,8 @@ use zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::errors::DecodeErrors;
 
+mod still;
+
 /// An RGBA8 buffer whose allocation is 4-byte aligned. `Color32` is four bytes with an align of
 /// four, so the window can take the buffer over as egui's colour type with `bytemuck::try_cast_vec`
 /// — no per-pixel conversion and no second 28 MB copy for a 4K display frame (§5.1).
@@ -137,6 +139,10 @@ pub enum DecodeError {
     Raw { path: String, message: String },
     #[error("{path}: the RAW developer returned {width}x{height} with {colors} colour channels, which is not a displayable bitmap")]
     RawLayout { path: String, width: u32, height: u32, colors: u16 },
+    #[error("{path}: {message}")]
+    Still { path: String, message: String },
+    #[error("{path}: no HEIF decoder could read it: {message}")]
+    Heif { path: String, message: String },
 }
 
 /// Decodes the photograph's own pixels: the full-resolution embedded JPEG, falling back to the
@@ -150,9 +156,13 @@ pub fn decode_display(path: &Path, meta: &PhotoMeta) -> Result<DecodedImage, Dec
 /// is enough, so the 6000×4000 entropy decode is never touched. A target beyond the `PRVW` uses
 /// the full preview, and any remaining reduction is nearest-neighbour. The EXIF orientation is
 /// applied last, so the returned longest edge is the target edge as the photograph is shown.
+///
+/// A file with no embedded JPEG (PNG, TIFF, HEIF) is decoded by [`still`]: the photograph's own
+/// pixels rather than a preview of them, which is the only source these containers have.
 pub fn decode_display_at(path: &Path, meta: &PhotoMeta, target_edge: u32) -> Result<DecodedImage, DecodeError> {
-    let shown = select_display_source(meta.preview, meta.full_preview, target_edge)
-        .ok_or_else(|| DecodeError::NoEmbeddedJpeg { path: path.display().to_string() })?;
+    let Some(shown) = select_display_source(meta.preview, meta.full_preview, target_edge) else {
+        return still::decode_still(path, meta, target_edge);
+    };
     let image = downsample_to(read_range(path, shown.range)?, target_edge);
     apply_orientation(image, meta.orientation)
 }
@@ -171,9 +181,11 @@ fn select_display_source(preview: Option<EmbeddedPreview>, full: Option<Embedded
 
 /// The filmstrip's tier: the small `PRVW` JPEG when the container has one (1620×1080 rather
 /// than 6000×4000), reduced to `target_edge`, then oriented. Falls back to the full preview for
-/// a file whose only JPEG is the large one.
+/// a file whose only JPEG is the large one, and to [`still`] for a file with no embedded JPEG.
 pub fn decode_thumbnail(path: &Path, meta: &PhotoMeta, target_edge: u32) -> Result<DecodedImage, DecodeError> {
-    let shown = meta.preview.or(meta.full_preview).ok_or_else(|| DecodeError::NoEmbeddedJpeg { path: path.display().to_string() })?;
+    let Some(shown) = meta.preview.or(meta.full_preview) else {
+        return still::decode_still(path, meta, target_edge);
+    };
     let image = downsample_to(read_range(path, shown.range)?, target_edge);
     apply_orientation(image, meta.orientation)
 }

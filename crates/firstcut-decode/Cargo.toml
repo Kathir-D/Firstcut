@@ -18,6 +18,9 @@ zune-core = { version = "0.5", default-features = false, features = ["std"] }
 # The pixel buffer is 4-byte aligned so the window can reinterpret it as egui's `Color32`
 # without a per-pixel conversion or a copy (§5.1).
 bytemuck = { workspace = true }
+# PNG and TIFF display without a RAW decoder (and the PNG a HEIF converter returns). Pure Rust,
+# so the no-`unsafe` rule holds.
+image = { workspace = true }
 thiserror = { workspace = true }
 # Orientation is a 24 MP copy; destination rows are independent, so it runs in parallel.
 rayon = "1"
