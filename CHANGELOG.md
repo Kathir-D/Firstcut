@@ -4,6 +4,45 @@ All notable changes to Firstcut are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [unreleased — v2]
+
+The v2 rewrite lives on the `v2` branch ([docs/v2-plan.md](docs/v2-plan.md)): the core Rust
+logic is a one-way ladder of domain crates (`crates/*`, `apps/firstcut-cli`), the Swift/Xcode
+app tree is gone in favour of the native egui app (`apps/firstcut`), and the never-crash lint
+sweep (§4.5) is enforced across the workspace.
+
+### Added and changed in v2
+
+- Native app on macOS, Windows and Linux (D1), with one bundled Inter family so glyphs and
+  snapshots match across the three OSes (D10).
+- Burst batching, loupe, grid, 2/3/4-up compare, AF and clipping overlays, histogram, info
+  panel, both rating modes, Finish Cull with a typed delete gate and undo, Settings, keymap
+  recorder/import/export, recent shoots, live folder watching and sidecar import.
+- Exact RAW sensor develop through rawler on every OS, with LibRaw as the macOS/Linux fallback
+  (D11). Progressive display keeps the loupe on the embedded preview until the develop lands
+  (D12); the warm 24 MP develop is 0.257 s on the M1 Pro, first pixels 0.057–0.068 s. A held
+  arrow key paints the camera's 6–8 ms `PRVW` navigation preview, the sharp display is
+  prefetched 32 ahead/12 behind (eight workers measure 89 frames/s at 2048 px and 82
+  at the 4K fit, so a 20 Hz hold has 4.1–4.5× headroom), and the exact develop waits for a
+  250 ms settle (D13). Scrolling neither blanks nor starves the visible frame. Display
+  decodes are fitted to the pane's physical width×height and read the smallest embedded JPEG
+  that covers the target: a 3:2 photo on a 16:9 4K pane is 3240 px (not 3840), a 1440×900 1x
+  laptop pane uses the 1620 px `PRVW` instead of the full entropy decode (638 frames/s
+  with eight workers), and a 2× zoom asks for 2700 px rather than the sensor. The decoded
+  RGBA buffer is 4-byte aligned and becomes egui's `Color32` without a conversion pass, and
+  fitted textures share the decoder's `Arc`; at 3240×2160 that keeps a 4.1 ms conversion
+  and a 0.6 ms copy off the paint thread per frame. The texture cache is bounded at 768 MB.
+- Native folder picker via `rfd`, including camera-card roots with multiple rolls asking
+  “Choose a Shoot”.
+- `cargo xtask package`: macOS `.app` + zip + cask stamp, Windows zip, Linux AppImage + `.deb`,
+  SHA-256 sidecars, and a tag-driven 3-OS release workflow. Signing is optional. The packaged
+  icon is v1's mark, unchanged: `assets/branding/` holds v1's own appiconset exports
+  (including the simplified 16/32 px art) and the `.icns`/`.ico` built from them.
+- `firstcut --control <port>` JSON-lines control channel and `firstcut-cli mcp` over stdio;
+  both documented in `docs/control-protocol.md` and `docs/mcp.md`.
+- The Rust core is covered by workspace tests plus opt-in real-photo tests; the 3-OS CI matrix
+  runs `cargo xtask ci` and the window smoke on every push.
+
 ## [0.1.0] - unreleased
 
 The first release.

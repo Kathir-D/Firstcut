@@ -215,3 +215,31 @@ after a game" — the tier counters alone would call that clean.
 - §3's frame intervals (90 ms for Game1JENKS and Gane2NC, 170 ms for Game3KC and Game4VRE) are the
   input to the "arrow key ≤ 8 ms" measurement: a burst is 6–11 fps, so the pipeline has 90–170 ms
   per frame to stay ahead of the user. That is the entire engineering budget.
+
+## v2 (pure Rust) — decode rows, measured 2026-10-20
+
+_Machine: Apple M1 Pro, 16 GB, macOS 27, internal SSD. Release build._
+
+```sh
+cargo build --release -p firstcut-cli
+target/release/firstcut-cli bench --decode --folder ~/Documents/testing/Game1JENKS --repeat 5
+target/release/firstcut-cli bench --decode --folder ~/Documents/testing/Game3KC --repeat 5
+```
+
+Decode-only: the rows time `firstcut-decode`/the LibRaw backend, not the GPU upload. The
+recommended viewer edge is 2048 px (the app asks for its real backing edge). "Cold" is the
+first round in a fresh process; "warm" is the best of the repeats.
+
+| Row | Game1JENKS (708) | Game3KC (920) | Gate | Verdict |
+| --- | --- | --- | --- | --- |
+| First photo after open, cold file cache (scan + display) | 0.272 s | 0.334 s | ≤ 0.5 s | OK |
+| First photo after open, warm re-run | 0.118 s | — | ≤ 0.5 s | OK |
+| Arrow → next (median of 7 files) | 0.070 s | 0.082 s | ≤ 0.09 s | OK |
+| 1:1 zoom decode (embedded full preview) | 0.195 s | 0.196 s | v1 parity on GPU | decode half only |
+| Exact RAW develop (LibRaw, warm) | 1.03–1.05 s | 1.05 s | ≤ 0.119 s | **OVER TARGET** |
+
+The Exact RAW row is a recorded divergence, not a silent one: `unpack` 0.20 s + AHD
+demosaic 0.66 s + RGBA 0.02 s + orientation 0.14 s. v1's 0.079 s was Core Image's GPU
+path; LibRaw here is single-threaded CPU (no OpenMP in `rsraw-sys`). Faster demosaics
+(linear 0.34 s, PPG 0.30 s) degrade pixels, so the default stays AHD until the owner
+decides between accepting ~1 s on-demand develops, revisiting D2, or adding a GPU path.

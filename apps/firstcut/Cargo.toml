@@ -1,0 +1,32 @@
+[package]
+name = "firstcut"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+firstcut-engine = { workspace = true }
+firstcut-types = { workspace = true }
+firstcut-meta = { workspace = true }
+firstcut-decode = { workspace = true }
+firstcut-decode-libraw = { workspace = true }
+firstcut-catalog = { workspace = true }
+firstcut-ui = { workspace = true }
+eframe = { workspace = true }
+egui = { workspace = true }
+# Pixels arrive as RGBA bytes; `try_cast_vec` makes the egui colour buffer without a conversion
+# pass. `ecolor` is the direct dependency that enables `Color32: Pod`.
+bytemuck = { workspace = true }
+ecolor = { workspace = true }
+egui_kittest = { workspace = true, features = ["snapshot", "wgpu"] }
+image = { workspace = true }
+rfd = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

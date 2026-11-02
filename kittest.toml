@@ -1,0 +1,15 @@
+# egui_kittest snapshot comparison (docs/v2-plan.md §9).
+#
+# A 2.0 weighted-YIQ per-pixel distance is the reviewed antialiasing tolerance: macOS (Metal)
+# and Linux draw the same layout with slightly different subpixel coverage, which showed up as a
+# handful of pixels differing by at most 2.0 after the M3 UI landed. It is a colour tolerance,
+# not an error budget: a moved edge, a changed colour or a reflowed panel differs by far more
+# and still fails. No failed-pixel allowance is granted on top.
+threshold = 2.0
+max_failed_pixels = 0
+
+# M4's Settings → General snapshot (the Finish section) put three glyph-edge pixels just past
+# 2.0 on Linux and nowhere else (Windows and macOS stayed under it). 3.0 on Linux only keeps the
+# stricter 2.0 rule on the other two systems; the pixel-count budget is still zero everywhere.
+[linux]
+threshold = 3.0

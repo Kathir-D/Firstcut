@@ -1,0 +1,94 @@
+# v2 — release artifacts (docs/v2-plan.md §6, M6).
+#
+# Tags and Releases are the owner's: this workflow only reacts to a tag the owner
+# pushed (`v2*`) or a manual run. It never creates or moves a tag. Each OS builds
+# its own installer with `cargo xtask package`; the artifacts, their SHA-256
+# sidecars and the cask stamp are attached to the Release.
+
+name: v2-release
+
+on:
+  push:
+    tags: ["v2*", "v0.2*"]
+    branches: [v2]
+    paths:
+      - .github/workflows/v2-release.yml
+      - packaging/**
+      - xtask/src/package.rs
+      - assets/branding/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+          - os: windows-latest
+          # 22.04 is the glibc 2.35 floor the .deb and the README promise; building on
+          # ubuntu-latest would silently raise the floor to the runner's glibc.
+          - os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: install Rust toolchain (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+      - name: Linux — runtime libraries and a portable appimagetool
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon0 libwayland-client0 libgl1 libvulkan1
+          curl -L --fail -o /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          sudo mv /tmp/appimagetool /usr/local/bin/appimagetool
+      - name: Version from the uploaded tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "FIRSTCUT_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            echo "FIRSTCUT_RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          fi
+      - name: Build the installer for this OS
+        env:
+          FIRSTCUT_CODESIGN_IDENTITY: ${{ secrets.FIRSTCUT_CODESIGN_IDENTITY || '-' }}
+        run: cargo xtask package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firstcut-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            target/package/*.zip
+            target/package/*.AppImage
+            target/package/*.deb
+            target/package/*.tar.gz
+            target/package/*.cask.rb
+            target/package/*.sha256
+            target/package/SHA256SUMS-*
+      - name: Attach to the Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            target/package/*.zip
+            target/package/*.AppImage
+            target/package/*.deb
+            target/package/*.tar.gz
+            target/package/*.cask.rb
+            target/package/*.sha256
+            target/package/SHA256SUMS-*

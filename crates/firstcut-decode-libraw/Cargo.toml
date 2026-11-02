@@ -1,0 +1,37 @@
+[package]
+name = "firstcut-decode-libraw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+firstcut-decode = { workspace = true }
+firstcut-meta = { workspace = true }
+# The fast exact-RAW developer. Pure Rust, so it builds on Windows too; LibRaw stays
+# as the fallback for formats rawler refuses (and as the quality cross-check).
+rawler = "0.8"
+# The f32 → RGBA8 pack is a 24 MP copy; run it across the same cores rawler uses.
+rayon = "1"
+
+# `rsraw` vendors LibRaw 0.21.1 and compiles it with `cc`; its build script refuses MSVC
+# outright, and its `-pthread` flag assumes a Unix toolchain. LibRaw is therefore the
+# *fallback* on macOS/Linux only; rawler above is the backend on all three platforms
+# (docs/v2-plan.md §4.2, §5.1).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+rsraw = "0.1.1"
+
+# ── THE SINGLE UNSAFE CARVE-OUT OF THE WORKSPACE ──────────────────────────────
+# docs/v2-plan.md §4.5, decision D3: the owner approved LibRaw (C++) for the v2
+# native target. The workspace forbids `unsafe_code` everywhere; this table is the
+# one permitted exception (the workspace layer check in xtask/src/layers.rs fails
+# CI if any other crate carries its own [lints.rust] table). Unsafe code here is
+# confined to FFI bindings and shadowed by checked, safe wrappers the rest of the
+# ladder calls.
+[lints.rust]
+unsafe_code = "allow"
+
+[dev-dependencies]
+# The opt-in real-photo test compares the fused develop against rawler's stock pipeline.
+rawler = "0.8"

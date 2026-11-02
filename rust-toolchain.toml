@@ -1,0 +1,4 @@
+# Pinned by the branch contract (docs/v2-plan.md §4.1); CI installs exactly this.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]

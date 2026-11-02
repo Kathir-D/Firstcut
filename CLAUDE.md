@@ -1,7 +1,14 @@
+# CLAUDE.md — this branch follows AGENTS.md
+
+Everything an agent (or a human contributor) needs is in [AGENTS.md](AGENTS.md):
+branch rules, the never-crash lint set and its carve-out, the layered workspace, the
+tiered test discipline, and indexing instructions. The branch contract itself is
+[docs/v2-plan.md](docs/v2-plan.md).
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Firstcut** (25389 symbols, 62477 relationships, 779 execution flows).
+This project is indexed by GitNexus as **Firstcut** (12659 symbols, 31671 relationships, 901 execution flows).
 
 > Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
 
