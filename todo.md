@@ -36,6 +36,9 @@ History of how it got here: `git log`. The retired multi-agent process: `git sho
 Only a person with the Mac, the test photos, the apps or the repo settings can do these. In order:
 The owner works through them in `~/Documents/firstcut-review/review.html` (not in the repo: it holds
 thumbnails of the test photos), which saves its answers as `~/Downloads/firstcut-review-results.json`.
+The v2 decisions that do not need photos — the Exact RAW gate, the default viewer tier, the
+Game1JENKS re-press, HEIF on Linux, the Windows owner checks, where to start on ground truth — are
+in `docs/v2-decisions.html` (self-contained, saves `~/Downloads/firstcut-v2-decisions.json`).
 
 1. **Look at the app.** `scripts/build-app.sh --open`, cull part of a real game in both rating modes,
    run Finish on a *copy* and undo it. Compare each screen with Finder's gallery view (§9) and write
@@ -332,6 +335,12 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > `free_space` has been `fs4::available_space` on every platform since the M5 work. `0ac97e2`
 > drops the branch and asserts a positive number everywhere. Both were invisible before because
 > `cargo test --workspace` stops at the first failing binary, and the engine failure came first.
+>
+> With the matrix green at `744f031`, `docs/v2-decisions.html` collects the six calls that need a
+> person — the Exact RAW gate, the default viewer tier, the Game1JENKS re-press, HEIF on Linux,
+> the Windows owner checks, and where to start on the boundary ground truth. It is one
+> self-contained page: answers stay in the browser and download as
+> `~/Downloads/firstcut-v2-decisions.json`.
 
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`

@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Firstcut v2 — owner decisions</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e8eaf0;
+    --muted: #9aa3b2;
+    --card: #171a21;
+    --border: #2a2f3a;
+    --accent: #7aa2ff;
+    --ok: #4fb477;
+    --warn: #d9a13b;
+    --radius: 12px;
+    --font: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9;
+      --fg: #171a21;
+      --muted: #5d6572;
+      --card: #ffffff;
+      --border: #d8dde5;
+      --accent: #2f5bd7;
+      --ok: #1f7a4a;
+      --warn: #8a5b06;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 20px 64px;
+    font-family: var(--font, var(--font-sans, ui-sans-serif));
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--fg, var(--foreground, #e8eaf0));
+    background: var(--bg, var(--background, transparent));
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 24px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .lede { color: var(--muted, var(--muted-foreground, #9aa3b2)); margin: 0 0 20px; }
+  .status {
+    display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+    padding: 12px 16px; margin: 0 0 26px;
+    background: var(--card, #171a21);
+    border: 1px solid var(--border, #2a2f3a);
+    border-radius: var(--radius, 12px);
+    font-size: 13px;
+  }
+  .status b { font-weight: 600; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .dot.ok { background: var(--ok, #4fb477); }
+  .dot.warn { background: var(--warn, #d9a13b); }
+
+  .bar {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+    padding: 10px 0 12px; margin-bottom: 8px;
+    background: var(--bg, var(--background, transparent));
+  }
+  .progress { font-size: 13px; color: var(--muted, var(--muted-foreground, #9aa3b2)); }
+  .progress strong { color: var(--fg, var(--foreground, #e8eaf0)); }
+  .track { width: 140px; height: 6px; border-radius: 3px; background: var(--border, #2a2f3a); overflow: hidden; }
+  .track > i { display: block; height: 100%; width: 0; background: var(--accent, #7aa2ff); transition: width 160ms ease; }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  button {
+    font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--fg, var(--foreground, #e8eaf0));
+    background: var(--card, #171a21);
+    border: 1px solid var(--border, #2a2f3a);
+    border-radius: 9px; padding: 7px 13px; cursor: pointer;
+  }
+  button.primary { background: var(--accent, #7aa2ff); border-color: transparent; color: #08101f; }
+  button:hover { border-color: var(--accent, #7aa2ff); }
+  button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent, #7aa2ff); outline-offset: 2px;
+  }
+
+  section.decision {
+    background: var(--card, #171a21);
+    border: 1px solid var(--border, #2a2f3a);
+    border-radius: var(--radius, 12px);
+    padding: 18px 18px 14px;
+    margin: 0 0 16px;
+  }
+  section.decision.answered { border-color: color-mix(in srgb, var(--ok, #4fb477) 55%, var(--border, #2a2f3a)); }
+  .kicker { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted, var(--muted-foreground, #9aa3b2)); margin: 0 0 4px; }
+  h2 { font-size: 17px; line-height: 1.35; margin: 0 0 8px; }
+  .context { color: var(--muted, var(--muted-foreground, #9aa3b2)); font-size: 13.5px; margin: 0 0 14px; }
+  .context code { font-family: var(--mono, var(--font-mono, monospace)); font-size: 12.5px; }
+
+  fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; }
+  label.option {
+    display: grid; grid-template-columns: 18px 1fr; gap: 10px;
+    padding: 11px 13px; border: 1px solid var(--border, #2a2f3a); border-radius: 10px; cursor: pointer;
+    background: transparent;
+  }
+  label.option:hover { border-color: var(--accent, #7aa2ff); }
+  label.option:has(input:checked) {
+    border-color: var(--accent, #7aa2ff);
+    background: color-mix(in srgb, var(--accent, #7aa2ff) 10%, transparent);
+  }
+  label.option input { margin: 3px 0 0; accent-color: var(--accent, #7aa2ff); }
+  .opt-title { font-weight: 600; font-size: 14px; }
+  .opt-title .tag {
+    font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--accent, #7aa2ff); border: 1px solid currentColor; border-radius: 5px;
+    padding: 1px 5px; margin-left: 7px; vertical-align: 1px;
+  }
+  .opt-detail { display: block; color: var(--muted, var(--muted-foreground, #9aa3b2)); font-size: 12.5px; margin-top: 2px; }
+
+  .note { margin-top: 12px; }
+  .note label { display: block; font-size: 12px; color: var(--muted, var(--muted-foreground, #9aa3b2)); margin-bottom: 5px; }
+  textarea {
+    width: 100%; min-height: 62px; resize: vertical;
+    font: inherit; font-size: 13.5px;
+    color: var(--fg, var(--foreground, #e8eaf0));
+    background: color-mix(in srgb, var(--fg, #e8eaf0) 5%, transparent);
+    border: 1px solid var(--border, #2a2f3a); border-radius: 9px; padding: 9px 11px;
+  }
+  footer { margin-top: 26px; color: var(--muted, var(--muted-foreground, #9aa3b2)); font-size: 12.5px; }
+  .out {
+    white-space: pre-wrap; font-family: var(--mono, var(--font-mono, monospace)); font-size: 12.5px;
+    background: color-mix(in srgb, var(--fg, #e8eaf0) 5%, transparent);
+    border: 1px solid var(--border, #2a2f3a); border-radius: 10px; padding: 12px 14px; margin-top: 12px;
+  }
+  .out:empty { display: none; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  @media (max-width: 520px) {
+    body { padding: 18px 14px 48px; }
+    .bar { align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Firstcut v2 — owner decisions</h1>
+  <p class="lede">Six calls that need a person, not an agent. Each one names what ships today and what changes if you pick something else. Answers stay in this browser and can be downloaded as JSON.</p>
+
+  <div class="status">
+    <span><span class="dot ok" aria-hidden="true"></span><b>PR #6</b> green on all three OSes at <code>744f031</code></span>
+    <span><span class="dot warn" aria-hidden="true"></span><b>Merge gate:</b> these answers, plus the boundary ground truth</span>
+  </div>
+
+  <div class="bar">
+    <div class="progress">
+      <strong id="answered">0</strong> of <strong id="total">6</strong> answered
+      <div class="track" role="progressbar" aria-labelledby="answered" aria-valuemin="0" aria-valuemax="6" aria-valuenow="0" id="track"><i></i></div>
+    </div>
+    <div class="actions">
+      <button type="button" id="download" class="primary">Download answers</button>
+      <button type="button" id="copy">Copy as text</button>
+      <button type="button" id="clear">Clear</button>
+    </div>
+  </div>
+
+  <div id="decisions"></div>
+
+  <div class="out" id="out" aria-live="polite"></div>
+
+  <footer>
+    Nothing is uploaded. The JSON lands in your Downloads folder as
+    <code>firstcut-v2-decisions.json</code>; paste it back to the agent or drop it in the repo root.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var DECISIONS = [
+    {
+      id: "exactGate",
+      kicker: "Gate",
+      title: "The Exact RAW row: 0.257 s against a 0.119 s gate",
+      context: "Measured warm on a 24 MP CR3, 8 threads: decode 0.120 s, fused PPG demosaic 0.094 s, sRGB + pack 0.024 s, orientation 0.015 s, rescale 0.004 s. The gate is 1.5× v1. The pipeline is at parity with rawler's own algorithm, so the floor with this demosaic is ~0.24 s; only a new CRX entropy decoder attacks the 0.120 s stage. First pixels are not part of this number: the navigation preview is on screen in 0.006–0.008 s and the sharp display in 0.057–0.068 s, and the sensor frame swaps in place when it lands.",
+      options: [
+        { value: "accept", label: "Accept 0.257 s with progressive first paint", tag: "ships today", detail: "No code change. The row is recorded as accepted rather than over target, with the stage table as the evidence." },
+        { value: "fund", label: "Fund a custom CRX entropy decoder", detail: "Attacks the 0.120 s decode alone. A new component with no estimate on record, and a second implementation of Canon's format to keep correct." },
+        { value: "firstFrame", label: "Redefine the row as first-frame latency", detail: "The row becomes 0.057–0.068 s (display) with 0.006–0.008 s on a held arrow. The full develop stays visible as a separate, ungated number." }
+      ]
+    },
+    {
+      id: "viewerDefault",
+      kicker: "Default",
+      title: "Which tier the loupe uses by default",
+      context: "Settings → Viewer → “Develop the sensor data, not the embedded preview” toggles the Exact RAW tier, and it defaults to off today. The embedded preview costs 0.057–0.068 s per photo and carries the camera's own look; the exact develop costs 0.257 s and shows the sensor frame progressively. The question is which one you would cull on, not which is faster.",
+      options: [
+        { value: "preview", label: "Embedded preview (current default)", tag: "ships today", detail: "Culling shows the JPEG the camera wrote, which is what Lightroom's grid shows too. Exact RAW stays one toggle away." },
+        { value: "exact", label: "Exact RAW develop", detail: "Every photo is developed from the sensor data, so the loupe always shows the frame you would edit. Costs 0.257 s of background work per photo and takes every core for that burst." },
+        { value: "decideLater", label: "Leave it as a toggle and decide after a real shoot", detail: "No default changes now. The decision is recorded as open with the measured cost of each side." }
+      ]
+    },
+    {
+      id: "game1Repress",
+      kicker: "Batching",
+      title: "Game1JENKS, IMG_6117–IMG_6164: one play or several?",
+      context: "The batcher splits or joins this run on gaps alone and the answer is a judgement about the game, not the metadata. Whatever you say becomes a named case in the batching fixtures, and the same run is the kind of boundary the ground-truth files exist to settle.",
+      options: [
+        { value: "onePlay", label: "One play", detail: "The run stays a single batch; a split here is recorded as a batcher miss." },
+        { value: "several", label: "Several plays", detail: "The run is several batches; a join here is recorded as a batcher miss." },
+        { value: "unsure", label: "Not sure — look again with the contact sheet", detail: "Leaves the case open. the CLI's contact-sheet prints the run so you can decide from the frames." }
+      ]
+    },
+    {
+      id: "heifLinux",
+      kicker: "Platform",
+      title: "HEIF on Linux needs a converter on the machine",
+      context: "PNG and TIFF decode in-process. HEIF is converted by the platform's own tool — sips on macOS, WIC on Windows, and on Linux one of heif-convert, ffmpeg or ImageMagick — then the PNG is decoded in-process. macOS and Windows ship theirs; a Linux box may not. Without one the file scans, batches and culls, and the loupe shows a typed error naming what to install. A decoder inside the binary means HEVC, which is libheif plus a second unsafe carve-out, or three FFI backends.",
+      options: [
+        { value: "require", label: "Require a converter on Linux", tag: "ships today", detail: "No new dependency and no second unsafe carve-out. The error message names the three packages." },
+        { value: "bundle", label: "Bundle libheif", detail: "HEIF displays on any Linux box. Needs an owner sign-off on a second unsafe carve-out, plus shipping the library on three OSes." },
+        { value: "outOfScope", label: "Declare HEIF display out of scope on Linux", detail: "The file still appears in the shoot and can be rated and culled; only the loupe says it cannot show it, and it says so as a supported limit rather than a missing dependency." }
+      ]
+    },
+    {
+      id: "windowsChecks",
+      kicker: "Platform",
+      title: "The Windows paths are compiled, not run",
+      context: "Finish → Move to Trash now hands the file to the Recycle Bin through the trash crate, and a HEIF folder displays through WIC. Both compile for x86_64-pc-windows-msvc, their portable tests pass, and the 3-OS matrix runs the window smoke — but nobody has moved a file to the Recycle Bin or opened a HEIF folder on a real Windows desktop.",
+      options: [
+        { value: "now", label: "I will run both on Windows before the merge", detail: "One trash + undo, one HEIF folder in the loupe and the strip. Anything wrong becomes a named bug with a regression test." },
+        { value: "release", label: "Defer to the release check", detail: "The packaged Windows binary gets the same run as the macOS one when a tag is cut." },
+        { value: "skip", label: "Skip it — the matrix and the portable tests are enough", detail: "Recorded as an accepted risk in the parity checklist instead of an open owner check." }
+      ]
+    },
+    {
+      id: "groundTruth",
+      kicker: "Merge gate",
+      title: "Boundary ground truth: where to start",
+      context: "The ≥ 98% boundary-F1 claim is not measurable until a person marks the ambiguous boundaries — roughly 210 across the four games — and an agent must not synthesise them. The files are tests/fixtures/ground-truth/<game>.json, names only. This is the blocking merge-gate item.",
+      options: [
+        { value: "game1", label: "Game1JENKS first", detail: "One game marked end to end proves the format and gives the first measurable row." },
+        { value: "all", label: "All four games in one pass", detail: "The whole claim becomes measurable at once. It is the longest sitting." },
+        { value: "later", label: "Not now — keep the claim marked unmeasured", detail: "The checklist keeps the row open with the reason, and no percentage is quoted anywhere." }
+      ]
+    }
+  ];
+
+  var STORAGE_KEY = "firstcut.v2.decisions.v1";
+  var state = load();
+
+  function load() {
+    try {
+      var raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return {};
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function save() {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (err) {
+      /* A private window with no storage still works; only persistence is lost. */
+    }
+  }
+
+  var root = document.getElementById("decisions");
+
+  DECISIONS.forEach(function (decision, index) {
+    var section = document.createElement("section");
+    section.className = "decision";
+    section.id = "d-" + decision.id;
+
+    var kicker = document.createElement("p");
+    kicker.className = "kicker";
+    kicker.textContent = (index + 1) + " · " + decision.kicker;
+    section.appendChild(kicker);
+
+    var heading = document.createElement("h2");
+    heading.textContent = decision.title;
+    heading.id = "h-" + decision.id;
+    section.appendChild(heading);
+
+    var context = document.createElement("p");
+    context.className = "context";
+    context.textContent = decision.context;
+    section.appendChild(context);
+
+    var fieldset = document.createElement("fieldset");
+    fieldset.setAttribute("role", "radiogroup");
+    fieldset.setAttribute("aria-labelledby", heading.id);
+
+    decision.options.forEach(function (option) {
+      var label = document.createElement("label");
+      label.className = "option";
+
+      var input = document.createElement("input");
+      input.type = "radio";
+      input.name = decision.id;
+      input.value = option.value;
+      input.checked = state[decision.id] && state[decision.id].value === option.value;
+      input.addEventListener("change", function () {
+        state[decision.id] = Object.assign({}, state[decision.id], { value: option.value });
+        save();
+        refresh();
+      });
+
+      var body = document.createElement("span");
+      var title = document.createElement("span");
+      title.className = "opt-title";
+      title.textContent = option.label;
+      if (option.tag) {
+        var tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = option.tag;
+        title.appendChild(tag);
+      }
+      body.appendChild(title);
+      if (option.detail) {
+        var detail = document.createElement("span");
+        detail.className = "opt-detail";
+        detail.textContent = option.detail;
+        body.appendChild(detail);
+      }
+
+      label.appendChild(input);
+      label.appendChild(body);
+      fieldset.appendChild(label);
+    });
+
+    section.appendChild(fieldset);
+
+    var note = document.createElement("div");
+    note.className = "note";
+    var noteId = "n-" + decision.id;
+    var noteLabel = document.createElement("label");
+    noteLabel.setAttribute("for", noteId);
+    noteLabel.textContent = "Note (optional)";
+    var textarea = document.createElement("textarea");
+    textarea.id = noteId;
+    textarea.value = (state[decision.id] && state[decision.id].note) || "";
+    textarea.placeholder = "Anything the choice above does not say";
+    textarea.addEventListener("input", function () {
+      state[decision.id] = Object.assign({}, state[decision.id], { note: textarea.value });
+      save();
+    });
+    note.appendChild(noteLabel);
+    note.appendChild(textarea);
+    section.appendChild(note);
+
+    root.appendChild(section);
+  });
+
+  function answeredCount() {
+    return DECISIONS.filter(function (decision) {
+      return state[decision.id] && state[decision.id].value;
+    }).length;
+  }
+
+  function refresh() {
+    var count = answeredCount();
+    document.getElementById("answered").textContent = String(count);
+    document.getElementById("total").textContent = String(DECISIONS.length);
+    var track = document.getElementById("track");
+    track.setAttribute("aria-valuenow", String(count));
+    track.setAttribute("aria-valuemax", String(DECISIONS.length));
+    track.firstElementChild.style.width = Math.round((count / DECISIONS.length) * 100) + "%";
+
+    DECISIONS.forEach(function (decision) {
+      var section = document.getElementById("d-" + decision.id);
+      var answered = Boolean(state[decision.id] && state[decision.id].value);
+      section.classList.toggle("answered", answered);
+    });
+  }
+
+  function answers() {
+    var out = {};
+    DECISIONS.forEach(function (decision) {
+      var entry = state[decision.id];
+      if (!entry || !entry.value) return;
+      var chosen = decision.options.filter(function (option) { return option.value === entry.value; })[0];
+      out[decision.id] = {
+        question: decision.title,
+        value: entry.value,
+        answer: chosen ? chosen.label : entry.value,
+        note: entry.note || ""
+      };
+    });
+    return out;
+  }
+
+  document.getElementById("download").addEventListener("click", function () {
+    var payload = {
+      savedAt: new Date().toISOString(),
+      head: "744f031",
+      answers: answers()
+    };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = "firstcut-v2-decisions.json";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    show("Saved " + Object.keys(payload.answers).length + " answer(s) to firstcut-v2-decisions.json");
+  });
+
+  document.getElementById("copy").addEventListener("click", function () {
+    var lines = DECISIONS.map(function (decision, index) {
+      var entry = state[decision.id];
+      var line = (index + 1) + ". " + decision.title + "\n   → " + (entry && entry.value ? entry.value : "(not answered)");
+      if (entry && entry.note) line += "\n   note: " + entry.note;
+      return line;
+    });
+    var text = "Firstcut v2 decisions — " + new Date().toISOString() + "\n\n" + lines.join("\n\n") + "\n";
+    copyText(text);
+    show(text);
+  });
+
+  document.getElementById("clear").addEventListener("click", function () {
+    state = {};
+    save();
+    Array.prototype.forEach.call(document.querySelectorAll("input[type=radio]"), function (input) { input.checked = false; });
+    Array.prototype.forEach.call(document.querySelectorAll("textarea"), function (input) { input.value = ""; });
+    refresh();
+    show("Cleared.");
+  });
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function () {});
+      return;
+    }
+    var area = document.createElement("textarea");
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    try { document.execCommand("copy"); } catch (err) { /* the text is shown below anyway */ }
+    document.body.removeChild(area);
+  }
+
+  var out = document.getElementById("out");
+  function show(text) {
+    out.textContent = text;
+  }
+
+  refresh();
+})();
+</script>
+</body>
+</html>
