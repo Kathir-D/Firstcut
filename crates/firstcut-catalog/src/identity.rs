@@ -385,13 +385,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
-    // Windows has no `statfs` in this port's std surface; its volume key reads "unknown" until
-    // M5 lands the Windows volume probe, so the "always an id" guarantee is unix-scope for now.
+    // Both platforms have a real volume id now: unix reads `statfs`, Windows reads the volume
+    // serial number off a file handle. The "unknown" key survives only for a path whose volume
+    // cannot be probed at all.
     fn volume_identity_has_a_filesystem_id() {
         let dir = tempfile::tempdir().unwrap();
         let volume = volume_identity(dir.path());
-        assert!(volume.fsid.is_some(), "statfs should always give a filesystem id");
+        assert!(volume.fsid.is_some(), "the volume probe should always give an id");
         assert!(volume.key().starts_with("uuid:") || volume.key().starts_with("fsid:"));
     }
 

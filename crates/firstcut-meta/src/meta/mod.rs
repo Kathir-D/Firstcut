@@ -752,17 +752,32 @@ fn collect(dir: &Path, dir_rel: &str, walk: &mut Walk) -> Result<(), ScanError> 
         let Some(kind) = kind_of(extension) else {
             continue;
         };
-        // The stat identity (device + inode) is how a re-scan recognises that a file is the same
-        // physical file (photo-meta.md). Windows has the same pair behind
-        // `GetFileInformationByHandle`; `file-id` reads it safely, so both platforms record a real
-        // identity instead of Windows recording the "unknown" zeros.
-        #[cfg(unix)]
-        let (device, ino) = {
-            use std::os::unix::fs::MetadataExt;
-            (metadata.dev() as i64, metadata.ino() as i64)
-        };
-        #[cfg(windows)]
-        let (device, ino) = match file_id::get_file_id(&path) {
+        let (device, ino) = stat_identity(&path, &metadata);
+        walk.candidates.push(Candidate { rel_path: rel, path, kind, size: metadata.len(), mtime_ms: mtime_ms_of(&metadata), device, ino });
+    }
+    Ok(())
+}
+
+/// The stat identity (device + inode) is how a re-scan recognises that a file is the same physical
+/// file (photo-meta.md). Windows has the same pair behind `GetFileInformationByHandle`; `file-id`
+/// reads it safely, so both platforms record a real identity instead of Windows recording the
+/// "unknown" zeros.
+///
+/// One definition, exported, so a caller that builds a `PhotoMeta` by hand — the engine's session
+/// tests do — records the identity a real scan would produce. Two spellings drifted once already:
+/// the tests wrote `(0, 0)` while the scanner had moved to real Windows ids, and every rename test
+/// failed on Windows only.
+pub fn stat_identity(path: &Path, metadata: &std::fs::Metadata) -> (i64, i64) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let _ = path;
+        (metadata.dev() as i64, metadata.ino() as i64)
+    }
+    #[cfg(windows)]
+    {
+        let _ = metadata;
+        match file_id::get_file_id(path) {
             Ok(file_id::FileId::LowRes { volume_serial_number, file_index }) => {
                 (i64::from(volume_serial_number), i64::try_from(file_index).unwrap_or(0))
             }
@@ -772,10 +787,13 @@ fn collect(dir: &Path, dir_rel: &str, walk: &mut Walk) -> Result<(), ScanError> 
             // A file that vanished between `read_dir` and the handle open, or a file system
             // without ids: the zeros the session already treats as "unknown".
             _ => (0, 0),
-        };
-        walk.candidates.push(Candidate { rel_path: rel, path, kind, size: metadata.len(), mtime_ms: mtime_ms_of(&metadata), device, ino });
+        }
     }
-    Ok(())
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (path, metadata);
+        (0, 0)
+    }
 }
 
 /// Builds the `PhotoMeta` for one file.
@@ -1375,6 +1393,26 @@ mod tests {
         std::fs::write(&file, b"hello").unwrap();
         let err = scan_folder(&file).expect_err("a file must fail");
         assert!(matches!(err, ScanError::NotAFolder(_)), "{err}");
+    }
+
+    #[test]
+    fn the_stat_identity_survives_a_rename_and_separates_two_files() {
+        // What REV-68 rests on: a rename in Finder must not change the identity, and two files must
+        // not share one. The engine's rename tests build their `PhotoMeta`s through this function,
+        // so a platform where it stopped holding would fail there — on that platform only.
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("IMG_0001.CR3");
+        let second = dir.path().join("IMG_0002.CR3");
+        std::fs::write(&first, b"one").unwrap();
+        std::fs::write(&second, b"two").unwrap();
+
+        let identity = |path: &Path| stat_identity(path, &std::fs::metadata(path).unwrap());
+        let (first_id, second_id) = (identity(&first), identity(&second));
+        assert_ne!(first_id, second_id, "two files must not share an identity");
+
+        let renamed = dir.path().join("renamed_in_finder.CR3");
+        std::fs::rename(&first, &renamed).unwrap();
+        assert_eq!(identity(&renamed), first_id, "a rename must not change the identity");
     }
 
     #[test]

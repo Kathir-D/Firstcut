@@ -1427,24 +1427,14 @@ mod tests {
             write_cr3(folder.path(), &meta.rel_path, index as u32 + 1);
             // The ingested identity has to match what a rescan's `scan` will produce, or every
             // reopen would read as "all three identities disagree" and drop the ratings
-            // (todo.md §0.5 rule: the swap fires only when everything disagrees). Unix reads the
-            // real per-file identity, as the scanner does. Windows' scanner records `(0, 0)` —
-            // `std` has no per-file identity for it (M5 fills this in) — but the real size either
-            // way.
+            // (todo.md §0.5 rule: the swap fires only when everything disagrees). `stat_identity`
+            // is the scanner's own definition, so unix inodes and Windows file ids both match.
             let path = folder.path().join(&meta.rel_path);
             let stat = fs::metadata(&path).unwrap();
             meta.file_size = stat.len();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                meta.device = Some(stat.dev() as i64);
-                meta.ino = Some(stat.ino() as i64);
-            }
-            #[cfg(windows)]
-            {
-                meta.device = Some(0);
-                meta.ino = Some(0);
-            }
+            let (device, ino) = firstcut_meta::meta::stat_identity(&path, &stat);
+            meta.device = Some(device);
+            meta.ino = Some(ino);
         }
         let scan = firstcut_meta::meta::ScanResult { skipped: Vec::new(), photos };
         let session = Session::from_scan(scan, folder.path(), sessions.path(), Arc::new(NoListener)).unwrap();
