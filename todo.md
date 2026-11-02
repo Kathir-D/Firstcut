@@ -326,6 +326,12 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > volume serial. Local `cargo xtask ci` is green; `cargo clippy --target x86_64-pc-windows-msvc
 > -p firstcut-meta` is clean (the engine cannot cross-check here: bundled SQLite needs a Windows
 > C toolchain). Tip: `c4b4cf4`.
+>
+> The next Windows run (`41366509400`) got past those and stopped on a second stale gate:
+> `free_space_is_readable_for_a_real_folder` still asserted that Windows answers `None`, but
+> `free_space` has been `fs4::available_space` on every platform since the M5 work. `0ac97e2`
+> drops the branch and asserts a positive number everywhere. Both were invisible before because
+> `cargo test --workspace` stops at the first failing binary, and the engine failure came first.
 
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`
