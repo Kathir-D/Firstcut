@@ -2118,14 +2118,10 @@ mod tests {
     #[test]
     fn free_space_is_readable_for_a_real_folder() {
         let shoot = Shoot::new();
-        let available = free_space(shoot.path());
-        if cfg!(windows) {
-            // M5 brings a real implementation; "cannot be checked" is the documented answer
-            // there, and the plan skips the space warning rather than failing (see `free_space`).
-            assert_eq!(available, None);
-        } else {
-            assert!(available.is_some_and(|bytes| bytes > 0), "a real folder has free space");
-        }
+        // `fs4` asks the OS on every platform (`statvfs`, `GetDiskFreeSpaceExW`), so this is a
+        // real number everywhere now — the "cannot be checked on Windows" answer is gone with the
+        // M5 free-space work.
+        assert!(free_space(shoot.path()).is_some_and(|bytes| bytes > 0), "a real folder has free space");
     }
 
     #[test]
