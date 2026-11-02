@@ -312,6 +312,20 @@ below is struck through where finished, and what remains is either in [§0.2](#0
 > the current photo's filmstrip cell painted a freed texture (blank cell, visible on any RAW
 > shoot). The key is now `(photo id, pixel size)`; `one_photo_at_two_sizes_keeps_two_textures`
 > is the regression test. This was a real v2 bug, not a parity gap.
+>
+> **2026-11-01 update — the Windows rename tests, and one stat-identity definition.** The 3-OS
+> run `41222385725` on `c31058a` was red on Windows only: `a_renamed_file_keeps_its_rating` and
+> `a_file_renamed_while_the_app_was_closed_keeps_its_rating` lost the rating. The production
+> path was fine — the scanner already recorded Windows' (volume serial, file index) pair — but
+> the session test helper still wrote `(0, 0)`, so a rescan could not recognise the renamed file
+> on that platform. That computation now has one exported definition,
+> `firstcut_meta::meta::stat_identity`; the scanner calls it and the helper calls it, so what the
+> helper ingests is exactly what a rescan produces. A meta test pins the two facts the rename
+> logic rests on — two files never share an identity, and a rename never changes one — and the
+> stale `#[cfg(unix)]` on the catalog's volume-id test is gone now that Windows probes its
+> volume serial. Local `cargo xtask ci` is green; `cargo clippy --target x86_64-pc-windows-msvc
+> -p firstcut-meta` is clean (the engine cannot cross-check here: bundled SQLite needs a Windows
+> C toolchain). Tip: `c4b4cf4`.
 
 >
 > **State at the start of this session:** M4 closed, tip `7332f6e`, local `cargo xtask ci`

@@ -65,7 +65,10 @@ tests; the one remaining dependency is named.
 - **Windows volume identity** — `probe_volume` keys on the volume serial number
   (`volume:…`) plus the canonical volume root, and the scanner records Windows'
   (volume serial, file index) pair as the (device, inode) identity, so a rename is recognised
-  there as it is on unix.
+  there as it is on unix. `firstcut_meta::meta::stat_identity` is now the one definition of that
+  pair, exported so the engine's session tests ingest exactly what a rescan produces — they had
+  kept writing `(0, 0)` and the two Windows rename tests failed on that alone
+  (`the_stat_identity_survives_a_rename_and_separates_two_files`).
 
 **Owner check still open:** the Windows paths above compile and pass their portable tests, but a
 native Windows run of Move to Trash and of a HEIF folder has not been done on this Mac — same
